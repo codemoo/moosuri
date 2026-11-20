@@ -2659,6 +2659,45 @@ mod tests {
             assert_eq!(policy.model, selected.model);
             assert_eq!(policy.effort, selected.effort);
         }
+        // Only the active administrator can initiate a read or see a broker result.
+        let connection = Uuid::new_v4();
+        engine::publish_models(
+            registry,
+            connection,
+            moosuri_core::ProviderKind::OpenRouter,
+            engine::ConnectionMode::Api,
+            &default,
+            std::slice::from_ref(&default),
+            &[aid, bid],
+        )
+        .unwrap();
+        let state = json(request(g, engine_url, Method::GET, admin.clone(), "").await).await;
+        let endpoint = "/api/v1/personal/admin/engine/quota";
+        let mut read = serde_json::json!({"connection_revision":connection,"revision":state["revision"],"probe_id":null});
+        assert_eq!(
+            request(g, endpoint, Method::POST, member.clone(), &read.to_string())
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let started = request(g, endpoint, Method::POST, admin.clone(), &read.to_string()).await;
+        assert_eq!(started.status(), StatusCode::OK);
+        let started = json(started).await;
+        let id = engine::quota::claim(registry, connection).unwrap().unwrap();
+        assert_eq!(started["probe_id"], id.to_string());
+        assert!(started["report"].is_null());
+        engine::quota::finish(registry, connection, id, None).unwrap();
+        read["probe_id"] = started["probe_id"].clone();
+        assert_eq!(
+            request(g, endpoint, Method::POST, member.clone(), &read.to_string())
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let result =
+            json(request(g, endpoint, Method::POST, admin.clone(), &read.to_string()).await).await;
+        assert_eq!(result["report"]["status"], "unavailable");
+        assert!(result["report"]["observed_at"].is_null());
     }
     async fn check_google_setup_administration(
         g: &Gateway,

@@ -394,3 +394,94 @@ async fn worker_acknowledgement_precedes_one_durable_dispatch_and_epoch_recheck(
     assert_eq!(reply.state, "account_fenced");
     assert!(reply.receipt.is_none());
 }
+
+#[tokio::test]
+async fn openrouter_quota_reads_only_on_admin_request_and_fences_key_and_connection_changes() {
+    use engine::quota::{self, Request as QuotaRead};
+    use moosuri_core::{QuotaMetric, QuotaStatus, QuotaUnit};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let (options, bindings) = fixture(&root, "http://127.0.0.1:9/v1".into());
+    let mut config: Config = serde_json::from_slice(&fs::read(&options.config).unwrap()).unwrap();
+    config.provider = ProviderConfig {
+        kind: ProviderKind::OpenRouter,
+        base_url: None,
+        allowed_ips: vec![],
+        router_providers: vec!["example".into()],
+        zero_data_retention: false,
+    };
+    file(&options.config, &serde_json::to_vec(&config).unwrap());
+    let broker = ready_broker(&options);
+    let actor = operator(&options, &bindings[0], "a@example.invalid");
+    let rev = settings_revision(&options, &actor);
+    let connection = config.connection_revision;
+    let request = |probe_id| {
+        quota::request(
+            &options.registry,
+            &actor,
+            QuotaRead {
+                connection_revision: connection,
+                revision: rev,
+                probe_id,
+            },
+        )
+    };
+    let known = || {
+        vec![QuotaMetric {
+            id: "key_credit_limit".into(),
+            label: "API key credit cap (all models)".into(),
+            unit: QuotaUnit::Usd,
+            used: None,
+            limit: Some(1.),
+            remaining: Some(0.),
+            reset_interval: Some("daily".into()),
+            reset_at: None,
+        }]
+    };
+    broker
+        .process_quota(async |_| panic!("no approved read"))
+        .await;
+    let first = request(None).unwrap();
+    assert_eq!(request(None).unwrap().probe_id, first.probe_id);
+    broker.process_quota(async |_| Some(known())).await;
+    let report = request(Some(first.probe_id)).unwrap().report.unwrap();
+    assert_eq!(report.status, QuotaStatus::Known);
+    assert!(report.observed_at.is_some());
+    assert_eq!(report.metrics[0].remaining, Some(0.));
+    assert_eq!(report.metrics[0].reset_at, None);
+    assert_eq!(report.metrics[0].reset_interval.as_deref(), Some("daily"));
+
+    let second = request(None).unwrap();
+    assert_ne!(first.probe_id, second.probe_id);
+    assert!(request(Some(first.probe_id)).is_err());
+    broker
+        .process_quota(async |_| {
+            file(config.key_file.as_ref().unwrap(), b"rotated-synthetic-key");
+            Some(known())
+        })
+        .await;
+    let failed = request(Some(second.probe_id)).unwrap().report.unwrap();
+    assert_eq!(failed.status, QuotaStatus::Unavailable);
+    assert!(failed.metrics.is_empty() && failed.observed_at.is_none());
+
+    let third = request(None).unwrap();
+    broker
+        .process_quota(async |_| {
+            engine::publish_models(
+                &options.registry,
+                Uuid::new_v4(),
+                ProviderKind::OpenRouter,
+                engine::ConnectionMode::Api,
+                &broker.models[0],
+                &broker.models,
+                &[bindings[0].account_id],
+            )
+            .unwrap();
+            Some(known())
+        })
+        .await;
+    assert!(matches!(
+        request(Some(third.probe_id)),
+        Err(StoreError::Conflict)
+    ));
+}

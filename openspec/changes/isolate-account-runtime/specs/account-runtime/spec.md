@@ -40,6 +40,12 @@ The installation SHALL supply read-only shared modules and model availability, a
 - **AND** a member cannot choose a different pair through the web or the model socket
 - **AND** an upstream response that explicitly reports a different model ID cannot supply a saved or displayed answer, and retrying that same call only retrieves its accounting receipt
 
+#### Scenario: An administrator checks the installation API key's provider-reported capacity
+- **WHEN** a current administrator requests capacity for the enabled OpenRouter API connection
+- **THEN** the broker reads official key metadata and the gateway returns scoped metrics with the observation time only to that administrator
+- **AND** a reported zero remains zero, missing values remain unknown, and a reset period alone does not establish an instant
+- **AND** a changed connection, revoked administrator authority, expired request or failed refresh cannot deliver earlier capacity as the new result
+
 #### Scenario: Rotate the installation model credential
 - **WHEN** two members use the same provider and its installation credential rotates
 - **THEN** each retains their own conversation and neither member obtains the provider credential or the other's session

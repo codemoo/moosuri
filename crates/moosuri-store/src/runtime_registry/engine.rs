@@ -1,5 +1,6 @@
 //! Public engine capabilities and administrator decisions. Provider secrets,
 //! worker paths, prompts and receipts belong to other stores.
+pub mod quota;
 use super::{admin::AdminSession, *};
 use moosuri_core::ProviderKind;
 use serde::{Deserialize, de::DeserializeOwned};

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ProviderKind } from "../shared/api-types";
+import { QuotaPanel } from "./QuotaPanel";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import "./personal-management.css";
@@ -165,7 +166,7 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
         </section>
       )}
       {engine && <>
-        {engine.configured && <ProviderUsage engine={engine} />}
+        {engine.configured && <ProviderUsage key={account + "/" + engine.connection_revision + "/" + engine.revision} engine={engine} account={account} current={current} expired={expired} unavailable={unavailable} />}
         <section className="member-page-list management-engine-overview" aria-labelledby="engine-host-setup">
           <h2 id="engine-host-setup">공급자 추가와 모델 목록 갱신</h2>
           <ol>
@@ -180,7 +181,9 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
   );
 }
 
-function ProviderUsage({ engine }: { engine: Engine }) {
+function ProviderUsage({ engine, account, current, expired, unavailable }: {
+  engine: Engine; account: string; current: boolean; expired: () => void; unavailable: () => void;
+}) {
   const mode = engine.connection_mode;
   const links: [string, string][] = [];
   if (mode === "claude_code") links.push(["Claude 구독 사용량", "https://claude.ai/settings/usage"]);
@@ -196,8 +199,10 @@ function ProviderUsage({ engine }: { engine: Engine }) {
     : mode === "api" ? "API 연결" : "연결 방식 확인 필요";
   return <section className="member-page-list management-engine-overview" aria-labelledby="engine-quota">
     <h2 id="engine-quota">공급자 잔여 한도</h2>
-    <p>{source} · 잔여량 확인 불가 · 초기화 시각 확인 불가</p>
-    <p className="management-note">이 설치의 모델 브로커는 공급자의 한도 수치를 관리 화면에 전달하지 않습니다.
+    {current && engine.enabled && mode === "api" && engine.kind === "open_router" && engine.connection_revision
+      ? <QuotaPanel accountId={account} id={engine.connection_revision} revision={engine.revision} kind="kiri" onExpired={expired} onUnavailable={unavailable}/>
+      : <p>{source} · 잔여량 확인 불가 · 초기화 시각 확인 불가</p>}
+    <p className="management-note">{engine.kind === "open_router" && mode === "api" ? "OpenRouter는 설치 API 키의 한도와 사용량을 제공합니다. " : ""}
       {links.length === 0 ? "호환 API 또는 로컬 모델은 연결을 제공하는 운영자에게 한도를 확인하세요." : "해당 연결로 로그인한 공급자 계정에서 확인하세요."}</p>
     {links.map(([name, url]) => <a key={url} href={url} target="_blank" rel="noreferrer">{name} 열기</a>)}
     <details>

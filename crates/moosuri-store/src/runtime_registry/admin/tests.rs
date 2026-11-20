@@ -511,7 +511,7 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
     let a = allocate(r, "a@example.test");
     {
         let (_lock, c) = open(r, false).unwrap();
-        c.execute_batch("DROP TABLE engine_connections; DROP TABLE engine_bindings; DROP TABLE engine_settings; ALTER TABLE allocations DROP COLUMN session_epoch;DROP TABLE installation_members;DROP TABLE installation_admin_bootstrap;DROP TABLE installation_admin_operations;PRAGMA user_version=1;").unwrap();
+        c.execute_batch("DROP TABLE engine_quota_requests; DROP TABLE engine_connections; DROP TABLE engine_bindings; DROP TABLE engine_settings; ALTER TABLE allocations DROP COLUMN session_epoch;DROP TABLE installation_members;DROP TABLE installation_admin_bootstrap;DROP TABLE installation_admin_operations;PRAGMA user_version=1;").unwrap();
     }
     assert_eq!(lookup_ready(r, "a@example.test".into()).unwrap(), a);
     {
@@ -519,9 +519,9 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            5
+            6
         );
-        c.execute_batch("PRAGMA user_version=6").unwrap();
+        c.execute_batch("PRAGMA user_version=7").unwrap();
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }
@@ -697,7 +697,7 @@ fn legacy_registry_keeps_selected_engine_settings_when_broker_first_publishes_it
     {
         let (_lock, c) = open(r, false).unwrap();
         c.execute_batch(
-            "ALTER TABLE engine_settings DROP COLUMN connection_mode;
+            "DROP TABLE engine_quota_requests; ALTER TABLE engine_settings DROP COLUMN connection_mode;
             ALTER TABLE installation_members DROP COLUMN display_name; PRAGMA user_version=4;",
         )
         .unwrap();
@@ -768,4 +768,95 @@ fn web_worker_selects_only_current_reserved_web_requests_and_pages_past_waiting_
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_capacity() {
+    use super::super::engine::{self, quota};
+    let directory = root();
+    let r = directory.path();
+    let (a, av) = bootstrap_a(r);
+    let b = allocate(r, "second@example.test");
+    let bv = view(&b, "second@example.test", false);
+    observe_session(r, &b, &bv).unwrap();
+    let admin = checked_session(r, &a, &av).unwrap();
+    let model = engine::ModelChoice {
+        model: "fixture".into(),
+        effort: None,
+    };
+    let connection = Uuid::new_v4();
+    engine::publish_models(
+        r,
+        connection,
+        moosuri_core::ProviderKind::OpenRouter,
+        engine::ConnectionMode::Api,
+        &model,
+        std::slice::from_ref(&model),
+        &[a.account_id.parse().unwrap()],
+    )
+    .unwrap();
+    let request = |session, probe_id| {
+        quota::request(
+            r,
+            session,
+            quota::Request {
+                connection_revision: connection,
+                revision: 1,
+                probe_id,
+            },
+        )
+    };
+    {
+        let (_lock, c) = open(r, false).unwrap();
+        c.execute_batch("DROP TABLE engine_quota_requests; PRAGMA user_version=5;")
+            .unwrap();
+    }
+    let selected = request(&admin, None).unwrap().probe_id;
+    {
+        let (_lock, c) = open(r, false).unwrap();
+        c.execute(
+            "UPDATE engine_quota_requests SET requested_at=unixepoch()-31",
+            [],
+        )
+        .unwrap();
+    }
+    assert!(quota::claim(r, connection).unwrap().is_none());
+    assert!(matches!(
+        request(&admin, Some(selected)),
+        Err(StoreError::Conflict)
+    ));
+    let pending = request(&admin, None).unwrap().probe_id;
+    assert_ne!(selected, pending);
+    let member = status(r, b.account_id.parse().unwrap()).unwrap();
+    change_member(
+        r,
+        &admin,
+        Uuid::new_v4(),
+        b.account_id.parse().unwrap(),
+        b.generation,
+        member.role_revision,
+        Change::Promote,
+    )
+    .unwrap();
+    let other_admin = checked_session(r, &b, &bv).unwrap();
+    assert!(matches!(
+        request(&other_admin, Some(pending)),
+        Err(StoreError::Conflict)
+    ));
+    let member = status(r, a.account_id.parse().unwrap()).unwrap();
+    change_member(
+        r,
+        &other_admin,
+        Uuid::new_v4(),
+        a.account_id.parse().unwrap(),
+        a.generation,
+        member.role_revision,
+        Change::Demote,
+    )
+    .unwrap();
+    assert!(quota::claim(r, connection).unwrap().is_none());
+    assert!(matches!(
+        request(&admin, Some(pending)),
+        Err(StoreError::Forbidden)
+    ));
 }

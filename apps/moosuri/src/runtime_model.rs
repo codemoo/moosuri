@@ -498,6 +498,50 @@ impl Broker {
         )
         .map_err(|_| "model_policy_unavailable".into())
     }
+    fn api_client(&self) -> Option<Arc<ModelClient>> {
+        let mut cached = self.client.lock().ok()?;
+        *cached = ClientCache::load(&self.config, &self.caps, &self.key, cached.as_ref()).ok();
+        cached.as_ref().map(|c| c.client.clone())
+    }
+    async fn quota_worker(self: Arc<Self>) {
+        loop {
+            tokio::select! {
+                _ = self.stop.cancelled() => return,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+            self.process_quota(async |client| {
+                tokio::time::timeout(Duration::from_secs(12), client.openrouter_quota(&self.stop))
+                    .await
+                    .ok()?
+                    .ok()
+            })
+            .await;
+        }
+    }
+    async fn process_quota(
+        &self,
+        read: impl AsyncFnOnce(&ModelClient) -> Option<Vec<moosuri_core::QuotaMetric>>,
+    ) {
+        let revision = self.config.connection_revision;
+        let registry = self.registry.clone();
+        let Ok(Ok(Some(id))) =
+            tokio::task::spawn_blocking(move || engine::quota::claim(&registry, revision)).await
+        else {
+            return;
+        };
+        let metrics = if let Some(client) = self.api_client() {
+            let result = read(&client).await;
+            // A key can rotate in place while its metadata request is pending.
+            self.api_client()
+                .filter(|current| Arc::ptr_eq(current, &client))
+                .and(result)
+        } else {
+            None
+        };
+        if !self.stop.is_cancelled() {
+            let _ = engine::quota::finish(&self.registry, revision, id, metrics.as_deref());
+        }
+    }
     fn request(&self, b: &Binding, r: &Request) -> Result<TextRequest, String> {
         if r.v != 1
             || r.generation != b.generation
@@ -733,16 +777,7 @@ impl Broker {
                 connection,
             })
         } else {
-            let client = match self.client.lock() {
-                Ok(mut cached) => {
-                    *cached =
-                        ClientCache::load(&self.config, &self.caps, &self.key, cached.as_ref())
-                            .ok();
-                    cached.as_ref().map(|c| c.client.clone())
-                }
-                Err(_) => None,
-            };
-            if let Some(client) = client {
+            if let Some(client) = self.api_client() {
                 if client.validate_text_request(&request).is_err() {
                     return Reply::error("request_invalid");
                 }
@@ -1007,6 +1042,9 @@ async fn serve(options: &Options, stop: CancellationToken) -> Result<(), String>
         bindings.push((b.clone(), listener));
     }
     broker.publish_models()?;
+    let quota_worker = (broker.config.provider.kind == ProviderKind::OpenRouter
+        && broker.config.subscription.is_none())
+    .then(|| tokio::spawn(broker.clone().quota_worker()));
     for (binding, listener) in bindings {
         let broker = broker.clone();
         let stop = stop.clone();
@@ -1023,6 +1061,9 @@ async fn serve(options: &Options, stop: CancellationToken) -> Result<(), String>
     }
     let result = tokio::select! {_ = stop.cancelled()=>Ok(()),r=listeners.join_next()=>r.ok_or("model_listener_stopped".to_owned()).and_then(|r|r.map_err(|_|"model_listener_stopped".to_owned())).and_then(|r|r)};
     stop.cancel();
+    if let Some(worker) = quota_worker {
+        let _ = worker.await;
+    }
     while listeners.join_next().await.is_some() {}
     drop(guards);
     drop(lock);

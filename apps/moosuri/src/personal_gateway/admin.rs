@@ -60,6 +60,7 @@ struct Invite {
 enum Operation {
     List,
     Engine,
+    EngineQuota(engine::quota::Request),
     Configure(engine::InstallationChange),
     Change(ChangeRequest),
     Invite(Invite),
@@ -74,6 +75,7 @@ pub(super) fn routes() -> Router<Gateway> {
             "/api/v1/personal/admin/engine",
             get(endpoint).post(endpoint),
         )
+        .route("/api/v1/personal/admin/engine/quota", post(endpoint))
         .route("/api/v1/personal/admin/members", get(endpoint))
         .route("/api/v1/personal/admin/members/change", post(endpoint))
         .route("/api/v1/personal/admin/invitations", post(endpoint))
@@ -127,6 +129,7 @@ async fn endpoint(
             match uri.path() {
                 "/api/v1/personal/admin/invitations" => Operation::Invite(decode(&body)?),
                 "/api/v1/personal/admin/members/change" => Operation::Change(decode(&body)?),
+                "/api/v1/personal/admin/engine/quota" => Operation::EngineQuota(decode(&body)?),
                 "/api/v1/personal/admin/engine" => Operation::Configure(decode(&body)?),
                 _ => return Err(StatusCode::NOT_FOUND),
             }
@@ -148,6 +151,9 @@ async fn endpoint(
                 .map_err(error)?;
             match input {
                 Operation::Engine => engine::read(&root, &pin).map(|s| json!(s)).map_err(error),
+                Operation::EngineQuota(input) => engine::quota::request(&root, &pin, input)
+                    .map(|r| json!(r))
+                    .map_err(error),
                 Operation::Configure(c) => engine::change(&root, &pin, c)
                     .map(|s| json!(s))
                     .map_err(error),

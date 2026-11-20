@@ -92,3 +92,38 @@ it.each([
   expect(section.getByRole("link", { name: "서버에서 회원별 집계 확인하기" })).toHaveAttribute("href", expect.stringContaining("admin.md#회원별-사용-집계"));
   expect(get).toHaveBeenCalledOnce();
 });
+
+it("requests current OpenRouter capacity explicitly and distinguishes zero, missing and scheduled resets", async () => {
+  const user = userEvent.setup();
+  const model = {model: "synthetic", effort: null};
+  const metrics = [
+    {id: "cap", label: "Key cap", remaining: 0, limit: 3, used: null, unit: "usd", reset_interval: "weekly", reset_at: null},
+    {id: "requests", label: "Requests", remaining: null, limit: null, used: 2, unit: "requests", reset_interval: null, reset_at: 1796083200},
+  ];
+  const probes: Array<Record<string, unknown>> = [];
+  let failed = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/engine")) return Response.json({configured:true,enabled:true,revision:1,connection_revision:"current",
+      connection_mode:"api",kind:"open_router",host_default:model,default_choice:null,choices:[model],default_stale:false});
+    if (!url.endsWith("/engine/quota")) throw new Error("unexpected path");
+    const data = JSON.parse(String(init?.body));
+    probes.push(data);
+    if (failed) return Response.json({probe_id:"second",report:{provider_id:"current",provider_revision:1,status:"unavailable",metrics:[],observed_at:null}});
+    return Response.json({probe_id:"first",report:data.probe_id ? {provider_id:"current",provider_revision:1,status:"known",metrics,observed_at:1796060000} : null});
+  }));
+  render(<PersonalEngineSettings account="actor" expired={vi.fn()} unavailable={vi.fn()} />);
+  const area = within(await screen.findByRole("region", {name:"공급자 잔여 한도"}));
+  expect(probes).toHaveLength(0);
+  await user.click(area.getByRole("button", {name:"남은 사용량 확인"}));
+  const cap = (await area.findByText("Key cap")).parentElement;
+  expect(cap).toHaveTextContent(/남은 양.*0\.00/);
+  expect(cap).toHaveTextContent("매주 (시각 미제공)");
+  expect(area.getByText("Requests").parentElement).toHaveTextContent(/사용 2회 · 잔여량 미제공 · 리셋/);
+  expect(area.getByText(/기준$/)).toBeInTheDocument();
+  expect(probes).toEqual([{revision:1,connection_revision:"current",probe_id:null},{revision:1,connection_revision:"current",probe_id:"first"}]);
+  failed = true;
+  await user.click(area.getByRole("button", {name:"사용량 다시 확인"}));
+  expect(await area.findByText("제공사에서 한도 정보를 받지 못했습니다.")).toBeInTheDocument();
+  expect(area.queryByText("Key cap")).not.toBeInTheDocument();
+  expect(area.queryByText(/기준$/)).not.toBeInTheDocument();
+});

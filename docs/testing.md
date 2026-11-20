@@ -2,6 +2,16 @@
 
 이 문서는 검증 방법과 전체 출시 평가 계획이다. 실제 Rust/React 계약 시험과 제한된 모델 관측은 [현재 상태](status.md)의 소스별 기록을 따른다. [합성 결과 실행기](agent-evaluation.md)는 실제 HTTP/Runtime/SQLite의 공개 회귀 세계와 독립 판정을 제공한다. 아래 전체 모델 평가·32세계 pilot·holdout·baseline 비열등 비교를 완료했다는 뜻은 아니다. `xtask verify-plan`은 문서/추적 표만 검사한다. 기존 Python772/TS215 선언은 전수조사의 역사적 수이며 새 테스트 목표가 아니다. 기존 테스트를 그대로 옮기지 않는다.
 
+## 기능별 시나리오 실행 기록
+
+[기능 대장](../audit/feature-journeys.tsv)은 F01–F71의 각 시나리오에 조작, 기대 결과, 증거 파일·테스트 이름, 실행 상태를 기록한다. 같은 테스트가 두 사용자 결과를 확인하는 경우 같은 근거를 연결한다. `통과`는 명시한 환경에서 기대 결과를 관찰한 행이다. `부분 확인`과 `실환경 대기`는 실제 계정·기기·플랫폼 조건이 남은 행이고, `후속 범위`는 제품에서 후속으로 정한 기능이다. [회원 웹 시나리오](reviews/2026-11-20-kiri-scenarios.md) · [표준 서버 실행 기록](../audit/standard-journey-checks.md)
+
+자동 실행 결과를 대조할 때 다음 명령에 각 테스트 실행의 실제 보고서를 넘긴다. Rust 로그를 여러 개 넣을 때는 수정 후 다시 실행한 결과를 뒤에 둔다. 파일명·테스트 이름 또는 실제 실행 결과가 빠진 행은 미확인으로 반환한다. 실행한 절차·장비·모델의 관측은 각 행의 증거 문서에 기록한다.
+
+```sh
+python3 audit/verify-feature-journeys.py --vitest-json web-results.json --vitest-json vault-results.json --rust-log workspace-tests.log --rust-log focused-reruns.log
+```
+
 ## 기능별 안정화
 
 기능별로 **중복 책임 통합·불필요한 경로 제거·기존 동작 검증**을 함께 진행한다.

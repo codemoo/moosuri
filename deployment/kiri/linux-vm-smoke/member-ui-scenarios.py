@@ -614,6 +614,31 @@ def browser_history(page, world):
     check_layout(page)
 
 
+def consent_history_from_task(page, world):
+    world.seed_conversation()
+    world.tasks_visible = True
+    nav(page, "맡긴 일").click()
+    button(page, "이전 작업 더 보기").click()
+    button(page, re.compile("오전 시간표 확인")).click()
+    expect(heading(page, "진행 기록")).to_be_visible()
+    task_url = page.url
+    nav(page, "연결").click()
+    button(page, re.compile(r"^Gmail")).click()
+    consent(page, world, "gmail", "Deny")
+    expect(page.get_by_text("Google 연결이 취소됐습니다.", exact=True)).to_be_visible()
+    page.go_back()
+    expect(heading(page, "커넥터")).to_be_visible()
+    page.go_back()
+    expect(page).to_have_url(task_url)
+    expect(heading(page, "진행 기록")).to_be_visible()
+    page.go_forward()
+    expect(heading(page, "커넥터")).to_be_visible()
+    page.go_forward()
+    expect(heading(page, "Gmail")).to_be_visible()
+    assert not posts(world, "/personal/google/complete")
+    assert not posts(world, "/personal/google/inbox")
+
+
 def vault_tab(page, world):
     nav(page, "연결").click()
     button(page, re.compile("^볼트")).click()
@@ -823,6 +848,7 @@ SCENARIOS = {
     "B-CHAT-02": (False, reject_and_retry),
     "B-MEM-01": (False, memory_editor),
     "B-NAV-01": (False, browser_history),
+    "B-NAV-02": (False, consent_history_from_task),
     "B-VAULT-01": (False, vault_tab),
     "B-ADM-01": (True, admin_invite),
     "B-ADM-02": (True, admin_change),

@@ -54,6 +54,7 @@ cargo test --locked -p moosuri-store personal_tasks
 | 시나리오 | 기대 결과 | 근거 |
 | --- | --- | --- |
 | 기억 → 연결 → Gmail을 브라우저 뒤로·앞으로 이동하고 상세를 새로고침한다 | 탐색 메뉴, 목록, Gmail 상세를 순서대로 복원한다. | `B-NAV-01` |
+| 맡긴 일 상세에서 Gmail 동의를 취소하고 브라우저의 뒤로·앞으로 버튼을 누른다 | 상세 → 커넥터 목록 → 원래 업무로 돌아가고 앞으로 이동하면 다시 Gmail 상세가 열린다. 권한 교환과 조회는 없다. | `B-NAV-02` |
 | 지원되지 않는 서비스와 한국어 별칭을 검색한다 | 빈 검색 결과를 구분하고 Google Docs 상세에서 같은 검색으로 돌아온다. | V `PersonalPreview.test.tsx` · `searches supported services and returns to the filtered list` |
 | 설치 관리가 준비 중이고 개별 회원이 미연결 상태다 | 설치 상태와 회원 상태를 구분하며 상세를 닫으면 원래 커넥터 행에 초점이 돌아온다. | V `PersonalGoogleWorkspace.test.tsx` · `keeps an unregistered installation distinct` |
 | 회원이 관리자 주소를 직접 연다 | 대화로 열리고 관리 메뉴와 관리자 요청이 없다. | `B-ADM-03` |

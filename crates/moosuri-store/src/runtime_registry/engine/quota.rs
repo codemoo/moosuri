@@ -31,14 +31,14 @@ pub fn request(root: &Path, actor: &AdminSession, input: Request) -> Result<Repl
     if !available(&s, input.connection_revision) || s.revision != input.revision {
         return Err(StoreError::Conflict);
     }
-    let (owner, role, epoch) = actor.quota_owner();
+    let (owner, generation, role, epoch) = actor.quota_owner();
     let cutoff = crate::now()? - LIFETIME;
     if let Some(id) = input.probe_id {
         let (state, observed_at, raw): (String, Option<i64>, Option<String>) = tx
             .query_row(
                 "SELECT state,observed_at,metrics FROM engine_quota_requests WHERE account_id=?1
              AND role_revision=?2 AND session_epoch=?3 AND probe_id=?4 AND connection_revision=?5
-             AND settings_revision=?6 AND requested_at>?7",
+             AND settings_revision=?6 AND requested_at>?7 AND generation=?8",
                 params![
                     owner,
                     role,
@@ -46,7 +46,8 @@ pub fn request(root: &Path, actor: &AdminSession, input: Request) -> Result<Repl
                     id.to_string(),
                     s.connection,
                     s.revision,
-                    cutoff
+                    cutoff,
+                    generation
                 ],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -85,8 +86,8 @@ pub fn request(root: &Path, actor: &AdminSession, input: Request) -> Result<Repl
         .query_row(
             "SELECT probe_id FROM engine_quota_requests
         WHERE account_id=?1 AND role_revision=?2 AND session_epoch=?3 AND connection_revision=?4
-        AND settings_revision=?5 AND state IN('pending','running')",
-            params![owner, role, epoch, s.connection, s.revision],
+        AND settings_revision=?5 AND generation=?6 AND state IN('pending','running')",
+            params![owner, role, epoch, s.connection, s.revision, generation],
             |r| r.get(0),
         )
         .optional()?;
@@ -94,10 +95,10 @@ pub fn request(root: &Path, actor: &AdminSession, input: Request) -> Result<Repl
         id.parse().map_err(|_| StoreError::Corrupt)?
     } else {
         let id = Uuid::new_v4();
-        tx.execute("INSERT OR REPLACE INTO engine_quota_requests
-            (account_id,role_revision,session_epoch,probe_id,connection_revision,settings_revision,requested_at,state)
-            VALUES(?1,?2,?3,?4,?5,?6,unixepoch(),'pending')",
-            params![owner,role,epoch,id.to_string(),s.connection,s.revision])?;
+        tx.execute("INSERT INTO engine_quota_requests
+            (account_id,role_revision,session_epoch,probe_id,connection_revision,settings_revision,generation,requested_at,state)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,unixepoch(),'pending')",
+            params![owner,role,epoch,id.to_string(),s.connection,s.revision,generation])?;
         id
     };
     tx.commit()?;
@@ -109,21 +110,35 @@ pub fn request(root: &Path, actor: &AdminSession, input: Request) -> Result<Repl
 
 pub fn claim(root: &Path, connection: Uuid) -> Result<Option<Uuid>> {
     let (_lock, db) = open(root, false)?;
-    let candidate: Option<(String, String, i64, i64, i64)> = db
+    let cutoff = crate::now()? - LIFETIME;
+    db.execute(
+        "DELETE FROM engine_quota_requests WHERE requested_at<=?1",
+        [cutoff],
+    )?;
+    let candidate: Option<(String, String, i64, i64, i64, i64)> = db
         .query_row(
-            "SELECT probe_id,account_id,role_revision,session_epoch,settings_revision
+            "SELECT probe_id,account_id,generation,role_revision,session_epoch,settings_revision
          FROM engine_quota_requests WHERE state='pending' AND connection_revision=?1
-         AND requested_at>?2 ORDER BY requested_at,rowid LIMIT 1",
-            params![connection.to_string(), crate::now()? - LIFETIME],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+         ORDER BY requested_at,rowid LIMIT 1",
+            [connection.to_string()],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .optional()?;
-    let Some((id, owner, revision, epoch, settings)) = candidate else {
+    let Some((id, owner, generation, revision, epoch, settings)) = candidate else {
         return Ok(None);
     };
     // The registry directory lock covers all checks and this single state transition.
     let bound = current(&db)?.is_some_and(|s| available(&s, connection) && s.revision == settings);
-    if !bound || !admin::quota_owner_current(&db, &owner, revision, epoch)? {
+    if !bound || !admin::quota_owner_current(&db, &owner, generation, revision, epoch)? {
         db.execute("DELETE FROM engine_quota_requests WHERE probe_id=?1", [id])?;
         return Ok(None);
     }
@@ -143,6 +158,18 @@ pub fn finish(
     let (_lock, db) = open(root, false)?;
     let s = current(&db)?.ok_or(StoreError::Conflict)?;
     if !available(&s, connection) {
+        return Err(StoreError::Conflict);
+    }
+    let (owner, generation, role, epoch): (String, i64, i64, i64) = db.query_row(
+        "SELECT account_id,generation,role_revision,session_epoch FROM engine_quota_requests WHERE probe_id=?1",
+        [id.to_string()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional()?.ok_or(StoreError::Conflict)?;
+    if !admin::quota_owner_current(&db, &owner, generation, role, epoch)? {
+        db.execute(
+            "DELETE FROM engine_quota_requests WHERE probe_id=?1",
+            [id.to_string()],
+        )?;
         return Err(StoreError::Conflict);
     }
     let metrics = metrics

@@ -444,6 +444,10 @@ async fn openrouter_quota_reads_only_on_admin_request_and_fences_key_and_connect
     let first = request(None).unwrap();
     assert_eq!(request(None).unwrap().probe_id, first.probe_id);
     broker.process_quota(async |_| Some(known())).await;
+    // A second tab starts a fresh read before the first tab receives its result.
+    let second = request(None).unwrap();
+    assert_ne!(first.probe_id, second.probe_id);
+    assert!(request(Some(second.probe_id)).unwrap().report.is_none());
     let report = request(Some(first.probe_id)).unwrap().report.unwrap();
     assert_eq!(report.status, QuotaStatus::Known);
     assert!(report.observed_at.is_some());
@@ -451,11 +455,9 @@ async fn openrouter_quota_reads_only_on_admin_request_and_fences_key_and_connect
     assert_eq!(report.metrics[0].reset_at, None);
     assert_eq!(report.metrics[0].reset_interval.as_deref(), Some("daily"));
 
-    let second = request(None).unwrap();
-    assert_ne!(first.probe_id, second.probe_id);
-    assert!(request(Some(first.probe_id)).is_err());
     broker
         .process_quota(async |_| {
+            assert_eq!(request(None).unwrap().probe_id, second.probe_id);
             file(config.key_file.as_ref().unwrap(), b"rotated-synthetic-key");
             Some(known())
         })

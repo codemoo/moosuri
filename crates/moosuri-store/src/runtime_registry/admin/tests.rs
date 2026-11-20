@@ -519,9 +519,9 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            6
+            7
         );
-        c.execute_batch("PRAGMA user_version=7").unwrap();
+        c.execute_batch("PRAGMA user_version=8").unwrap();
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }
@@ -811,7 +811,7 @@ fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_
         c.execute_batch("DROP TABLE engine_quota_requests; PRAGMA user_version=5;")
             .unwrap();
     }
-    let selected = request(&admin, None).unwrap().probe_id;
+    let expired = request(&admin, None).unwrap().probe_id;
     {
         let (_lock, c) = open(r, false).unwrap();
         c.execute(
@@ -822,11 +822,50 @@ fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_
     }
     assert!(quota::claim(r, connection).unwrap().is_none());
     assert!(matches!(
-        request(&admin, Some(selected)),
+        request(&admin, Some(expired)),
         Err(StoreError::Conflict)
     ));
+    let migrated = Uuid::new_v4();
+    {
+        let (_lock, c) = open(r, false).unwrap();
+        let count: i64 = c
+            .query_row("SELECT count(*) FROM engine_quota_requests", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        // Open a populated v6 registry, as an upgrade from either binary would.
+        c.execute_batch("DROP TABLE engine_quota_requests").unwrap();
+        c.execute_batch(include_str!(
+            "../../../../../migrations/installation_registry/0006_engine_quota.sql"
+        ))
+        .unwrap();
+        let (account, _, revision, epoch) = admin.quota_owner();
+        c.execute("INSERT INTO engine_quota_requests
+            (account_id,role_revision,session_epoch,probe_id,connection_revision,settings_revision,requested_at,state)
+            VALUES(?1,?2,?3,?4,?5,1,unixepoch(),'done')",
+            params![account, revision, epoch, migrated.to_string(), connection.to_string()]).unwrap();
+    }
+    let stale = request(&admin, None).unwrap().probe_id;
+    {
+        let (_lock, c) = open(r, false).unwrap();
+        c.execute(
+            "UPDATE engine_quota_requests SET generation=generation+1 WHERE probe_id=?1",
+            [stale.to_string()],
+        )
+        .unwrap();
+    }
     let pending = request(&admin, None).unwrap().probe_id;
-    assert_ne!(selected, pending);
+    assert_ne!(stale, pending);
+    assert!(matches!(
+        request(&admin, Some(stale)),
+        Err(StoreError::Conflict)
+    ));
+    assert!(quota::claim(r, connection).unwrap().is_none());
+    assert!(request(&admin, Some(migrated)).unwrap().report.is_some());
+    assert_eq!(quota::claim(r, connection).unwrap(), Some(pending));
+    assert_eq!(pending, request(&admin, None).unwrap().probe_id);
+    assert!(quota::claim(r, connection).unwrap().is_none());
     let member = status(r, b.account_id.parse().unwrap()).unwrap();
     change_member(
         r,
@@ -840,9 +879,23 @@ fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_
     .unwrap();
     let other_admin = checked_session(r, &b, &bv).unwrap();
     assert!(matches!(
+        request(&other_admin, Some(migrated)),
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
         request(&other_admin, Some(pending)),
         Err(StoreError::Conflict)
     ));
+    let other_probe = request(&other_admin, None).unwrap().probe_id;
+    assert_ne!(pending, other_probe);
+    assert_eq!(quota::claim(r, connection).unwrap(), Some(other_probe));
+    quota::finish(r, connection, other_probe, None).unwrap();
+    assert!(
+        request(&other_admin, Some(other_probe))
+            .unwrap()
+            .report
+            .is_some()
+    );
     let member = status(r, a.account_id.parse().unwrap()).unwrap();
     change_member(
         r,
@@ -854,6 +907,10 @@ fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_
         Change::Demote,
     )
     .unwrap();
+    assert!(matches!(
+        quota::finish(r, connection, pending, None),
+        Err(StoreError::Conflict)
+    ));
     assert!(quota::claim(r, connection).unwrap().is_none());
     assert!(matches!(
         request(&admin, Some(pending)),

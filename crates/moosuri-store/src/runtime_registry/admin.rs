@@ -180,8 +180,8 @@ fn session_epoch(c: &Connection, account: &str) -> Result<i64> {
 }
 
 impl AdminSession {
-    pub(super) fn quota_owner(&self) -> (&str, i64, i64) {
-        (&self.account, self.revision, self.epoch)
+    pub(super) fn quota_owner(&self) -> (&str, i64, i64, i64) {
+        (&self.account, self.generation, self.revision, self.epoch)
     }
 
     /// Bind the private IPC proof to the epoch from the gateway's signed cookie.
@@ -196,11 +196,15 @@ impl AdminSession {
 pub(super) fn quota_owner_current(
     c: &Connection,
     account: &str,
+    generation: i64,
     revision: i64,
     epoch: i64,
 ) -> Result<bool> {
     let m = member(c, account)?;
-    Ok(usable(&m) && m.role_revision == revision && session_epoch(c, account)? == epoch)
+    Ok(usable(&m)
+        && m.generation == generation
+        && m.role_revision == revision
+        && session_epoch(c, account)? == epoch)
 }
 
 pub(super) fn check(c: &Connection, s: &AdminSession) -> Result<()> {

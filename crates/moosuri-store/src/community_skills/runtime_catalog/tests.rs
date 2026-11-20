@@ -51,13 +51,7 @@ async fn previewing_an_update_preserves_installed_version_readiness_in_both_dire
         let offered_digest = offered.digest.clone();
         let artifact = external::encode(&offered).unwrap();
         let index = serde_json::json!({"format_version":1,"repository":SOURCE,"source_commit":offered.package.commit,"packages":[{"directory":offered.external.as_ref().unwrap().directory,"id":id,"name":offered.package.slug,"version":offered.metadata.version,"description":offered.description,"license":offered.metadata.license,"capabilities":offered.metadata.capabilities,"envelope_version":2,"content_digest":offered.digest,"artifact":format!("package-{}.json",offered.digest),"artifact_sha256":format!("{:x}",Sha256::digest(artifact))}]}).to_string().into_bytes();
-        // Synthetic previously verified snapshots, as in the cache-reuse fixture.
-        s.call(move |db| {
-            stage(&db.conn, &installed)?;
-            stage(&db.conn, &offered)
-        })
-        .await
-        .unwrap();
+        s.call(move |db| stage(&db.conn, &installed)).await.unwrap();
         s.mutate_community_skill(
             &a.user,
             id.clone(),
@@ -96,6 +90,14 @@ async fn previewing_an_update_preserves_installed_version_readiness_in_both_dire
             .community_catalog_preview(&a.user, source, id, offered_digest.clone())
             .await
             .unwrap();
+        assert!(
+            s.reuse_community_catalog_preview(&a.user, &preview)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Stage the verified offer after its catalog index references it, as on first preview.
+        s.call(move |db| stage(&db.conn, &offered)).await.unwrap();
         let after = s
             .reuse_community_catalog_preview(&a.user, &preview)
             .await

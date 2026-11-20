@@ -5,7 +5,9 @@ use std::{
 };
 pub(super) const PASSWORD: &str = "Synthetic-test-password-2026";
 pub(super) fn directory() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
     tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
         .prefix("moosuri-store-")
         .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
         .unwrap()

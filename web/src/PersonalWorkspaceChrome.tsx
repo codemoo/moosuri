@@ -8,7 +8,7 @@ import { useWorkspaceViewport } from "./workspace-viewport";
 import "./personal-workspace.css";
 import "./personal-conversations.css";
 
-export type MemberView = "chat" | "memory" | "connections" | "admin";
+export type MemberView = "chat" | "tasks" | "memory" | "connections" | "admin";
 export const threadDisplayTitle = (title: string) => title.trim() || "제목 없는 대화";
 const threadMonth = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long" });
 const threadDay = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" });
@@ -21,6 +21,7 @@ function historyGroup(thread: ThreadSummary, today: Date, yesterday: Date) {
 }
 const destinations = {
   chat: { label: "대화", icon: <WorkspaceIcon name="bubble" /> },
+  tasks: { label: "맡긴 일", icon: <WorkspaceIcon name="feed" /> },
   memory: { label: "기억", icon: <WorkspaceIcon name="notebook" /> },
   connections: { label: "연결", icon: <WorkspaceIcon name="link" /> },
   admin: { label: "관리", icon: <Icon icon="wrench" color="inherit" /> },

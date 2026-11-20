@@ -6,7 +6,7 @@ html:has(.member-workspace), body:has(.member-workspace) {
   --chat-canvas: var(--member-canvas);
   --chat-glass: rgb(56 56 56 / .8);
   --chat-answer: #1f1f20;
-  --chat-outgoing: #0074e8;
+  --chat-outgoing: #354251;
   position: fixed;
   inset-inline: 0;
   top: var(--workspace-top, 0px);
@@ -450,39 +450,22 @@ html:has(.member-workspace), body:has(.member-workspace) {
   .member-workspace[style*="--workspace-height"] .member-composer { padding-bottom: 6px; }
 }
 
-@media (min-width: 1024px) {
-  .member-workspace { grid-template-columns: clamp(176px, 16vw, 232px) minmax(0, 1fr); }
+@media (min-width: 768px) {
   .member-rail {
     grid-area: nav;
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    align-items: stretch;
     min-height: 0;
-    padding: 24px 14px 18px;
+    padding: 16px 4px;
     border-right: 1px solid var(--member-divider);
-    background: var(--member-sheet);
   }
-  .member-rail-brand, .member-rail-account { display: flex; align-items: center; gap: 10px; padding-inline: 10px; }
-  .member-rail-brand { font-size: 22px; font-weight: 650; letter-spacing: -.05em; }
+  .member-rail-brand, .member-rail-account { display: flex; align-items: center; justify-content: center; }
   .member-rail-brand img { border-radius: 11px; }
-  .member-navigation { gap: 4px; }
-  .member-navigation button {
-    grid-template-columns: 24px auto;
-    justify-content: start;
-    align-items: center;
-    gap: 12px;
-    padding-inline: 14px;
-    min-height: 46px;
-    border-radius: 12px;
-    font-size: 15px;
-    font-weight: 550;
-  }
-  .member-navigation button[aria-current] { background: var(--member-field); }
-  .member-rail-account { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--member-divider); }
-  .member-rail-account div { min-width: 0; }
-  .member-rail-account strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-  .member-rail-account small { color: var(--member-secondary); font-size: 12px; }
-  .member-topbar { padding-inline: 22px; border-bottom: 1px solid var(--member-divider); }
+  .member-rail-brand span, .member-rail-account div { display: none; }
+  .member-rail-account { margin-top: auto; }
+  .member-rail .member-navigation { margin-block: auto; gap: 4px; }
+  .member-topbar { padding-inline: 16px; }
 }
 @media (max-width: 767px) {
   .member-workspace .member-drawer {

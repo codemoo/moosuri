@@ -4,14 +4,18 @@ import type { MemberView } from "./PersonalWorkspaceChrome";
 
 export type MemberRoute = {
   view: MemberView;
+  taskId?: string;
   engine?: boolean;
   service?: string;
   setup?: boolean;
 };
 
+const taskIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+
 function readRoute(admin: boolean): MemberRoute {
   const screen = location.hash.slice(1);
   const [view, detail, setup] = screen.split("/");
+  if (view === "tasks") return { view, taskId: taskIdPattern.test(detail ?? "") ? detail : undefined };
   if (view === "connections") {
     const service = ["gmail", "drive", "docs", "slides", "sheets", "vault"].includes(detail) ? detail : undefined;
     return { view, service, setup: admin && (detail === "setup" || (!!service && setup === "setup")) };
@@ -21,14 +25,16 @@ function readRoute(admin: boolean): MemberRoute {
 }
 
 function screenName(route: MemberRoute) {
+  if (route.view === "tasks" && route.taskId) return `tasks/${route.taskId}`;
   if (route.view === "admin" && route.engine) return "admin/engine";
   if (route.view === "connections") return [route.view, route.service, route.setup && "setup"].filter(Boolean).join("/");
   return route.view;
 }
 
-type ConnectorOrigin = "chat" | "memory" | "admin" | "admin/engine";
+type ConnectorOrigin = "tasks" | `tasks/${string}` | "chat" | "memory" | "admin" | "admin/engine";
 function connectorOrigin(value: unknown): ConnectorOrigin | undefined {
-  if (value === "chat" || value === "memory" || value === "admin" || value === "admin/engine") return value;
+  if (typeof value === "string" && value.startsWith("tasks/") && taskIdPattern.test(value.slice(6))) return `tasks/${value.slice(6)}`;
+  if (value === "tasks" || value === "chat" || value === "memory" || value === "admin" || value === "admin/engine") return value;
 }
 
 function memberEntry(session: SessionView) {
@@ -85,6 +91,8 @@ export function useMemberRoute(session: SessionView, admin: boolean, initialConn
     const origin = currentConnectorOrigin(session);
     if (admin && (origin === "admin" || origin === "admin/engine"))
       open({ view: "admin", engine: origin === "admin/engine" }, true);
+    else if (origin === "tasks" || origin?.startsWith("tasks/"))
+      open({ view: "tasks", taskId: origin.slice(6) || undefined }, true);
     else open({ view: origin === "memory" ? "memory" : "chat" }, true);
   }
   return { route, open, leaveCatalog };

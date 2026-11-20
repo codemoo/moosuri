@@ -4,11 +4,11 @@
   --member-sheet: #222223;
   --member-field: #303031;
   --member-divider: rgb(255 255 255 / .1);
-  --member-text: #fafafa;
-  --member-accent: #b5e2cd;
+  --member-text: #f2efe9;
+  --member-accent: #c4d0df;
   --member-secondary: #aaaab0;
 }
-.member-signed-in { --accent: var(--member-accent); --accent-ink: #16382c; }
+.member-signed-in { --accent: var(--member-accent); --accent-ink: #29313a; }
 .member-page {
   width: min(100%, 776px);
   margin-inline: auto;
@@ -157,4 +157,56 @@
     background: var(--member-sheet);
   }
   .member-auth input { background: var(--member-canvas); }
+}
+
+@media (min-width: 1024px) {
+  .member-settings-layout {
+    width: min(100%, 1000px);
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    align-items: start;
+    gap: 32px;
+  }
+  .member-settings-layout .member-settings-tabs {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    border-radius: 16px;
+  }
+  .member-settings-tabs button { text-align: start; min-height: 44px; }
+}
+.personal-tasks {
+  width: min(100%, 776px);
+  margin-inline: auto;
+  padding: 32px 24px;
+  overflow-wrap: anywhere;
+}
+.personal-tasks h2 { margin: 0 0 16px; font-size: clamp(26px, 3vw, 34px); line-height: 1.2; }
+.personal-tasks h3 { margin: 26px 0 8px; font-size: 17px; }
+.personal-tasks p { color: var(--member-secondary); }
+.personal-tasks button { min-height: 44px; }
+.personal-tasks > button { padding: 8px 14px; margin-block: 4px 12px; background: var(--member-field); border-radius: 14px; }
+.personal-tasks .task-list { padding: 0; margin: 8px 0 20px; list-style: none; }
+.personal-tasks .task-list > li + li { border-top: 1px solid var(--member-divider); }
+.personal-tasks .task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 14px 12px;
+  text-align: start;
+  background: transparent;
+}
+.personal-tasks .task-row:hover { background: var(--member-sheet); }
+.personal-tasks .task-row strong { font-size: 16px; }
+.personal-tasks .task-state { color: var(--member-accent); font-size: 13px; }
+.personal-tasks .task-meta { grid-column: 1/-1; color: var(--member-secondary); font-size: 13px; }
+.personal-tasks .task-meta > time { margin-inline-start: 10px; }
+.personal-tasks .task-result { color: var(--member-text); white-space: pre-wrap; }
+.personal-tasks .task-history { padding-inline-start: 22px; }
+.personal-tasks .task-history li { padding-block: 5px; }
+.personal-tasks .task-history :is(time, small) { margin-inline-start: 5px; color: var(--member-secondary); }
+@media (max-width: 767px) {
+  .personal-tasks { padding: 4px 16px 28px; }
 }

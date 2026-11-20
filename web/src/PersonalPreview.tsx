@@ -29,6 +29,8 @@ import { clearWorkspaceGoogle, workspaceGoogleReturn } from "./personal-google-w
 import { useMemberRoute } from "./member-route";
 import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
+import { clearAdminRecovery } from "./PersonalAdminRecovery";
+import { PersonalTasks } from "./PersonalTasks";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
 import { initialKnowledgeDrafts } from "./KnowledgeState";
@@ -76,6 +78,7 @@ export default function PersonalPreview() {
   function fence() {
     for (const s of scopes) s.close();
     recovery.clear();
+    clearAdminRecovery();
     clearPersonalGoogle();
     clearWorkspaceGoogle();
     setDraftSession(null);
@@ -439,6 +442,7 @@ function Workspace({
   const chatScroll = useRef<HTMLDivElement>(null);
   const chatEditor = useRef<HTMLTextAreaElement>(null);
   const followTail = useRef(true);
+  const taskTurn = useRef<{ thread: string; run: string; lastCursor?: number } | null>(null);
   const olderScroll = useRef<{ top: number; height: number } | null>(null);
   const currentPage = page?.thread_id === selected ? page : null;
   const watching = view === "chat" && !!selected && watchThread === selected;
@@ -722,6 +726,24 @@ function Workspace({
       element.scrollTop = element.scrollHeight;
     }
   }, [currentPage, pending, googleReads, view]);
+  // A task can refer to an earlier conversation page. Follow only the
+  // cursors returned for that thread and stop if a page fails to advance.
+  useEffect(() => {
+    const target = taskTurn.current;
+    if (!target || view !== "chat" || selected !== target.thread || !currentPage || reading) return;
+    const turn = document.getElementById(`member-turn-${target.run}`);
+    if (turn) {
+      taskTurn.current = null;
+      followTail.current = false;
+      turn.focus({ preventScroll: true });
+      turn.scrollIntoView?.({ block: "center" });
+    } else if (currentPage.next_before != null && target.lastCursor !== currentPage.next_before) {
+      target.lastCursor = currentPage.next_before;
+      void history(target.thread, currentPage.next_before);
+    } else {
+      taskTurn.current = null;
+    }
+  }, [currentPage, reading, selected, view]);
   useEffect(() => {
     const element = chatScroll.current;
     if (!element || typeof ResizeObserver === "undefined") return;
@@ -983,6 +1005,7 @@ function Workspace({
     open({ view: "chat" });
   }
   function navigate(destination: MemberView, back = false) {
+    taskTurn.current = null;
     if (destination === "connections" && view !== "connections") {
       setOpenInbox(null);
     }
@@ -1024,6 +1047,7 @@ function Workspace({
   }
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread ? threadDisplayTitle(thread.title) : "새 대화"
+    : view === "tasks" ? "맡긴 일"
     : view === "memory" ? "기억"
     : view === "connections" ? "커넥터"
     : "관리";
@@ -1043,7 +1067,8 @@ function Workspace({
                 <button aria-pressed={adminTab === "engine"} onClick={() => open({ view: "admin", engine: true })}>어시스턴트 엔진</button>
               </nav>
               {adminTab === "members" ? (
-                <PersonalAdmin account={session.user.id} expired={expired} unavailable={leaveManagement} />
+                <PersonalAdmin account={session.user.id} recoveryScope={session.chat_draft_scope}
+                  openGoogleSetup={() => open({ view: "connections", setup: true })} expired={expired} unavailable={leaveManagement} />
               ) : (
                 <PersonalEngineSettings account={session.user.id} expired={expired} unavailable={leaveManagement} />
               )}
@@ -1089,6 +1114,14 @@ function Workspace({
                   );
               }}
             />
+          ) : view === "tasks" ? (
+            <PersonalTasks accountId={session.user.id} onExpired={expired} taskId={route.taskId}
+              onOpenTask={taskId => open({ view: "tasks", taskId })}
+              onBack={() => open({ view: "tasks" }, true)}
+              onThread={(thread, run) => {
+                openThread(thread);
+                taskTurn.current = { thread, run };
+              }} />
           ) : view === "memory" ? (
             <PersonalMemories accountId={session.user.id} onExpired={expired}
               drafts={memoryDrafts} updateDrafts={setMemoryDrafts} />
@@ -1159,7 +1192,7 @@ function Workspace({
               )}
               <div className="member-chat-turns" aria-live="polite">
                 {turns.map((turn) => (
-                  <article className="member-chat-turn" key={turn.run.id}>
+                  <article className="member-chat-turn" id={`member-turn-${turn.run.id}`} tabIndex={-1} key={turn.run.id}>
                     <div className="member-message">
                       <span className="sr-only">나</span>
                       <p>{turn.user_text}</p>

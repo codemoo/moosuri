@@ -107,5 +107,25 @@ registers its device-local grant through signed commands, waits in the original
 chat, performs actual login/TOTP/private repository count and settles the signed
 receipt into that same chat. A second chat reuses the same binding/browser.
 Fixture keys are `username,password,totp,origin,owner,repo`; values must never be
-printed. The isolated real Gitea test repository has exactly three open issues.
-Actual real-account/device and signed release distribution acceptance remain open.
+printed. Verify the official Gitea 1.24.6 binary against its published SHA-256
+and start a fresh loopback-only instance. Sign in as a synthetic non-admin
+member, enroll TOTP in Security settings, and create a private repository with
+exactly three open issues. Keep the fixture file in a private temporary
+directory. [Gitea 1.24.6 release files](https://dl.gitea.com/gitea/1.24.6/)
+
+```sh
+MOOSURI_GITEA_TEST_FIXTURE=/absolute/private/fixture.json \
+MOOSURI_NATIVE_BROWSER_CHROMIUM=/absolute/trusted/chromium \
+MOOSURI_GITEA_SYNTHETIC_STAGE_TRACE=1 \
+cargo test --locked -p moosuri-store --features credential-broker-chat --lib \
+  credential_chat::session_tests::actual_gitea_vault_totp_original_chat_and_reuse \
+  -- --ignored --exact --nocapture
+```
+
+F69-01 passed on 2026-11-20 with official Gitea 1.24.6 and headed Chrome for
+Testing 153.0.8010.12 on macOS arm64. The fixed stage trace recorded one password
+submission, one TOTP challenge and submission, two count projections, and
+graceful browser closure. Both signed receipts reported three open issues and
+settled their respective waiting chat runs. The receipt, server SQLite/WAL, and
+device journal checks found neither the fixture password nor the TOTP seed.
+Actual user account, physical-device, and signed distribution acceptance remain open.

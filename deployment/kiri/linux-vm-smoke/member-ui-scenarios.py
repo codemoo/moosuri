@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the built Kiri web client in Chrome with stateful, synthetic APIs."""
+"""Exercise the built Kiri web client in Chrome and WebKit with synthetic APIs."""
 
 import argparse
 import json
@@ -38,9 +38,16 @@ RESULT = "합성 시간표에서 08:15 출발을 확인했습니다."
 PAGE_URL = "https://timetable.example.test/"
 MAIL_PROMPT = "최근 받은 메일을 확인해 줘."
 MAIL_SUBJECT = "합성 주간 회의 공지"
+FOLLOW_UP = "주말 운행도 확인해 줘."
+NEXT_DRAFT = "다음에 비교할 다른 시간표 초안"
+QUOTA_PATH = "/personal/admin/engine/quota"
 
 
 class StaticFiles(SimpleHTTPRequestHandler):
+    def translate_path(self, path):
+        entrypoint = {"/app": "/personal.html", "/demo": "/demo.html"}.get(urlsplit(path).path)
+        return super().translate_path(entrypoint or path)
+
     def log_message(self, _format, *args):
         pass
 
@@ -78,6 +85,8 @@ class World:
         self.changes = {}
         self.members = [roster_member(OWNER, "최관리", admin=True), roster_member(MEMBER, "이온유")]
         self.conflict = False
+        self.follow_up_outcome = None
+        self.quota_checks = []
         self.now = int(time.time())
         self.choices = [dict(model="claude-sonnet-5-5", effort=effort) for effort in ("medium", "high")]
         self.engine = dict(configured=True, enabled=True, revision=1, kind="anthropic",
@@ -110,6 +119,24 @@ class World:
         recent = turn(THREAD, TASK, "저녁 운행도 확인해 줘.", 2, answer="합성 저녁 열차입니다.")
         recent["run"]["id"] = TASK
         self.turns[THREAD] = [active, recent]
+
+    def seed_active_answer(self, outcome):
+        self.seed_conversation()
+        self.follow_up_outcome = outcome
+        self.turns[THREAD].pop()
+        answer = self.turns[THREAD][0]
+        answer["assistant"] = []
+        answer["run"].update(state="running", attempt=1, accepts_text_follow_up=True)
+
+    def finish_active_answer(self):
+        answer = self.turns[THREAD][0]
+        answer["assistant"] = [dict(id="original-answer", text=RESULT, phase="final_answer", refusal=False)]
+        answer["run"].update(state="completed", accepts_text_follow_up=False)
+
+    def configure_openrouter(self, *checks):
+        model = dict(model="synthetic/model", effort=None)
+        self.engine.update(kind="open_router", connection_mode="api", host_default=model, choices=[model])
+        self.quota_checks = list(checks)
 
     def task(self, task_id):
         return dict(id=task_id, thread_id=THREAD, created_at=self.now, state="completed", next_actor="none",
@@ -231,9 +258,18 @@ class World:
                 return 422, {"code": "personal_inbox_requested"}
             saved = next((entry for entry in entries if entry["run"]["request_id"] == body["request_id"]), None)
             if saved is None:
+                if "follow_up_run_id" in body:
+                    original = next(entry["run"] for entry in entries if entry["run"]["id"] == body["follow_up_run_id"])
+                    assert original["state"] == "completed"
+                    receipt, = original["instructions"]
+                    assert (body["request_id"], body["text"]) == (receipt["request_id"], receipt["text"])
+                    assert receipt["reason"] == "text_follow_up_saved"
+                    receipt["reason"] = "text_follow_up_sent"
                 saved = turn(thread, body["request_id"], body["text"], len(entries) + 1)
                 entries.append(saved)
             return 201, saved
+        if operation == ["text-follow-ups"] and method == "POST":
+            return self.save_follow_up(thread, body)
         if not operation and method == "DELETE":
             self.threads = [entry for entry in self.threads if entry["id"] != thread]
             self.turns.pop(thread, None)
@@ -241,6 +277,24 @@ class World:
         if operation[:1] == ["browser"]:
             return self.browser_request_route(method, thread, operation[1:], body)
         raise AssertionError("thread operation missing in fixture")
+
+    def save_follow_up(self, thread, body):
+        assert thread == THREAD and body["run_id"] == OLD_TASK
+        data = body["instruction"]
+        run = self.turns[THREAD][0]["run"]
+        assert data["expected_attempt"] == run["attempt"] and data["text"] == FOLLOW_UP
+        outcome, self.follow_up_outcome = self.follow_up_outcome, None
+        if outcome == "lost":
+            return 0, None
+        if outcome == "settled":
+            self.finish_active_answer()
+            return 409, {"code": "conflict"}
+        assert run["state"] == "running" and not run.get("instructions")
+        receipt = dict(request_id=data["request_id"], text=data["text"], thread_id=thread,
+                       run_id=run["id"], attempt=run["attempt"], sequence=1, state="closed",
+                       reason="text_follow_up_saved")
+        run["instructions"] = [receipt]
+        return 200, receipt
 
     def browser_request_route(self, method, thread, operation, body):
         if not operation and method == "POST":
@@ -337,6 +391,9 @@ class World:
                 self.engine.update(revision=self.engine["revision"] + 1, enabled=body["enabled"],
                                    default_choice=body["default_choice"])
             return 200, self.engine
+        if path == "engine/quota":
+            assert method == "POST" and self.engine["kind"] == "open_router"
+            return self.engine_quota(body)
         if path == "google-setup":
             redirect = "https://assistant.example.test/oauth/google/callback"
             if method == "POST":
@@ -346,6 +403,25 @@ class World:
                 self.google_configured = True
             return 200, dict(configured=self.google_configured, redirect_uri=redirect)
         raise AssertionError("administrator operation missing in fixture")
+
+    def engine_quota(self, body):
+        assert body["revision"] == self.engine["revision"]
+        assert body["connection_revision"] == self.engine["connection_revision"]
+        expected_probe, probe, outcome = self.quota_checks.pop(0)
+        assert body["probe_id"] == expected_probe
+        if outcome == "pending":
+            return 200, dict(probe_id=probe, report=None)
+        metrics = [
+            dict(id="credit", label="합성 키 사용 한도", unit="usd", used=3, limit=3, remaining=0,
+                 reset_at=None, reset_interval="weekly"),
+            dict(id="requests", label="합성 요청 수", unit="requests", used=2, limit=None, remaining=None,
+                 reset_at=self.now + 3600, reset_interval=None),
+        ]
+        available = outcome != "unavailable"
+        report = dict(provider_id="old-binding" if outcome == "stale" else self.engine["connection_revision"],
+                      provider_revision=self.engine["revision"], status="known" if available else "unavailable",
+                      metrics=metrics if available else [], observed_at=self.now if available else None)
+        return 200, dict(probe_id=probe, report=report)
 
     def google(self, method, path, body):
         parts = path.removeprefix("/personal/google").strip("/").split("/")
@@ -492,6 +568,64 @@ def reject_and_retry(page, world):
     expect(composer(page)).to_have_value("Later draft B")
     expect(retry).to_have_count(0)
     assert len(chat_posts(world)) == 2
+
+
+def submit_follow_up(page):
+    expect(page.get_by_text(ORIGINAL, exact=True)).to_be_visible()
+    expect(button(page, "후속 지시 저장")).to_be_disabled()
+    composer(page).fill(FOLLOW_UP)
+    expect(button(page, "보내기")).to_be_disabled()
+    button(page, "후속 지시 저장").click()
+
+
+def recover_and_send_follow_up(page, world):
+    submit_follow_up(page)
+    retry = button(page, "같은 지시 저장 다시 확인")
+    expect(retry).to_be_enabled()
+    composer(page).fill(NEXT_DRAFT)
+    page.reload()
+    expect(retry).to_be_enabled()
+    expect(composer(page)).to_have_value(NEXT_DRAFT)
+    expect(button(page, "작성창으로 가져오기")).to_be_disabled()
+    path = f"/threads/{THREAD}/text-follow-ups"
+    original, = posts(world, path)
+    retry.click()
+    send = button(page, "후속 메시지로 보내기")
+    expect(page.get_by_text("후속 지시 저장됨 · 이 답변에는 미반영", exact=True)).to_be_visible()
+    expect(send).to_be_disabled()
+    assert posts(world, path) == [original, original] and not chat_posts(world)
+    world.finish_active_answer()
+    page.reload()
+    expect(page.get_by_text(RESULT, exact=True)).to_be_visible()
+    expect(send).to_be_enabled()
+    assert not chat_posts(world)
+    send.click()
+    expect(page.get_by_text("후속 메시지로 보냄", exact=True)).to_be_visible()
+    expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
+    assert chat_posts(world) == [dict(request_id=original["instruction"]["request_id"],
+        text=FOLLOW_UP, capability="text_only_preview", follow_up_run_id=OLD_TASK)]
+    page.reload()
+    expect(page.get_by_text("후속 메시지로 보냄", exact=True)).to_be_visible()
+    expect(composer(page)).to_have_value(NEXT_DRAFT)
+    assert len(world.turns[THREAD]) == 2 and len(chat_posts(world)) == 1
+
+
+def restore_follow_up_after_completion(page, world):
+    submit_follow_up(page)
+    expect(page.get_by_text("이 답변에 후속 지시를 저장하지 못했습니다.", exact=True)).to_be_visible()
+    expect(page.get_by_text(RESULT, exact=True)).to_be_visible()
+    composer(page).fill(NEXT_DRAFT)
+    page.reload()
+    restore = button(page, "작성창으로 가져오기")
+    expect(restore).to_be_disabled()
+    expect(composer(page)).to_have_value(NEXT_DRAFT)
+    composer(page).clear()
+    restore.click()
+    expect(composer(page)).to_have_value(FOLLOW_UP)
+    expect(restore).to_have_count(0)
+    assert not chat_posts(world)
+    assert len(posts(world, f"/threads/{THREAD}/text-follow-ups")) == 1
+    assert len(world.turns[THREAD]) == 1
 
 
 def memory_editor(page, world):
@@ -789,6 +923,97 @@ def admin_bookmark_member(page, world):
     assert not any(path.startswith("/personal/admin/") for _, path, _ in world.calls)
 
 
+def open_quota(page, world):
+    nav(page, "관리").click()
+    button(page, "어시스턴트 엔진").click()
+    quota = page.get_by_role("region", name="공급자 잔여 한도")
+    expect(quota).to_be_visible()
+    expect(quota).to_contain_text("잔여량 확인 불가 · 초기화 시각 확인 불가")
+    assert not posts(world, QUOTA_PATH)
+    return quota
+
+
+def read_openrouter_quota(page, world):
+    world.configure_openrouter((None, "first", "pending"), ("first", "first", "known"),
+                               (None, "second", "unavailable"))
+    quota = open_quota(page, world)
+    button(quota, "남은 사용량 확인").click()
+    expect(button(quota, "사용량 확인 중…")).to_be_disabled()
+    credit = quota.get_by_text("합성 키 사용 한도", exact=True).locator("..")
+    used, zero = page.evaluate('() => [3, 0].map(value => new Intl.NumberFormat(undefined, {style:"currency", currency:"USD"}).format(value))')
+    expect(credit).to_contain_text(f"사용 {used} · 한도 {used} · 남은 양 {zero} · 리셋 주기 매주 (시각 미제공)")
+    requests = quota.get_by_text("합성 요청 수", exact=True).locator("..")
+    expect(requests).to_contain_text("사용 2회 · 잔여량 미제공 · 리셋")
+    expect(requests).not_to_contain_text("리셋 시각 미제공")
+    expect(quota.get_by_text(re.compile("기준$"))).to_be_visible()
+    button(quota, "사용량 다시 확인").click()
+    expect(quota).to_contain_text("제공사에서 한도 정보를 받지 못했습니다.")
+    expect(credit).to_have_count(0)
+    expect(quota.get_by_text(re.compile("기준$"))).to_have_count(0)
+    assert not world.quota_checks
+
+
+def retry_stale_openrouter_quota(page, world):
+    world.configure_openrouter((None, "old-binding-probe", "stale"), (None, "current-binding-probe", "known"))
+    quota = open_quota(page, world)
+    check = button(quota, "남은 사용량 확인")
+    check.click()
+    expect(quota.get_by_role("status")).to_have_text("사용량을 새로 확인하지 못했습니다.")
+    expect(quota.get_by_text("합성 키 사용 한도", exact=True)).to_have_count(0)
+    assert len(posts(world, QUOTA_PATH)) == 1
+    check.click()
+    expect(quota.get_by_text("합성 키 사용 한도", exact=True)).to_be_visible()
+    expect(quota.get_by_role("status")).to_have_count(0)
+    assert not world.quota_checks
+
+
+def demo_member_entry(page, world):
+    expect(page).to_have_url(world.base + "/demo")
+    expect(heading(page, "예시 대화")).to_be_visible()
+    examples = page.get_by_role("navigation", name="예시 선택")
+    expect(button(examples, "시간표 확인")).to_have_attribute("aria-pressed", "true")
+    expect(page.get_by_text("오후 3시 40분, 7번 승강장에서 출발해요.", exact=True)).to_be_visible()
+    for title, evidence in (
+        ("기억 정정", "예시 기억 · 보리차 → 현미차"),
+        ("맡긴 일", "예시 작업 기록 · 요청 → 시간표 확인 → 완료"),
+    ):
+        example = button(examples, title)
+        example.press("Space")
+        expect(example).to_have_attribute("aria-pressed", "true")
+        expect(examples.locator('[aria-pressed="true"]')).to_have_count(1)
+        expect(page.get_by_text(evidence, exact=True)).to_be_visible()
+    draft = page.get_by_role("textbox", name="입력 연습")
+    draft.press_sequentially("Synthetic practice prompt")
+    expect(draft).to_have_value("Synthetic practice prompt")
+    check_layout(page)
+    assert world.calls == []
+    page.get_by_role("link", name="회원 공간 열기").click()
+    expect(page).to_have_url(world.base + "/app")
+    expect(heading(page, "내 무수리에 로그인")).to_be_visible()
+    assert world.calls == [("GET", "/auth/session", None)]
+
+
+def demo_draft_reset(page, world):
+    open_examples = page.get_by_role("link", name="예시 대화 둘러보기")
+    expect(heading(page, "내 무수리에 로그인")).to_be_visible()
+    previous_calls = list(world.calls)
+    open_examples.click()
+    expect(heading(page, "예시 대화")).to_be_visible()
+    draft = page.get_by_role("textbox", name="입력 연습")
+    draft.fill("Synthetic draft only on this screen")
+    button(page, "맡긴 일").click()
+    expect(draft).to_have_value("Synthetic draft only on this screen")
+    assert world.calls == previous_calls
+    page.get_by_role("link", name="회원 공간 열기").click()
+    expect(heading(page, "내 무수리에 로그인")).to_be_visible()
+    previous_calls = list(world.calls)
+    open_examples.click()
+    expect(heading(page, "예시 대화")).to_be_visible()
+    expect(button(page, "시간표 확인")).to_have_attribute("aria-pressed", "true")
+    expect(draft).to_have_value("")
+    assert world.calls == previous_calls and all(path == "/auth/session" for _, path, _ in world.calls)
+
+
 def browser_takeover(page, world):
     expect(composer(page)).to_be_enabled()
     composer(page).fill(f"브라우저에서 {PAGE_URL} 열어 주세요. 직접 조건을 바꿀게요.")
@@ -843,6 +1068,8 @@ SCENARIOS = {
     "B-AUTH-01": (False, sign_in),
     "B-CHAT-01": (False, author_and_restore),
     "B-CHAT-02": (False, reject_and_retry),
+    "B-FTU-01": (False, recover_and_send_follow_up),
+    "B-FTU-02": (False, restore_follow_up_after_completion),
     "B-MEM-01": (False, memory_editor),
     "B-NAV-01": (False, browser_history),
     "B-NAV-02": (False, consent_history_from_task),
@@ -854,6 +1081,10 @@ SCENARIOS = {
     "B-GWS-02": (True, google_setup_to_catalog),
     "B-GWS-03": (True, google_setup_from_connector),
     "B-ENG-01": (True, engine),
+    "B-ENG-02": (True, read_openrouter_quota),
+    "B-ENG-03": (True, retry_stale_openrouter_quota),
+    "B-DEMO-01": (False, demo_member_entry),
+    "B-DEMO-02": (False, demo_draft_reset),
     "B-BR-01": (False, browser_takeover),
     "B-TASK-01": (False, tasks_to_original),
     "B-GMAIL-04": (False, gmail_read),
@@ -889,12 +1120,14 @@ def main():
             for scenario in args.scenario or SCENARIOS:
                 admin, run = SCENARIOS[scenario]
                 for width in args.width or heights:
-                    world = World(base, admin=admin, signed_in=scenario != "B-AUTH-01")
+                    world = World(base, admin=admin, signed_in=scenario not in ("B-AUTH-01", "B-DEMO-01", "B-DEMO-02"))
                     if scenario == "B-TASK-01":
                         world.seed_conversation()
                         world.tasks_visible = True
                     if scenario == "B-ENG-01":
                         world.engine["enabled"] = False
+                    if scenario in ("B-FTU-01", "B-FTU-02"):
+                        world.seed_active_answer("lost" if scenario == "B-FTU-01" else "settled")
                     context = browser.new_context(viewport={"width": width, "height": heights[width]},
                                                   service_workers="block")
                     context.route("**/*", world.serve)
@@ -903,7 +1136,8 @@ def main():
                     page.set_default_timeout(5_000)
                     page.set_default_navigation_timeout(15_000)
                     try:
-                        page.goto(base + "/personal.html", wait_until="domcontentloaded")
+                        entrypoint = {"B-DEMO-01": "/demo", "B-DEMO-02": "/app"}.get(scenario, "/personal.html")
+                        page.goto(base + entrypoint, wait_until="domcontentloaded")
                         run(page, world)
                         check_layout(page)
                         assert not world.errors, world.errors

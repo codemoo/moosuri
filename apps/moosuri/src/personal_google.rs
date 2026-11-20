@@ -699,8 +699,8 @@ async fn start(
         .store
         .start_member_service_oauth(&user, g.owner, g.service, app.app_revision)
         .await?;
-    if let Some(read) = input.read {
-        if let Err(e) = g
+    if let Some(read) = input.read
+        && let Err(e) = g
             .store
             .bind_member_google_read_oauth(
                 &user,
@@ -710,10 +710,9 @@ async fn start(
                 read,
             )
             .await
-        {
-            let _ = g.store.cancel_mail_oauth_state(pending.state.clone()).await;
-            return Err(e.into());
-        }
+    {
+        let _ = g.store.cancel_mail_oauth_state(pending.state.clone()).await;
+        return Err(e.into());
     }
     let verifier = SecretString::new(pending.verifier.to_string())
         .map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "unavailable"))?;

@@ -361,10 +361,10 @@ fn selected(conn: &Connection, user: Option<&UserContext>) -> Result<Option<Mode
     } else {
         conn.query_row("SELECT provider_id,revision,model,effort FROM installation_model_selection WHERE singleton=1",[],selection_row).optional()?
     };
-    if let Some(selection) = &mut row {
-        if owner(conn, &selection.provider_id)?.is_some() {
-            selection.source = ModelSource::PersonalCompatible;
-        }
+    if let Some(selection) = &mut row
+        && owner(conn, &selection.provider_id)?.is_some()
+    {
+        selection.source = ModelSource::PersonalCompatible;
     }
     Ok(row)
 }

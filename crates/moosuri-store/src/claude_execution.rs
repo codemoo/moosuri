@@ -133,10 +133,10 @@ pub(super) fn binding(
     {
         return Err(StoreError::Conflict);
     }
-    if let Some(effort) = &v.effort {
-        if !reported_efforts(metadata)?.contains(effort) {
-            return Err(StoreError::Conflict);
-        }
+    if let Some(effort) = &v.effort
+        && !reported_efforts(metadata)?.contains(effort)
+    {
+        return Err(StoreError::Conflict);
     }
     // Old stored text-only choices remain text-only after a new proof succeeds.
     if v.function_tools && !tool_proven(c, tenant, account, v)? {

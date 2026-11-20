@@ -69,12 +69,10 @@ pub(super) fn authorized_revision(
             crate::recovery_budget::require_dispatch_identity(c)?;
         }
         Ok(row)
+    } else if dispatch {
+        require_binding(c, id, revision)
     } else {
-        if dispatch {
-            require_binding(c, id, revision)
-        } else {
-            require_binding_metadata(c, id, revision)
-        }
+        require_binding_metadata(c, id, revision)
     }
 }
 pub(super) fn personal_choices_for(

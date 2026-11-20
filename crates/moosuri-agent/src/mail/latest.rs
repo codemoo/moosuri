@@ -55,13 +55,12 @@ impl MailService {
         else {
             return Ok(false);
         };
-        if let Some((id, epoch)) = self.store.gmail_server_resume_pin(lease).await? {
-            if !connections
+        if let Some((id, epoch)) = self.store.gmail_server_resume_pin(lease).await?
+            && !connections
                 .iter()
                 .any(|c| c.id == id && c.epoch == epoch && !c.native_send && c.status == "active")
-            {
-                return Err(StoreError::Conflict);
-            }
+        {
+            return Err(StoreError::Conflict);
         }
         if let Some(handled) = self.gws_latest_chat(lease, &user, latest).await? {
             return Ok(handled);

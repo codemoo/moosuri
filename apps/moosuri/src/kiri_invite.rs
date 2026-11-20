@@ -354,12 +354,10 @@ fn planned_invitation(options: &Options) -> Result<(), String> {
     }
     if let Some(invitation) = runtime_registry::admin::operator_invitation(root, options.request_id)
         .map_err(|_| "invite_planned_request_conflict")?
+        && (invitation.name != options.name.trim()
+            || invitation.email != options.profile.email.trim().to_ascii_lowercase())
     {
-        if invitation.name != options.name.trim()
-            || invitation.email != options.profile.email.trim().to_ascii_lowercase()
-        {
-            return Err("invite_planned_identity_conflict".into());
-        }
+        return Err("invite_planned_identity_conflict".into());
     }
     Ok(())
 }

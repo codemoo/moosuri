@@ -470,8 +470,7 @@ async fn start(
                     scope,
                     j,
                     input.request_id,
-                    opened.tab_id,
-                    opened.observation,
+                    opened,
                     input.wait_for_user,
                     epoch,
                 )
@@ -486,13 +485,12 @@ async fn observed(
     scope: Scope,
     mut j: Job,
     request: Uuid,
-    tab: Uuid,
-    obs: WorkspaceObservation,
+    opened: Opened,
     wait: bool,
     epoch: Option<i64>,
 ) -> Reply {
-    let mut tab = tab;
-    let mut p = obs.page;
+    let mut tab = opened.tab_id;
+    let mut p = opened.observation.page;
     let mut previous = Vec::new();
     let generated = loop {
         p.url = display_url(&p.url);
@@ -896,21 +894,23 @@ async fn dispatch(
     drop(dispatch_guard);
     match op {
         "resume" | "follow" => {
-            let parse = if op == "follow" {
-                serde_json::from_value::<Opened>(result)
-                    .ok()
-                    .map(|o| (o.tab_id, o.observation))
+            let opened = if op == "follow" {
+                serde_json::from_value::<Opened>(result).ok()
             } else {
                 j.view
                     .active_tab_id
                     .as_ref()
                     .and_then(|id| Uuid::parse_str(id).ok())
                     .zip(serde_json::from_value::<WorkspaceObservation>(result).ok())
+                    .map(|(tab_id, observation)| Opened {
+                        tab_id,
+                        observation,
+                    })
             };
-            let Some((tab, obs)) = parse else {
+            let Some(opened) = opened else {
                 return failed(&s, scope, j.view, a.request_id, Failure::Unknown, None).await;
             };
-            return observed(&s, scope, j, a.request_id, tab, obs, false, epoch).await;
+            return observed(&s, scope, j, a.request_id, opened, false, epoch).await;
         }
         "switch" | "close_tab" => {
             if let Ok(t) = serde_json::from_value(result)

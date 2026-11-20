@@ -690,7 +690,7 @@ mod tests {
         );
         assert_eq!(
             store.personal_browser_retired(owner).await.unwrap(),
-            [view.id.clone()]
+            std::slice::from_ref(&view.id)
         );
         store
             .personal_browser_retired_ack(owner, view.id)

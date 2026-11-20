@@ -402,10 +402,7 @@ fn text_chat(value: &Value) -> bool {
                             && b.get("type").and_then(Value::as_str) == Some("text")
                             && b.get("text").is_some_and(Value::is_string)
                     })
-                }) =>
-            {
-                ()
-            }
+                }) => {}
             _ => return false,
         }
         if let Some(calls) = message.get("tool_calls") {
@@ -437,28 +434,24 @@ fn text_chat(value: &Value) -> bool {
             return false;
         }
     }
-    if let Some(choice) = value.get("tool_choice") {
-        if !matches!(choice.as_str(), Some("auto" | "none" | "required"))
-            && !choice.as_object().is_some_and(|o| {
-                o.len() == 2
-                    && o.get("type").and_then(Value::as_str) == Some("function")
-                    && o.get("function")
-                        .and_then(Value::as_object)
-                        .is_some_and(|f| {
-                            f.len() == 1 && f.get("name").is_some_and(Value::is_string)
-                        })
-            })
-        {
-            return false;
-        }
+    if let Some(choice) = value.get("tool_choice")
+        && !matches!(choice.as_str(), Some("auto" | "none" | "required"))
+        && !choice.as_object().is_some_and(|o| {
+            o.len() == 2
+                && o.get("type").and_then(Value::as_str) == Some("function")
+                && o.get("function")
+                    .and_then(Value::as_object)
+                    .is_some_and(|f| f.len() == 1 && f.get("name").is_some_and(Value::is_string))
+        })
+    {
+        return false;
     }
-    if let Some(options) = value.get("stream_options") {
-        if !options
+    if let Some(options) = value.get("stream_options")
+        && !options
             .as_object()
             .is_some_and(|o| o.len() == 1 && o.get("include_usage").is_some_and(Value::is_boolean))
-        {
-            return false;
-        }
+    {
+        return false;
     }
     // JSON schemas are text data; remote schema references are unnecessary here.
     fn local_refs(value: &Value) -> bool {

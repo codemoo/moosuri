@@ -213,7 +213,7 @@ pub(super) async fn execute(
             )
             .await
         {
-            Ok(Some(ready)) => client = ExecutionClient::Http(ready),
+            Ok(Some(ready)) => client = ExecutionClient::Http(Box::new(ready)),
             Ok(None) => (),
             Err(_) => {
                 finish(

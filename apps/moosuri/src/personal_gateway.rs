@@ -1130,9 +1130,7 @@ async fn public_shell(
     } else if matches!(
         path,
         "/moosuri-icon-192.png" | "/moosuri-icon-512.png" | "/personal.webmanifest"
-    ) {
-        path
-    } else if path.strip_prefix("/assets/").is_some_and(|name| {
+    ) || path.strip_prefix("/assets/").is_some_and(|name| {
         !name.is_empty()
             && name
                 .bytes()

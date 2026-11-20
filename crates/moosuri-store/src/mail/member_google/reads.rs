@@ -269,7 +269,31 @@ impl Store {
         self.call(move|db|{
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=authority(&tx,&u,o)?;intent(&tx,&u,&v)?;
             let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3)",params![u.tenant.0,u.account.id,v.request_id.to_string()],|r|r.get(0))?;
-            if exists {let s=saved(&tx,&u,v.request_id)?;if s.intent.thread_id!=v.thread_id||s.owner.volume!=o.volume||s.owner.generation!=o.generation||s.app!=app||s.id!=Some(id)||s.epoch!=Some(epoch){return Err(StoreError::Conflict);}let same:bool=tx.query_row("SELECT session_digest=?4 AND auth_epoch=?5 FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",params![u.tenant.0,u.account.id,v.request_id.to_string(),u.digest.as_slice(),u.epoch],|r|r.get(0))?;if !same{return Err(StoreError::Conflict);}if s.phase!="ready" {let v=view(&tx,&db.provider_key,&u,o,v.request_id)?;tx.commit()?;return Ok(MemberGoogleReadAdmission::Existing(v));}}
+            if exists {
+                let s = saved(&tx, &u, v.request_id)?;
+                if s.intent.thread_id != v.thread_id
+                    || s.owner.volume != o.volume
+                    || s.owner.generation != o.generation
+                    || s.app != app
+                    || s.id != Some(id)
+                    || s.epoch != Some(epoch)
+                {
+                    return Err(StoreError::Conflict);
+                }
+                let same: bool = tx.query_row(
+                    "SELECT session_digest=?4 AND auth_epoch=?5 FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+                    params![u.tenant.0, u.account.id, v.request_id.to_string(), u.digest.as_slice(), u.epoch],
+                    |r| r.get(0),
+                )?;
+                if !same {
+                    return Err(StoreError::Conflict);
+                }
+                if s.phase != "ready" {
+                    let view = view(&tx, &db.provider_key, &u, o, v.request_id)?;
+                    tx.commit()?;
+                    return Ok(MemberGoogleReadAdmission::Existing(view));
+                }
+            }
             let r=live(&tx,&u,o,app,Service::Gmail,true)?;if r.id!=Some(id)||r.epoch!=epoch{return Err(StoreError::Conflict);}
             if !exists {if tx.query_row("SELECT count(*) FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id],|r|r.get::<_,i64>(0))?>=1024{return Err(StoreError::Busy);}tx.execute("INSERT INTO member_google_thread_reads(tenant_id,account_id,request_id,thread_id,volume_id,generation,auth_epoch,session_digest,app_revision,connection_id,source_epoch,phase,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'ready',unixepoch(),unixepoch())",params![u.tenant.0,u.account.id,v.request_id.to_string(),v.thread_id.to_string(),o.volume.to_string(),o.generation as i64,u.epoch,u.digest.as_slice(),app.to_string(),id.to_string(),epoch])?;}
             tx.execute("UPDATE member_google_thread_reads SET phase='dispatched',updated_at=unixepoch() WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3 AND phase='ready'",params![u.tenant.0,u.account.id,v.request_id.to_string()])?;

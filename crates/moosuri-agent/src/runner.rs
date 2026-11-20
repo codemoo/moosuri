@@ -638,7 +638,7 @@ impl TextExecutor<'_> {
 }
 
 enum ExecutionClient {
-    Http(ModelClient),
+    Http(Box<ModelClient>),
     Claude(
         std::sync::Arc<moosuri_connectors::claude_code::Profile>,
         String,
@@ -678,7 +678,7 @@ impl ExecutionClient {
                 )
                 .await
                 .map_err(|_| TransportError::InvalidConfiguration)?;
-            return client.with_images(images).map(Self::Http);
+            return client.with_images(images).map(Box::new).map(Self::Http);
         }
         let credential = binding
             .credential
@@ -693,6 +693,7 @@ impl ExecutionClient {
             },
         )?
         .with_images(images)
+        .map(Box::new)
         .map(Self::Http)
     }
 
@@ -1455,7 +1456,7 @@ pub(crate) async fn execute_with_calendar(
             )
             .await
         {
-            Ok(Some(ready)) => client = ExecutionClient::Http(ready),
+            Ok(Some(ready)) => client = ExecutionClient::Http(Box::new(ready)),
             Ok(None) => (),
             Err(_) => {
                 finish(

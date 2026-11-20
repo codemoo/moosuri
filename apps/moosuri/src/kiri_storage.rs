@@ -676,10 +676,7 @@ fn enable_unit(name: &str) -> Result<(), String> {
     let target = Path::new("/etc/systemd/system").join(name);
     match fs::symlink_metadata(&link) {
         Ok(m)
-            if m.file_type().is_symlink() && fs::read_link(&link).ok() == Some(target.clone()) =>
-        {
-            ()
-        }
+            if m.file_type().is_symlink() && fs::read_link(&link).ok() == Some(target.clone()) => {}
         Ok(_) => return Err("storage_foreign_enable_link".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             std::os::unix::fs::symlink(target, &link).map_err(|_| "storage_enable_failed")?;

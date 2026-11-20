@@ -266,7 +266,7 @@ enum Settings {
     ClaudeCode(claude::Config),
 }
 enum Adapter {
-    Chatgpt(chatgpt::Adapter),
+    Chatgpt(Box<chatgpt::Adapter>),
     Claude(claude::Adapter),
     #[cfg(test)]
     Fixture,
@@ -518,7 +518,7 @@ pub(crate) async fn run(o: &Options) -> Result<(), String> {
     let (route, adapter) = match config.adapter {
         Settings::ChatgptPlan(c) => (
             Route::ChatgptPlan,
-            Adapter::Chatgpt(chatgpt::Adapter::open(c, &models).await?),
+            Adapter::Chatgpt(Box::new(chatgpt::Adapter::open(c, &models).await?)),
         ),
         Settings::ClaudeCode(c) => (
             Route::ClaudeCode,

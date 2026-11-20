@@ -242,14 +242,14 @@ pub(super) async fn run_locked(
             "onboard_browser_relay_not_ready_retry_same_invitation",
         ));
     }
-    if config.public_origin.is_some() {
-        if let Some(root) = profile.google_sockets_root.as_ref() {
-            sockets.push((
-                root,
-                "google.sock",
-                "onboard_gws_relay_not_ready_retry_same_invitation",
-            ));
-        }
+    if config.public_origin.is_some()
+        && let Some(root) = profile.google_sockets_root.as_ref()
+    {
+        sockets.push((
+            root,
+            "google.sock",
+            "onboard_gws_relay_not_ready_retry_same_invitation",
+        ));
     }
     for (root, socket, reason) in sockets {
         let path = root.join(account.to_string()).join(socket);

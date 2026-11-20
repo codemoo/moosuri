@@ -477,10 +477,10 @@ fn knowledge_graph(c: &Connection, owner: &Owner) -> Check<()> {
             )?;
         }
         ensure(
-            !draft["valid_from"]
+            draft["valid_from"]
                 .as_i64()
                 .zip(draft["valid_until"].as_i64())
-                .is_some_and(|(a, b)| a >= b),
+                .is_none_or(|(a, b)| a < b),
             "invalid memory validity range",
         )?;
         let evidence = draft["evidence"]

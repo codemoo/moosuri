@@ -22,12 +22,12 @@ pub struct ModelPin {
 }
 pub enum Admission {
     InboxRequested,
-    Existing(ChatTurn),
+    Existing(Box<ChatTurn>),
     Fresh(Work),
 }
 // Neither arbitrary callers nor model text can manufacture a settlement lease.
 pub struct Work {
-    user: UserContext,
+    user: Box<UserContext>,
     owner: personal_volume::VolumeOwner,
     run: String,
     nonce: [u8; 32],
@@ -181,7 +181,7 @@ fn existing(
         {
             return Err(StoreError::Conflict);
         }
-        return Ok(Some(Admission::Existing(chat::turn(conn, &run)?)));
+        return Ok(Some(Admission::Existing(Box::new(chat::turn(conn, &run)?))));
     }
     let active = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM chat_runs WHERE tenant_id=?1 AND thread_id=?2 AND state IN ('queued','running'))",
@@ -266,7 +266,7 @@ impl Store {
             tx.execute("INSERT INTO personal_text_previews(tenant_id,run_id,volume_id,generation,connection_revision,call_id,nonce) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![user.tenant.0,id.to_string(),owner.volume.to_string(),owner.generation as i64,pin.connection_revision.to_string(),call_id.to_string(),nonce.as_slice()])?;
             let run=chat::load_run(&tx,&user.tenant.0,&id.to_string())?;let turn=chat::turn(&tx,&run)?;chat::emit(&tx,&run,ChatChange::Turn{turn})?;
             tx.commit()?;
-            Ok(Admission::Fresh(Work {user,owner,run:id.to_string(),nonce,request}))
+            Ok(Admission::Fresh(Work {user:Box::new(user),owner,run:id.to_string(),nonce,request}))
         }).await
     }
     pub async fn settle_text_preview(

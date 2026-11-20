@@ -300,13 +300,13 @@ impl ClientCache {
             })
             .transpose()?;
         let tag = bytes.as_ref().map(|b| hmac::sign(key, b));
-        if let Some(previous) = previous {
-            if tag.as_ref().map(|t| t.as_ref()) == previous.tag.as_ref().map(|t| t.as_ref()) {
-                return Ok(Self {
-                    tag,
-                    client: previous.client.clone(),
-                });
-            }
+        if let Some(previous) = previous
+            && tag.as_ref().map(|t| t.as_ref()) == previous.tag.as_ref().map(|t| t.as_ref())
+        {
+            return Ok(Self {
+                tag,
+                client: previous.client.clone(),
+            });
         }
         let credential = bytes
             .as_ref()
@@ -353,7 +353,7 @@ enum Executor {
     Login {
         route: Route,
         owner: Owner,
-        connection: Connection,
+        connection: Box<Connection>,
     },
 }
 fn binding_matches(a: &runtime_registry::Allocation, b: &Binding) -> bool {
@@ -774,17 +774,15 @@ impl Broker {
             connection.map(|connection| Executor::Login {
                 route,
                 owner,
-                connection,
+                connection: Box::new(connection),
             })
-        } else {
-            if let Some(client) = self.api_client() {
-                if client.validate_text_request(&request).is_err() {
-                    return Reply::error("request_invalid");
-                }
-                Some(Executor::Api(client))
-            } else {
-                None
+        } else if let Some(client) = self.api_client() {
+            if client.validate_text_request(&request).is_err() {
+                return Reply::error("request_invalid");
             }
+            Some(Executor::Api(client))
+        } else {
+            None
         };
         let permit = match self.admit(b, &r, &key, executor.is_some(), start_epoch) {
             Ok(Some(Admission::Existing(receipt))) => return Reply::receipt(r.call_id, receipt),

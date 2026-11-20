@@ -21,8 +21,9 @@ pub(crate) fn gws_inbox_confirmed_in(
     Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM gws_inbox_selections WHERE tenant_id=?1 AND account_id=?2 AND auth_epoch=?3 AND fingerprint=?4 AND confirmed=1)", params![user.tenant.0,user.account.id,user.epoch,fingerprint.as_slice()], |r| r.get(0))?)
 }
 fn observation(conn: &Connection, user: &UserContext) -> Result<Vec<u8>> {
+    type InboxSelection = (i64, Vec<u8>, bool, Option<Vec<u8>>, Option<i64>);
     validate(conn, user, true, false)?;
-    let row:Option<(i64,Vec<u8>,bool,Option<Vec<u8>>,Option<i64>)>=conn.query_row("SELECT auth_epoch,fingerprint,confirmed,challenge_digest,challenge_expires_at FROM gws_inbox_selections WHERE tenant_id=?1 AND account_id=?2",params![user.tenant.0,user.account.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+    let row: Option<InboxSelection> = conn.query_row("SELECT auth_epoch,fingerprint,confirmed,challenge_digest,challenge_expires_at FROM gws_inbox_selections WHERE tenant_id=?1 AND account_id=?2",params![user.tenant.0,user.account.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
     Ok(Sha256::digest(serde_json::to_vec(&row).map_err(|_| StoreError::Corrupt)?).to_vec())
 }
 impl Store {

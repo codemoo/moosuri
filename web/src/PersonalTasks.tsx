@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PersonalWorkflows, type WorkSchedule } from "./PersonalWorkflows";
 import { ApiFailure, isAborted, RequestScope } from "./api";
 import { browserStateLabel, type PersonalBrowserState } from "./personal-browser";
 
+type TaskState = PersonalBrowserState | "queued" | "running" | "failed" | "cancelled" | "incomplete" | "refused" | "awaiting_consent" | "dispatched" | "withdrawn" | "unknown";
 export type TaskSummary = {
-  id: string; thread_id: string; title: string; state: PersonalBrowserState;
+  id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail"; preview?: string | null;
   next_actor: "assistant" | "member" | "none"; created_at: number;
 };
-export type TaskPage = { items: TaskSummary[]; next_before: string | null };
+export type TaskPage = { items: TaskSummary[]; next_before: string | null; schedules?: WorkSchedule[] };
 export type TaskDetail = {
   task: TaskSummary; request: string; thread_title: string; reason: string | null;
-  history: { state: PersonalBrowserState; at: number | null }[];
+  history: { state: string; at: number | null; title?: string | null; detail?: string | null }[];
   result: string | null; observation: string | null;
 };
 type Props = {
@@ -33,6 +35,20 @@ const nextStep: Record<PersonalBrowserState, string> = {
   closed: "브라우저가 닫혔습니다.",
   outcome_unknown: "원래 대화에서 마지막으로 확인된 내용을 살펴보세요.",
 };
+const states:Record<string,string> = { starting:"시작됨", queued:"접수됨", running:"답변 작성 중", completed:"완료됨", failed:"실패", cancelled:"취소됨", incomplete:"일부 완료", refused:"응답 거절", outcome_unknown:"결과 확인 필요", awaiting_consent:"Google 연결 대기", ready:"조회 준비됨", dispatched:"조회 요청 전달", unknown:"조회 결과 확인 필요", withdrawn:"조회 권한 철회", prepared:"대화 문맥 준비", searched:"검색 완료", source_read:"자료 확인" };
+function stateLabel(task:TaskSummary,state:string=task.state) {
+  if ((!task.kind || task.kind==="browser") && state in browserStateLabel) return browserStateLabel[state as PersonalBrowserState];
+  return states[state] ?? state;
+}
+const shortTime = new Intl.DateTimeFormat("ko-KR",{hour:"numeric",minute:"2-digit"});
+const calendarDay = new Intl.DateTimeFormat("ko-KR",{year:"numeric",month:"long",day:"numeric"});
+function dayLabel(at:number,today:Date,yesterday:Date) {
+  const date=new Date(at*1000);
+  if(date.toDateString()===today.toDateString()) return "오늘";
+  if(date.toDateString()===yesterday.toDateString()) return "어제";
+  return calendarDay.format(date);
+}
+
 const reasons: Record<string, string> = {
   browser_model_unavailable: "페이지를 열었지만 모델 응답을 받지 못했습니다.",
   browser_busy: "브라우저가 다른 작업을 처리하고 있습니다.",
@@ -49,6 +65,10 @@ const actorLabel = { assistant: "어시스턴트 진행", member: "내 확인 �
 function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: Props & {
   taskId: string; onTask: (task: TaskSummary) => void;
 }) {
+  const [step,setStep] = useState<number | null>(null);
+  const stepPanel=useRef<HTMLDivElement>(null);
+  const stepTrigger=useRef<HTMLButtonElement | null>(null);
+  useEffect(()=>{if(step!==null)stepPanel.current?.focus({preventScroll:true});},[step]);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [issue, setIssue] = useState("");
   const [reload, setReload] = useState(0);
@@ -65,7 +85,7 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
         setDetail(received);
         onTask(received.task);
         setIssue("");
-        if (["starting", "reading", "resuming", "stopping", "ready", "user_control"].includes(received.task.state))
+        if (["starting", "reading", "resuming", "stopping", "ready", "user_control", "running", "queued", "dispatched"].includes(received.task.state))
           timer = setTimeout(() => { void read(); }, 5000);
       } catch (error) {
         if (isAborted(error)) return;
@@ -81,25 +101,40 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
     void read();
     return () => { scope.close(); clearTimeout(timer); };
   }, [accountId, taskId, reload, onTask]);
-  return <section className="personal-tasks" aria-label="맡긴 일 상세">
-    <button type="button" onClick={onBack}>맡긴 일 목록</button>
+  const selected=step===null?null:detail?.history[step];
+  const isBrowser=!detail?.task.kind || detail.task.kind==="browser";
+  const stepBody=selected && detail && (selected.detail ?? (selected.state==="starting" ? detail.request :
+    selected.state==="completed" ? detail.result : (isBrowser ? nextStep[selected.state as PersonalBrowserState] : null)) ?? stateLabel(detail.task,selected.state));
+  return <section className="personal-tasks task-reader" aria-label="맡긴 일 상세">
+    <button className="task-back" type="button" onClick={onBack}>맡긴 일 목록</button>
+    {detail && <div className="task-meta"><span className="task-state">{stateLabel(detail.task)}</span><TaskTime at={detail.task.created_at} /></div>}
     <h2>{detail?.task.title || "작업 상세"}</h2>
     {issue && <p role="alert">{issue}</p>}
     {!detail && loading && <p role="status">작업을 불러오는 중…</p>}
     {detail && <>
-      <div className="task-meta"><span className="task-state">{browserStateLabel[detail.task.state]}</span>
-        <TaskTime at={detail.task.created_at} /></div>
-      <p>{nextStep[detail.task.state]}</p>
+      {isBrowser && <p>{nextStep[detail.task.state as PersonalBrowserState]}</p>}
       {detail.reason && reasons[detail.reason] && <p>{reasons[detail.reason]}</p>}
-      <button type="button" onClick={() => onThread(detail.task.thread_id, detail.task.id)}>
+      <div className="task-receipt">
+        <h3>요청 내용</h3><p className="task-result">{detail.request}</p>
+        {detail.result && <><h3>작업 결과</h3><p className="task-result">{detail.result}</p></>}
+        {detail.observation && <><h3>확인한 내용</h3><p className="task-result">{detail.observation}</p></>}
+      </div>
+      <h3>진행 기록</h3><div className="task-trace" data-selected={!!selected}>
+        <ol className="task-history">{detail.history.map((event,index)=>
+          <li key={index}><button type="button" aria-pressed={index===step} onClick={e=>{stepTrigger.current=e.currentTarget;setStep(index);}}>
+            <span className="task-marker" aria-hidden="true">{index===0 ? "•" : "✓"}</span>
+            <span>{event.title || (event.state==="closed" ? "브라우저 종료" : stateLabel(detail.task,event.state))}</span>
+            <small>{event.at!==null?shortTime.format(event.at*1000):"시각 미기록"}</small>
+          </button></li>)}</ol>
+        {selected && <div className="task-step-detail" role="region" aria-label="단계 상세" tabIndex={-1} ref={stepPanel}>
+          <button className="task-step-back" onClick={()=>{setStep(null);requestAnimationFrame(()=>stepTrigger.current?.focus());}}>진행 기록으로</button>
+          <h4>{selected.title || stateLabel(detail.task,selected.state)}</h4>
+          {selected.at!==null && <TaskTime at={selected.at}/>}<p>{stepBody}</p>
+        </div>}
+      </div>
+      {detail.task.thread_id && <button type="button" onClick={() => onThread(detail.task.thread_id, detail.task.kind==="gmail"?"":detail.task.id)}>
         원래 대화 열기 · {detail.thread_title}
-      </button>
-      <h3>요청 내용</h3><p className="task-result">{detail.request}</p>
-      {detail.result && <><h3>작업 결과</h3><p className="task-result">{detail.result}</p></>}
-      {detail.observation && <><h3>확인한 내용</h3><p className="task-result">{detail.observation}</p></>}
-      <h3>진행 기록</h3><ol className="task-history">{detail.history.map((event, index) =>
-        <li key={index}><span>{event.state === "closed" ? "브라우저 종료" : browserStateLabel[event.state]}</span>{" "}
-          {event.at !== null ? <TaskTime at={event.at} /> : <small>시각 미기록</small>}</li>)}</ol>
+      </button>}
     </>}
     <button type="button" disabled={loading} onClick={() => setReload(value => value + 1)}>
       {issue ? "다시 시도" : "상태 새로고침"}
@@ -107,7 +142,11 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask }: 
   </section>;
 }
 
-function TaskList({ accountId, onExpired, onOpenTask, latest }: Props & { latest: TaskSummary | null }) {
+function TaskList({ accountId, onExpired, onOpenTask, latest, taskId }: Props & { latest: TaskSummary | null }) {
+  const [schedules,setSchedules] = useState<WorkSchedule[]>([]);
+  const lastOpened=useRef<string|null>(null);
+  const listRoot=useRef<HTMLElement>(null);
+  useEffect(()=>{if(!taskId && lastOpened.current){const id=lastOpened.current;Array.from(listRoot.current?.querySelectorAll<HTMLButtonElement>("[data-task-id]")??[]).find(el=>el.dataset.taskId===id)?.focus({preventScroll:true});}},[taskId]);
   const [rows, setRows] = useState<TaskSummary[]>([]);
   useEffect(() => {
     if (latest) setRows(previous => previous.map(row => row.id === latest.id ? latest : row));
@@ -130,6 +169,7 @@ function TaskList({ accountId, onExpired, onOpenTask, latest }: Props & { latest
     try {
       const page = await scope.request<TaskPage>("/personal/tasks" + (cursor ? "?before=" + encodeURIComponent(cursor) : ""));
       setRows(previous => cursor ? [...previous, ...page.items] : page.items);
+      if (!cursor) setSchedules(page.schedules ?? []);
       setBefore(page.next_before);
       setLoaded(true);
     } catch (error) {
@@ -137,7 +177,7 @@ function TaskList({ accountId, onExpired, onOpenTask, latest }: Props & { latest
       if (error instanceof ApiFailure && error.status === 401) expired.current();
       else {
         if (error instanceof ApiFailure && error.status === 403) {
-          setRows([]);
+          setRows([]);setSchedules([]);
           setBefore(null);
         }
         failedCursor.current = cursor;
@@ -154,18 +194,30 @@ function TaskList({ accountId, onExpired, onOpenTask, latest }: Props & { latest
     void read(null);
     return () => { current.current = null; scope.close(); };
   }, [accountId, read]);
-  return <section className="personal-tasks" aria-label="맡긴 일 목록">
-    <h2>맡긴 일</h2>
-    <p>대화에서 맡긴 브라우저 작업의 진행 상황과 결과를 확인하세요.</p>
-    <button type="button" disabled={loading} onClick={() => { void read(null); }}>목록 새로고침</button>
-    {rows.length > 0 && <ul className="task-list">{rows.map(task =>
-      <li key={task.id}><button className="task-row" type="button" onClick={() => onOpenTask(task.id)}>
-        <strong>{task.title}</strong>
-        <span className="task-state">{browserStateLabel[task.state]}</span>
-        <span className="task-meta">{actorLabel[task.next_actor]} · <TaskTime at={task.created_at} /></span>
-      </button></li>)}</ul>}
+  const nextDue=schedules.filter(s=>s.enabled && s.next_due!=null).map(s=>s.next_due!);
+  const due=nextDue.length?Math.min(...nextDue):null;
+  useEffect(()=>{
+    if(!due || taskId || before || issue) return;
+    const timer=setTimeout(()=>void read(null),Math.max(7000,Math.min(2147483000,(due-Date.now()/1000+6)*1000)));
+    return ()=>clearTimeout(timer);
+  },[due,schedules,taskId,before,issue,read]);
+  const today=new Date(), yesterday=new Date(today);
+  yesterday.setDate(today.getDate()-1);
+  const groups=new Map<string,TaskSummary[]>();
+  for(const task of rows){const day=dayLabel(task.created_at,today,yesterday);const group=groups.get(day);if(group)group.push(task);else groups.set(day,[task]);}
+  function openTask(id:string){lastOpened.current=id;onOpenTask(id);}
+  return <section ref={listRoot} className="personal-tasks" aria-label="맡긴 일 목록">
+    <div className="task-heading"><h2>맡긴 일</h2><button type="button" disabled={loading} onClick={() => { void read(null); }}>목록 새로고침</button></div>
+    <PersonalWorkflows schedules={schedules} getScope={()=>current.current} onChanged={()=>read(null)} onOpen={openTask} onExpired={onExpired}/>
+    {Array.from(groups,([day,items])=><div className="task-day" key={day}><h3>{day}</h3><ul className="task-list">{items.map(task=>
+      <li key={task.id}><button className="task-row" data-task-id={task.id} type="button" onClick={() => openTask(task.id)}>
+        <span className="task-marker" aria-hidden="true">{task.state==="completed"?"✓":"•"}</span>
+        <span className="task-row-copy"><strong>{task.title}</strong>{task.preview && <span className="task-preview">{task.preview}</span>}
+        <span className="task-meta">{stateLabel(task)} · {actorLabel[task.next_actor]}</span></span>
+        <time dateTime={new Date(task.created_at*1000).toISOString()}>{shortTime.format(task.created_at*1000)}</time>
+      </button></li>)}</ul></div>)}
     {issue && <p role="alert">작업 목록을 불러오지 못했습니다.</p>}
-    {!issue && loaded && rows.length === 0 && <p>아직 맡긴 브라우저 작업이 없습니다.</p>}
+    {!issue && loaded && rows.length === 0 && <p>아직 맡긴 일이 없습니다.</p>}
     {loading && <p role="status">작업 목록을 불러오는 중…</p>}
     {(before || issue) && <button type="button" disabled={loading} onClick={() => { void read(issue ? failedCursor.current : before); }}>
       {issue ? "다시 시도" : "이전 작업 더 보기"}

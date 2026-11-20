@@ -478,3 +478,16 @@ mod invite_tests {
         assert!(lookup_ready(&root, "new@example.invalid".into()).is_err());
     }
 }
+
+/// Installation timer discovery. A returned ID still requires a fresh
+/// session_route check for suspension and generation before member admission.
+pub fn scheduled_member_page(root: &Path, after: String) -> Result<Vec<Uuid>> {
+    let (_lock, db) = open(root, false)?;
+    let mut stmt=db.prepare("SELECT account_id FROM allocations WHERE route_state='ready' AND account_id>?1 ORDER BY account_id LIMIT 16")?;
+    let ids = stmt
+        .query_map([after], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    ids.into_iter()
+        .map(|v| Uuid::parse_str(&v).map_err(|_| StoreError::Corrupt))
+        .collect()
+}

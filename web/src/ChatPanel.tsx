@@ -70,6 +70,7 @@ export type PendingSend = {
   schedule_context?:ScheduleChatContext;
   mission_context?:MissionChatContext;
   follow_up_run_id?: string;
+  research_request?: { scope: "memory" | "conversation"; query: string };
   browser_request?: import("./personal-browser").PersonalBrowserRequest;
   status: "sending" | "accepted" | "uncertain" | "rejected" | "inbox";
 };

@@ -1,0 +1,156 @@
+{
+  "format": 1,
+  "schema": 91,
+  "base_schema": 90,
+  "migrations": [
+    {
+      "name": "0091_member_workflows.sql",
+      "sha256": "762951dec3f4fa9613acb9b088c349d0fd8b2f4decd5711c2dc43eeb902a69eb"
+    }
+  ],
+  "tables": [],
+  "updated_tables": [
+    {
+      "name": "member_workflows",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_workflows",
+      "key_transition": "Retain owner-scoped evidence. Disable recurring grants on restore.",
+      "verification": "Verify the member allocation and parent record. Recheck access before resolving references.",
+      "on_failure": "Quarantine unresolved work and do not dispatch a scheduled run.",
+      "sql_sha256": "63a60b2f144affcd6c14b44ae73f07ff16ca4d45181a41206f7a46395b5d8557",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "host_epoch",
+        "thread_id",
+        "message",
+        "title",
+        "scope",
+        "query",
+        "period",
+        "first_due",
+        "next_due",
+        "enabled",
+        "revision",
+        "removed"
+      ]
+    },
+    {
+      "name": "member_work_runs",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT r.rowid AS rid,w.account_id,w.tenant_id FROM member_work_runs r JOIN member_workflows w ON w.id=r.workflow_id",
+      "key_transition": "Retain owner-scoped evidence. Disable recurring grants on restore.",
+      "verification": "Verify the member allocation and parent record. Recheck access before resolving references.",
+      "on_failure": "Quarantine unresolved work and do not dispatch a scheduled run.",
+      "sql_sha256": "37d9fde86334db69cb245e8880da7737736bd21778db889beb0ec1d5220048ab",
+      "columns": [
+        "id",
+        "workflow_id",
+        "request_id",
+        "due_at",
+        "created_at",
+        "searched_at",
+        "finished_at",
+        "admitted_order",
+        "sources",
+        "limited"
+      ]
+    },
+    {
+      "name": "member_inbox_task_events",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT id AS rid,account_id,tenant_id FROM member_inbox_task_events",
+      "key_transition": "Retain owner-scoped evidence. Disable recurring grants on restore.",
+      "verification": "Verify the member allocation and parent record. Recheck access before resolving references.",
+      "on_failure": "Quarantine unresolved work and do not dispatch a scheduled run.",
+      "sql_sha256": "a2a822a0875762e4b140c3394ba1532397f6b7f305119b0602aeec6a5aa4a91e",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "phase",
+        "at"
+      ]
+    },
+    {
+      "name": "personal_text_previews",
+      "kind": "table",
+      "sql_sha256": "7766b318c2ca39d05e4aad5d32c7cb938f1e11368d91a0f46ab9c28d4d64dc6e",
+      "scope": "personal",
+      "owner_query": "SELECT p.rowid AS rid,r.account_id,p.tenant_id FROM personal_text_previews p JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id",
+      "key_transition": "Preserve per-run broker binding and receipt. Fence restored and unknown calls against the installation ledger before any new dispatch.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "volume_id",
+        "generation",
+        "connection_revision",
+        "call_id",
+        "nonce",
+        "receipt",
+        "context_messages",
+        "finished_at"
+      ]
+    },
+    {
+      "name": "personal_task_history",
+      "kind": "table",
+      "sql_sha256": "84b78bd140a150453b81027d30eeee62308fbd0388e84458436d302abf97d15e",
+      "scope": "personal",
+      "owner_query": "SELECT h.id AS rid,r.account_id,h.tenant_id FROM personal_task_history h JOIN personal_browser_jobs b ON b.tenant_id=h.tenant_id AND b.run_id=h.run_id JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id AND r.thread_id=b.thread_id",
+      "key_transition": "Retain recorded state changes with the owning browser job.",
+      "verification": "Verify each event belongs to one retained browser job and original conversation.",
+      "on_failure": "Stop extraction and quarantine unresolved task history.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "run_id",
+        "state",
+        "at",
+        "page_host",
+        "output_id"
+      ]
+    },
+    {
+      "name": "member_google_thread_reads",
+      "kind": "table",
+      "sql_sha256": "1c865b9a0d3c40abf056cbb7eb0e109951e58d5ebaf274a654ace7bc768698a8",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_thread_reads",
+      "key_transition": "Encrypted private mailbox observations are bound to owner, volume, generation, app, connection and epoch. Exclude from knowledge archives; do not reuse across an unverified restore.",
+      "verification": "Exact schema, owner and thread FKs; source binding and ciphertext AAD; uncertain reads never redispatch.",
+      "on_failure": "Quarantine affected observation; never infer authority from mailbox or reuse a request.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "thread_id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "session_digest",
+        "app_revision",
+        "flow_id",
+        "connection_id",
+        "source_epoch",
+        "phase",
+        "created_at",
+        "updated_at",
+        "cipher",
+        "work_id",
+        "work_order"
+      ]
+    }
+  ],
+  "schema_sha256": "201cc82a673227655d6c5d88542564f217c2d44bbd4d2bc2be5a7aa72027b6b8"
+}

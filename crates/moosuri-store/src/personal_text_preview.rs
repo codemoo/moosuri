@@ -346,7 +346,7 @@ impl Store {
             let sequence:i64=tx.query_row("SELECT chat_turn_seq FROM threads WHERE tenant_id=?1 AND id=?2",params![user.tenant.0,thread],|r|r.get(0))?;
             let order=chat::next_order(&tx)?;
             tx.execute("INSERT INTO chat_runs(tenant_id,id,account_id,thread_id,request_id,payload_digest,sequence,user_text,model,session_digest,auth_epoch,attempt,state,version,created_at,admitted_order) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1,'running',1,unixepoch(),?12)",params![user.tenant.0,id.to_string(),user.account.id,thread,request_id,digest.as_slice(),sequence,text,serde_json::to_string(&model).map_err(|_|StoreError::Corrupt)?,user.digest.as_slice(),user.epoch,order])?;
-            tx.execute("INSERT INTO personal_text_previews(tenant_id,run_id,volume_id,generation,connection_revision,call_id,nonce) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![user.tenant.0,id.to_string(),owner.volume.to_string(),owner.generation as i64,pin.connection_revision.to_string(),call_id.to_string(),nonce.as_slice()])?;
+            tx.execute("INSERT INTO personal_text_previews(tenant_id,run_id,volume_id,generation,connection_revision,call_id,nonce,context_messages) VALUES(?1,?2,?3,?4,?5,?6,?7,json_array_length(?8,'$.messages')-2)",params![user.tenant.0,id.to_string(),owner.volume.to_string(),owner.generation as i64,pin.connection_revision.to_string(),call_id.to_string(),nonce.as_slice(),std::str::from_utf8(&request).map_err(|_|StoreError::Corrupt)?])?;
             let run=chat::load_run(&tx,&user.tenant.0,&id.to_string())?;let turn=chat::turn(&tx,&run)?;chat::emit(&tx,&run,ChatChange::Turn{turn})?;
             tx.commit()?;
             Ok(Admission::Fresh(Work {user:Box::new(user),owner,run:id.to_string(),nonce,request}))

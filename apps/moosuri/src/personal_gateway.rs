@@ -374,7 +374,10 @@ impl Gateway {
                 .header("X-Moosuri-Account", &a.account_id);
             if let Some(token) = session {
                 req = req.header(header::COOKIE, format!("{SESSION}={token}"));
-                if browser || path.ends_with("/text-preview") {
+                if browser
+                    || path.ends_with("/text-preview")
+                    || path.starts_with("/api/v1/personal/tasks/workflows")
+                {
                     req = req.header(
                         moosuri_server::personal_text::SESSION_EPOCH_HEADER,
                         a.epoch.to_string(),
@@ -1237,9 +1240,11 @@ pub async fn run(options: &Options) -> Result<(), String> {
         .map_err(|_| "gateway_already_running")?;
     let g = Gateway::new(options)?;
     let (_socket_directory, listener) = bind_public_socket(options).await?;
-    axum::serve(listener, router(g))
-        .await
-        .map_err(|_| "gateway_stopped".into())
+    let timer = tasks::timer(g.clone());
+    tokio::select! {
+        result=axum::serve(listener,router(g))=>result.map_err(|_|"gateway_stopped".into()),
+        ()=timer=>Err("gateway_timer_stopped".into()),
+    }
 }
 
 #[cfg(test)]

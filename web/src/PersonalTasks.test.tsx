@@ -88,5 +88,50 @@ it("drops the old account's in-flight detail on a member change and distinguishe
   expect(screen.queryByText(detail.result!)).toBeNull();
   rerender(<PersonalTasks {...props} accountId="member-b" />);
   const list = screen.getByRole("region",{name:"맡긴 일 목록"});
-  expect(await within(list).findByText("아직 맡긴 브라우저 작업이 없습니다.")).toBeVisible();
+  expect(await within(list).findByText("아직 맡긴 일이 없습니다.")).toBeVisible();
+});
+
+it("opens a source step with its own evidence and restores the timeline control", async()=>{
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({...detail,task:{...second,kind:"research"},history:[
+    {state:"searched",at:1700500000,title:"내 기억에서 검색",detail:"검색어 수첩"},
+    {state:"source_read",at:1700500001,title:"준비 기록",detail:"합성 초록 수첩"},
+  ]})));
+  const user=userEvent.setup();
+  render(<PersonalTasks {...props} taskId="run-two" />);
+  const source=await screen.findByRole("button",{name:/준비 기록/});
+  await user.click(source);
+  expect(within(screen.getByRole("region",{name:"단계 상세"})).getByText("합성 초록 수첩")).toBeVisible();
+  await user.click(screen.getByRole("button",{name:"진행 기록으로"}));
+  await waitFor(()=>expect(source).toHaveFocus());
+});
+
+it("shows three scheduled previews, opens all five, and renders history by local date", async()=>{
+  const today=new Date();today.setHours(12,0,0,0);const yesterday=new Date(today);yesterday.setDate(today.getDate()-1);
+  const schedules=Array.from({length:5},(_,i)=>({id:String(i),title:`예약 ${i+1}`,scope:"memory",query:"수첩",period:1800,next_due:null,enabled:false,revision:1}));
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({items:[{...first,created_at:today.getTime()/1000},{...second,created_at:yesterday.getTime()/1000}],next_before:null,schedules})));
+  const user=userEvent.setup();render(<PersonalTasks {...props}/>);
+  expect(await screen.findByRole("heading",{name:"오늘"})).toBeVisible();expect(screen.getByRole("heading",{name:"어제"})).toBeVisible();
+  expect(screen.queryByRole("button",{name:/예약 5 /})).toBeNull();
+  await user.click(screen.getByRole("button",{name:"예약 작업 모두 보기"}));
+  await user.click(screen.getByRole("button",{name:/예약 5/}));
+  expect(screen.getByRole("button",{name:"예약 재개"})).toBeVisible();
+});
+
+it("retries a lost manual research response with the same request identity", async()=>{
+  const actions:Record<string,string>[]=[];
+  vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
+    if(url.endsWith("/workflows")){
+      actions.push(JSON.parse(String(init.body)));
+      return actions.length===1?Response.json({}, {status:503}):Response.json({workflow_id:actions[0].request_id,run_id:"result-1"});
+    }
+    return Response.json({items:[],schedules:[],next_before:null});
+  }));
+  const user=userEvent.setup();render(<PersonalTasks {...props}/>);
+  await user.click(screen.getByRole("button",{name:"자료 조사 맡기기"}));
+  await user.type(screen.getByLabelText("검색어"),"수첩");
+  await user.click(screen.getByRole("button",{name:"조사 실행"}));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  await user.click(screen.getByRole("button",{name:"조사 실행"}));
+  await waitFor(()=>expect(props.onOpenTask).toHaveBeenCalledWith("result-1"));
+  expect(actions).toHaveLength(2);expect(actions[1]).toEqual(actions[0]);
 });

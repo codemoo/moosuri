@@ -438,6 +438,7 @@ def main():
     parser.add_argument("--channel", choices=("chrome", "chromium"), default="chrome",
                         help="installed Chrome stable or the Playwright Chromium build")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--workflows", action="store_true", help="exercise task evidence and the installation schedule timer")
     mode.add_argument("--claude", action="store_true", help="seven questions using the authenticated Claude CLI")
     mode.add_argument("--expect-output-limit", action="store_true",
                       help="check a synthetic output-limit response with no visible text")
@@ -493,7 +494,12 @@ def main():
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
                               else route.abort())
                 page = context.new_page()
-                if args.history_budget:
+                if args.workflows:
+                    import member_workflow_scenarios
+                    member_workflow_scenarios.exercise(page, members, origin, provider, login=login,
+                                                       logout=logout, rows=rows, passed=passed,
+                                                       prompt=PROMPT, answer=ANSWER)
+                elif args.history_budget:
                     exercise_history_budget(page, members[0], origin, provider)
                 elif args.expect_output_limit:
                     exercise_output_limit(page, members[0], origin, provider)

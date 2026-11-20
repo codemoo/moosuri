@@ -57,10 +57,16 @@ pub struct TaskSummary {
     pub state: String,
     pub next_actor: String,
     pub created_at: i64,
+    #[serde(default = "browser_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub preview: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct TaskPage {
+    #[serde(default)]
+    pub schedules: Vec<WorkSchedule>,
     pub items: Vec<TaskSummary>,
     pub next_before: Option<String>,
 }
@@ -70,6 +76,10 @@ pub struct TaskEvent {
     pub state: String,
     /// Older jobs recorded the start time but no timestamp for their last state.
     pub at: Option<i64>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -81,4 +91,75 @@ pub struct TaskDetail {
     pub history: Vec<TaskEvent>,
     pub result: Option<String>,
     pub observation: Option<String>,
+}
+
+fn browser_kind() -> String {
+    "browser".into()
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkScope {
+    Memory,
+    Conversation,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkRequest {
+    pub thread_id: Option<String>,
+    pub message: Option<String>,
+    pub request_id: String,
+    pub title: String,
+    pub scope: WorkScope,
+    pub query: String,
+    pub period: i64,
+    pub first_due: Option<i64>,
+}
+#[derive(Serialize, Deserialize)]
+pub struct WorkSchedule {
+    pub id: String,
+    pub title: String,
+    pub scope: WorkScope,
+    pub query: String,
+    pub period: i64,
+    pub next_due: Option<i64>,
+    pub enabled: bool,
+    pub revision: i64,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkAction {
+    Run { request_id: String },
+    Pause { revision: i64 },
+    Resume { revision: i64 },
+    Remove { revision: i64 },
+}
+#[derive(Serialize, Deserialize)]
+pub struct WorkReceipt {
+    pub workflow_id: String,
+    pub run_id: Option<String>,
+}
+
+/// Older clients used admission order alone. New cursors also freeze the
+/// creation timestamp so deleting the last visible row cannot move the boundary.
+pub fn task_cursor(value: &str) -> Option<(i64, i64)> {
+    fn positive(s: &str) -> Option<i64> {
+        s.parse::<i64>()
+            .ok()
+            .filter(|n| *n > 0 && n.to_string() == s)
+    }
+    if let Some((time, order)) = value.split_once('.') {
+        Some((positive(time)?, positive(order)?))
+    } else {
+        Some((i64::MAX, positive(value)?))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkTick {
+    pub tenant: String,
+    pub volume: String,
+    pub generation: u64,
+    pub epoch: i64,
 }

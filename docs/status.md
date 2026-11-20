@@ -18,9 +18,9 @@
 
 11월 20일 확인한 공개 main과 운영 게이트웨이의 실행 버전은 `4fd6a01`이다. 로컬 개편판에는 날짜별 대화와 분리된 초안 복구, 실행 중 후속 지시, 회원별 **맡긴 일**, 기억 수정 이력, Google 권한 왕복, 활성 회원 검색·초대 접수증, 엔진 재개와 OpenRouter 사용 한도 조회가 들어 있다. 비회원은 `/demo`에서 세 합성 예시를 열 수 있다. 데스크톱은 Muse를 참고한 72px 탐색을 사용하며 모바일은 화면 아래에서 이동한다. [기능별 워크로그](reviews/2026-11-20-member-ui-worklog.md) · [화면별 수락 시나리오](reviews/2026-11-20-kiri-scenarios.md)
 
-관리자 웹 초대의 호스트 자동 준비는 별도 Ubuntu·Kiri 게스트에서 두 회원으로 검증했다. 운영 반영에는 회원 스키마 90, 설치 레지스트리 v7에 맞는 게이트웨이·브로커·회원 실행본 전환이 필요하다. 공개와 운영 절체는 승인 대기 중이다. 실제 Google 두 계정과 실물 휴대폰의 수락도 남아 있다. [초대 실행 기록](../deployment/kiri/linux-vm-smoke/onboard-worker-evidence.json) · [운영 절차](../deployment/kiri/admin.md)
+관리자 웹 초대의 호스트 자동 준비는 별도 Ubuntu·Kiri 게스트에서 두 회원으로 검증했다. 운영 반영에는 회원 스키마 91, 설치 레지스트리 v7에 맞는 게이트웨이·브로커·회원 실행본 전환이 필요하다. 공개와 운영 절체는 승인 대기 중이다. 실제 Google 두 계정과 실물 휴대폰의 수락도 남아 있다. [초대 실행 기록](../deployment/kiri/linux-vm-smoke/onboard-worker-evidence.json) · [운영 절차](../deployment/kiri/admin.md)
 
-개편판의 **맡긴 일**은 회원이 브라우저에 맡긴 작업을 다룬다. 표준 서버의 장기 업무·예약·모니터, 자동 기억, 개인 파일, 푸시·Telegram과 볼트 로그인 연동을 Kiri 회원 공간에서 사용하는 작업은 전환표에 열려 있다. [계정별 기능 전환표](../openspec/changes/isolate-account-runtime/tasks.md)
+개편판의 **맡긴 일**은 대화·브라우저·Gmail 조회·로컬 조사를 날짜별로 보여준다. 실제 읽은 자료를 단계별로 열 수 있고, 회원이 맡긴 기억·대화 검색은 게이트웨이 타이머가 반복 실행한다. 표준 서버의 외부 연동 장기 업무와 모니터, 자동 기억, 개인 파일, 푸시·Telegram, 볼트 로그인 연동의 Kiri 이전은 계속 진행 중이다. [회원 업무 사용법](member-tasks.md) · [업무별 Linux 검증](reviews/2026-11-21-member-workflows.md)
 
 ## 표준 서버와 출시 준비
 

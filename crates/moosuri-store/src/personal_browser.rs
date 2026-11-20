@@ -7,6 +7,7 @@ use moosuri_core::{
 use personal_volume::VolumeOwner;
 
 mod tasks;
+mod workflows;
 
 #[derive(Clone)]
 pub struct Scope {
@@ -421,6 +422,7 @@ impl Store {
                 view.state = "ready".into();
                 view.reason = Some("new_guidance".into());
             }
+            let produced_output=text.is_some();
             if let Some(answer) = text {
                 let model = serde_json::to_string(&run.model).map_err(|_| StoreError::Corrupt)?;
                 tx.execute("UPDATE chat_runs SET model=?1 WHERE tenant_id=?2 AND id=?3", params![model, tenant, run.id])?;
@@ -474,6 +476,17 @@ impl Store {
             }
             view.revision += 1;
             save(&tx, &scope, &view)?;
+            if matches!(view.state.as_str(),"ready"|"reading"|"completed") {
+                if current.view.state==view.state && produced_output {
+                    tx.execute("INSERT INTO personal_task_history(tenant_id,run_id,state,at) VALUES(?1,?2,?3,unixepoch())",params![tenant,run.id,view.state])?;
+                }
+                let host=url::Url::parse(&view.url).ok().and_then(|url|url.host_str().map(str::to_owned));
+                let item=if complete{"browser-answer"}else{"browser-observation"};
+                tx.execute("UPDATE personal_task_history SET page_host=coalesce(page_host,?3),
+                    output_id=coalesce(output_id,(SELECT id FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item=?5 AND ?6))
+                    WHERE id=(SELECT max(id) FROM personal_task_history WHERE tenant_id=?1 AND run_id=?2 AND state=?4)",
+                    params![tenant,run.id,host,view.state,item,produced_output])?;
+            }
             tx.commit()?;
             Ok(view)
         })

@@ -1429,6 +1429,29 @@ mod tests {
                 .subject
                 .contains("LITERAL_MAIL_CANARY")
         );
+        let tasks = store
+            .personal_task_page(owner, user.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(tasks.items.len(), 1);
+        assert_eq!(tasks.items[0].kind, "gmail");
+        let work_id = tasks.items[0].id.parse().unwrap();
+        let task = store
+            .personal_task_detail(owner, user.clone(), work_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            task.history
+                .iter()
+                .map(|e| e.state.as_str())
+                .collect::<Vec<_>>(),
+            ["awaiting_consent", "ready", "dispatched", "completed"]
+        );
+        assert!(
+            !serde_json::to_string(&task)
+                .unwrap()
+                .contains("LITERAL_MAIL_CANARY")
+        );
         let db = std::fs::read_dir(&root)
             .unwrap()
             .next()
@@ -1470,6 +1493,13 @@ mod tests {
             .unwrap();
         assert_eq!(withdrawn[0].state, "withdrawn");
         assert!(withdrawn[0].result.is_none());
+        let receipt = store
+            .personal_task_detail(owner, user.clone(), work_id)
+            .await
+            .unwrap();
+        assert_eq!(receipt.task.state, "withdrawn");
+        assert!(receipt.result.is_none());
+
         assert!(withdrawn[0].source.is_none());
         store.delete_thread(&user, thread.id.clone()).await.unwrap();
         assert!(

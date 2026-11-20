@@ -20,6 +20,7 @@ For installer requirements, updates and troubleshooting, see the [installation g
 | --- | --- |
 | Open the web app from my devices | [Tailscale](docs/tailscale.md) · [Public HTTPS](docs/public-access.md) · [PWA](docs/pwa.md) |
 | Manage members, the engine or Google connections on Kiri | [Administration](deployment/kiri/admin.md) · [Engine connections](deployment/kiri/subscriptions.md) · [Google Workspace](deployment/kiri/google.md) |
+| Review task timelines or schedule a search in my Kiri workspace | [Member tasks](docs/member-tasks.md) |
 | Follow a browser task in my Kiri session | [Member browser](deployment/kiri/browser.md) |
 | Explore standard-server features | [Chat](docs/chat.md) · [Memory](docs/conversational-memory.md) · [Missions](docs/missions.md) · [Skills](docs/community-skills.md) · [Connections](docs/data-connections.md) · [Vault](docs/vault-security.md) |
 

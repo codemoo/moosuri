@@ -50,7 +50,7 @@ function creation(v: unknown): PendingThreadCreation | null {
 }
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): PendingSend | null {
-    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "follow_up_run_id", "status"]) ||
+    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "follow_up_run_id", "status"]) ||
         !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain", "rejected", "inbox"].includes(String(v.status)))
         return null;
     if (v.status === "inbox")
@@ -59,6 +59,12 @@ function pending(v: unknown): PendingSend | null {
     if (v.follow_up_run_id !== undefined) {
         if (!uuid(v.follow_up_run_id) || !exact(v, ["request_id", "text", "status", "follow_up_run_id"])) return null;
         out.follow_up_run_id = v.follow_up_run_id;
+    }
+    if (v.research_request !== undefined) {
+        const r = v.research_request;
+        if (!exact(v, ["request_id","text","status","research_request"]) || !object(r) || !exact(r,["scope","query"]) ||
+            (r.scope !== "memory" && r.scope !== "conversation") || typeof r.query !== "string" || !r.query.trim() || bytes(r.query)>128) return null;
+        out.research_request={scope:r.scope,query:r.query};
     }
     if (v.browser_request !== undefined) {
         const request = v.browser_request;

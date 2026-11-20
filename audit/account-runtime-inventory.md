@@ -22,6 +22,8 @@ five FTS shadow tables are excluded using SQLite's actual table kinds, rather
 than a name-prefix guess. Schema82 extends the frozen 81 classification with its
 one exact Gmail server-resume table and migration hash. Schema83 adds the per-run private model-preview binding and receipt. Schema84 records the private Google app history, encrypted read-only grant and pending consent. Schema85 adds the encrypted thread-specific inbox result and its durable dispatch status. Schema86 adds administrator-assigned member models. A quarantined restore clears those assignments. The manual knowledge archive excludes the grants, consent records and inbox results.
 
+Schema 91 has 216 application tables. The member workflow definition binds an owner, volume generation and routing epoch. A run retains source identifiers and revisions. Restore pauses recurring definitions. Inbox phase history contains no mail payload. [Schema 91 classification](account-runtime-schema91.json)
+
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,

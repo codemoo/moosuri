@@ -222,3 +222,22 @@ A member SHALL be able to attach a follow-up to an active personal text turn and
 #### Scenario: The original provider outcome is unknown
 - **WHEN** the member explicitly sends a previously saved follow-up after an unknown original outcome
 - **THEN** the new text-only request includes the original question and the follow-up, and does not repeat the original call or initiate a tool action.
+
+### Requirement: Member task execution and recurring local research
+
+The member workspace SHALL show dated work receipts for text, browser, thread-bound inbox reads and local research. Each receipt SHALL identify the original request and recorded stages. An authorized member MAY run a bounded search of effective memories or completed personal text conversations once or on a recurring elapsed-time interval. The member SHALL resolve source evidence against current access whenever it is displayed.
+
+#### Scenario: Reopen research from a conversation
+
+- **WHEN** a member asks for an explicit search of their own memories or previous text conversations
+- **THEN** one task and one original chat turn identify the same request after a retry, and selecting a source step opens the evidence that is still available.
+
+#### Scenario: Run independently of an open browser
+
+- **WHEN** the installation admits an active member’s due schedule, including after an offline interval
+- **THEN** the member checks the pinned epochs and generation, records one occurrence for the latest due slot, and advances its next due time in the same transaction.
+
+#### Scenario: Withdraw a source or a grant
+
+- **WHEN** a source is forgotten, a schedule is retired, a grant epoch changes, or a restore completes
+- **THEN** historical task details respect current source visibility, retired schedules keep their earlier receipts, and automatic execution requires a current active grant.

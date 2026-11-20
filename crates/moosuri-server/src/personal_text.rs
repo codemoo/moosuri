@@ -17,7 +17,7 @@ use tokio::net::UnixStream;
 /// member socket. Public clients do not supply this header.
 pub const SESSION_EPOCH_HEADER: &str = "x-moosuri-session-epoch";
 
-fn gateway_epoch(headers: &HeaderMap) -> Result<i64, HttpError> {
+pub(crate) fn gateway_epoch(headers: &HeaderMap) -> Result<i64, HttpError> {
     let mut values = headers.get_all(SESSION_EPOCH_HEADER).iter();
     let epoch = values
         .next()

@@ -192,6 +192,16 @@ async fn personal_tasks_reopen_completed_result_and_recover_interrupted_job_with
     assert_eq!(first_read.task.next_actor, "member");
     assert_eq!(first_read.observation.as_deref(), Some("First page"));
     assert!(first_read.result.is_none());
+    assert!(
+        first_read
+            .history
+            .last()
+            .unwrap()
+            .detail
+            .as_ref()
+            .unwrap()
+            .contains("First page")
+    );
     let follow = Uuid::new_v4();
     let Admission::Fresh(continued) = store
         .personal_browser_reserve(
@@ -235,6 +245,28 @@ async fn personal_tasks_reopen_completed_result_and_recover_interrupted_job_with
     assert_eq!(settled.task.state, "completed");
     assert_eq!(settled.result.as_deref(), Some("Schedule confirmed"));
     assert!(settled.observation.is_none());
+    assert!(
+        settled
+            .history
+            .iter()
+            .find(|e| e.state == "ready")
+            .unwrap()
+            .detail
+            .as_ref()
+            .unwrap()
+            .contains("갱신")
+    );
+    assert!(
+        settled
+            .history
+            .iter()
+            .find(|e| e.state == "completed")
+            .unwrap()
+            .detail
+            .as_ref()
+            .unwrap()
+            .contains("Schedule confirmed")
+    );
     assert_eq!(settled.task.thread_id, scope.thread);
     assert_eq!(
         settled
@@ -310,4 +342,269 @@ async fn personal_tasks_schema_89_preserves_existing_result_and_marks_unknown_ev
     assert_eq!(detail.history[0].at, Some(detail.task.created_at));
     assert_eq!(detail.history[1].state, "completed");
     assert_eq!(detail.history[1].at, None);
+}
+
+fn research(id: Uuid, period: i64) -> moosuri_core::personal_browser::WorkRequest {
+    use moosuri_core::personal_browser::{WorkRequest, WorkScope};
+    WorkRequest {
+        request_id: id.to_string(),
+        title: "자료 조사".into(),
+        scope: WorkScope::Memory,
+        query: "수첩".into(),
+        period,
+        first_due: None,
+        thread_id: None,
+        message: None,
+    }
+}
+
+#[tokio::test]
+async fn workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_forgotten_text() {
+    let Member {
+        root: _root,
+        store,
+        scope,
+    } = member().await;
+    let user = &scope.user;
+    let memory = store
+        .create_memory(
+            user,
+            Uuid::new_v4().to_string(),
+            moosuri_core::MemoryDraft {
+                subject: "수첩 색상".into(),
+                text: "합성 파란 표지".into(),
+                speaker: None,
+                evidence: vec![],
+                valid_from: None,
+                valid_until: None,
+            },
+        )
+        .await
+        .unwrap();
+    let key = Uuid::new_v4();
+    let request = || {
+        let mut q = research(key, 0);
+        q.thread_id = Some(scope.thread.clone());
+        q.message = Some("기억에서 수첩 찾아줘".into());
+        q
+    };
+    let first = store
+        .create_member_workflow(scope.owner, user.clone(), 1, request())
+        .await
+        .unwrap();
+    let second = store
+        .create_member_workflow(scope.owner, user.clone(), 1, request())
+        .await
+        .unwrap();
+    assert_eq!(first.run_id, second.run_id);
+    let id = first.run_id.unwrap().parse().unwrap();
+    let detail = store
+        .personal_task_detail(scope.owner, user.clone(), id)
+        .await
+        .unwrap();
+    assert_eq!(detail.task.thread_id, scope.thread);
+    assert_eq!(
+        detail
+            .history
+            .iter()
+            .map(|h| h.state.as_str())
+            .collect::<Vec<_>>(),
+        ["starting", "searched", "source_read", "completed"]
+    );
+    assert_eq!(detail.history[2].detail.as_deref(), Some("합성 파란 표지"));
+    assert!(detail.history.windows(2).all(|w| w[0].at <= w[1].at));
+    let mut changed = request();
+    changed.query = "바뀜".into();
+    assert!(matches!(
+        store
+            .create_member_workflow(scope.owner, user.clone(), 1, changed)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(
+        store
+            .personal_task_page(scope.owner, user.clone(), None)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    store
+        .forget_memory(user, memory.id, memory.revision)
+        .await
+        .unwrap();
+    let after = store
+        .personal_task_detail(scope.owner, user.clone(), id)
+        .await
+        .unwrap();
+    assert!(
+        !serde_json::to_string(&after)
+            .unwrap()
+            .contains("합성 파란 표지")
+    );
+    assert!(
+        after.history[2]
+            .detail
+            .as_ref()
+            .unwrap()
+            .contains("더 이상 볼 수 없습니다")
+    );
+}
+
+async fn due(store: &Store, id: Uuid) {
+    store
+        .call(move |db| {
+            db.conn.execute(
+                "UPDATE member_workflows SET next_due=unixepoch()-7201 WHERE id=?1",
+                [id.to_string()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn workflow_due_coalesces_once_across_concurrent_ticks_and_reopen() {
+    let Member { root, store, scope } = member().await;
+    let key = Uuid::new_v4();
+    store
+        .create_member_workflow(scope.owner, scope.user.clone(), 2, research(key, 1800))
+        .await
+        .unwrap();
+    due(&store, key).await;
+    let (one, two) = tokio::join!(
+        store.tick_member_workflows(scope.owner, 2),
+        store.tick_member_workflows(scope.owner, 2)
+    );
+    assert_eq!(one.unwrap() + two.unwrap(), 1);
+    let first = store
+        .personal_task_page(scope.owner, scope.user.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(first.items.len(), 1);
+    assert!(first.schedules[0].next_due.unwrap() > now().unwrap());
+    drop(store);
+    let store = scope
+        .owner
+        .open_verified(&root.path().canonicalize().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.tick_member_workflows(scope.owner, 2).await.unwrap(),
+        0
+    );
+    let saved = store
+        .personal_task_detail(scope.owner, scope.user, first.items[0].id.parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(saved.history[0].title.as_deref(), Some("예약 실행 시작"));
+    assert!(saved.result.unwrap().contains("0건"));
+}
+
+#[tokio::test]
+async fn workflow_schedule_pause_resume_manual_retry_and_retirement_keep_prior_receipts() {
+    use moosuri_core::personal_browser::WorkAction;
+    let Member {
+        root: _root,
+        store,
+        scope,
+    } = member().await;
+    let key = Uuid::new_v4();
+    let o = scope.owner;
+    let u = &scope.user;
+    store
+        .create_member_workflow(o, u.clone(), 1, research(key, 3600))
+        .await
+        .unwrap();
+    store
+        .change_member_workflow(o, u.clone(), 1, key, WorkAction::Pause { revision: 1 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .change_member_workflow(o, u.clone(), 1, key, WorkAction::Resume { revision: 1 })
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    due(&store, key).await;
+    assert_eq!(store.tick_member_workflows(o, 1).await.unwrap(), 0);
+    let request_id = Uuid::new_v4().to_string();
+    let run = || WorkAction::Run {
+        request_id: request_id.clone(),
+    };
+    let receipt = store
+        .change_member_workflow(o, u.clone(), 1, key, run())
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt.run_id,
+        store
+            .change_member_workflow(o, u.clone(), 1, key, run())
+            .await
+            .unwrap()
+            .run_id
+    );
+    store
+        .change_member_workflow(o, u.clone(), 1, key, WorkAction::Resume { revision: 2 })
+        .await
+        .unwrap();
+    due(&store, key).await;
+    assert_eq!(store.tick_member_workflows(o, 1).await.unwrap(), 1);
+    store
+        .change_member_workflow(o, u.clone(), 1, key, WorkAction::Remove { revision: 3 })
+        .await
+        .unwrap();
+    let page = store.personal_task_page(o, u.clone(), None).await.unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert!(page.schedules.is_empty());
+    assert!(matches!(
+        store
+            .change_member_workflow(o, u.clone(), 1, key, run())
+            .await,
+        Err(StoreError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn workflow_registry_epoch_generation_and_restored_grants_fence_due_research() {
+    let Member {
+        root: _root,
+        store,
+        scope,
+    } = member().await;
+    let key = Uuid::new_v4();
+    let o = scope.owner;
+    let u = &scope.user;
+    store
+        .create_member_workflow(o, u.clone(), 3, research(key, 1800))
+        .await
+        .unwrap();
+    due(&store, key).await;
+    let mut other = o;
+    other.generation += 1;
+    assert!(store.tick_member_workflows(other, 3).await.is_err());
+    assert_eq!(store.tick_member_workflows(o, 4).await.unwrap(), 0);
+    let page = store.personal_task_page(o, u.clone(), None).await.unwrap();
+    assert!(!page.schedules[0].enabled);
+    assert!(page.items.is_empty());
+    store
+        .change_member_workflow(
+            o,
+            u.clone(),
+            4,
+            key,
+            moosuri_core::personal_browser::WorkAction::Resume { revision: 2 },
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.tick_member_workflows(o, 3).await.unwrap(), 0);
+    let reenabled = store.personal_task_page(o, u.clone(), None).await.unwrap();
+    assert!(reenabled.schedules[0].enabled);
+    store
+        .call(|db| crate::schedules::quarantine_for_restore(&db.conn))
+        .await
+        .unwrap();
+    due(&store, key).await;
+    assert_eq!(store.tick_member_workflows(o, 4).await.unwrap(), 0);
 }

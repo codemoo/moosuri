@@ -31,6 +31,7 @@ import { useMemberRoute } from "./member-route";
 import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { clearAdminRecovery } from "./PersonalAdminRecovery";
+import { personalResearchIntent, type WorkReceipt } from "./PersonalWorkflows";
 import { PersonalTasks } from "./PersonalTasks";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
@@ -361,6 +362,7 @@ type Capability = {
   automatic_retry: boolean;
 };
 const chatStarters = [
+  { label: "기억 검색", prompt: "기억 검색: " },
   { label: "문장 다듬기", prompt: "다음 문장을 자연스럽게 다듬어 줘.\n" },
   { label: "계획 세우기", prompt: "다음 일을 작은 단계로 나눠서 계획을 세워 줘.\n" },
 ];
@@ -860,13 +862,16 @@ function Workspace({
       setError("추가 지시가 너무 깁니다. 내용을 줄여 주세요.");
       return;
     }
-    if (!browserRequest && !ready) return;
+    const research = old ? old.research_request : (!followUp && !browserRequest && browserMode==="chat" ? personalResearchIntent(text) : null);
+    if (research && new TextEncoder().encode(research.query).length>128){setError("검색어를 128바이트 이내로 줄여 주세요.");return;}
+    if (!browserRequest && !research && !ready) return;
     if (!old && currentPage?.turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id)) return;
     const value: PendingSend = old ?? {
       request_id: followUp?.request_id ?? crypto.randomUUID(),
       text,
       status: "sending",
       ...(followUp ? { follow_up_run_id: followUp.run_id } : {}),
+      ...(research ? { research_request: research } : {}),
       ...(browserRequest ? { browser_request: browserRequest } : {}),
     };
     followTail.current = true;
@@ -890,6 +895,16 @@ function Workspace({
       return { ...m, drafts, pending: { ...m.pending, [destination]: { ...value, status: "sending" } } };
     });
     try {
+      if (value.research_request) {
+        await scope.request<WorkReceipt>("/personal/tasks/workflows","POST",{
+          request_id:value.request_id, thread_id:destination, message:value.text, title:value.research_request.query+" 조사",
+          ...value.research_request,period:0,first_due:null,
+        },undefined,{timeoutMs:30000});
+        clearSend(destination,value);
+        if (selectedRef.current===destination) void history(destination);
+        void inventory().catch(fail);
+        return;
+      }
       if (value.browser_request) {
         const body = value.browser_request.kind === "start"
           ? { url: value.browser_request.url, wait_for_user: value.browser_request.wait_for_user }
@@ -1065,7 +1080,7 @@ function Workspace({
   const hasActiveTurn = turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id);
   const optimistic = pending && !turns.some((turn) => turn.run.request_id === pending.request_id);
   const busy = loading || (selected !== null && reading && !currentPage);
-  const composerBusy = busy || mutating || !!pending || hasActiveTurn;
+  const composerBusy = loading || busy || mutating || !!pending || hasActiveTurn;
   const isEmpty = !busy && !inventoryError && !error && turns.length === 0 && !pending && googleReads.length === 0 && !browserWork;
   const working = turns.find((turn) => active(turn) && turn.run.id !== browserWork?.run_id);
   const chatActivity = browserWork && ["starting", "reading", "ready", "user_control", "resuming", "stopping"].includes(browserWork.state)
@@ -1078,9 +1093,10 @@ function Workspace({
     : pending ? "답변을 기다리는 중" : undefined;
   function useStarter(prompt: string) {
     const key = selected ?? "new";
-    if (memoryRef.current.drafts[key] || !ready || composerBusy) return;
+    if (memoryRef.current.drafts[key] || (!ready && prompt!=="기억 검색: ") || composerBusy) return;
     change((value) => ({ ...value, drafts: { ...value.drafts, [key]: prompt } }));
-    chatEditor.current?.focus({ preventScroll: true });
+    if (chatEditor.current?.disabled) requestAnimationFrame(()=>chatEditor.current?.focus({preventScroll:true}));
+    else chatEditor.current?.focus({preventScroll:true});
   }
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread ? threadDisplayTitle(thread.title) : "새 대화"
@@ -1148,7 +1164,7 @@ function Workspace({
               onBack={() => open({ view: "tasks" }, true)}
               onThread={(thread, run) => {
                 openThread(thread);
-                taskTurn.current = { thread, run };
+                if (run) taskTurn.current = { thread, run };
               }} />
           ) : view === "memory" ? (
             <PersonalMemories accountId={session.user.id} onExpired={expired}
@@ -1184,6 +1200,7 @@ function Workspace({
                   <p role="status">{admin
                     ? "어시스턴트 엔진의 연결과 설정을 확인해 주세요."
                     : "지금 답변을 받을 수 없습니다. 관리자에게 문의해 주세요."}</p>
+                  {!draft && <button type="button" disabled={composerBusy} onClick={()=>useStarter("기억 검색: ")}>저장된 기억 검색</button>}
                   {admin && (
                     <Button label="엔진 설정 열기" variant="ghost" onClick={() => {
                       open({ view: "admin", engine: true });
@@ -1247,6 +1264,7 @@ function Workspace({
                         )}
                       </div>
                     )}
+                    {(turn.run.model?.provider_id==="personal-browser" || turn.run.model?.provider_id==="member-workflow" || ["Deployment text-only preview","Deployment browser answer"].includes(turn.run.model?.provider_name)) && <button className="member-task-link" type="button" onClick={()=>open({view:"tasks",taskId:turn.run.id})}>업무 기록 보기</button>}
                     {browserWork?.run_id === turn.run.id && (
                       <PersonalBrowserCard browser={browser} pending={false} onOpen={openBrowser} />
                     )}
@@ -1276,7 +1294,7 @@ function Workspace({
                             onClick={() => openInboxRequest(selected, pending.request_id)} />
                         ) : (
                           <Button label="이전 메시지 다시 보내기" variant="ghost"
-                            isDisabled={(!pending.browser_request && !ready) || mutating || busy}
+                            isDisabled={(!pending.browser_request && !pending.research_request && !ready) || mutating || busy}
                             onClick={() => void send(undefined, true)} />
                         )}
                         <Button label="이전 메시지 버리기" variant="ghost" isDisabled={mutating}
@@ -1313,7 +1331,7 @@ function Workspace({
                 thread={selected} scope={scope} draft={draft} run={working?.run.accepts_text_follow_up ? working.run : undefined}
                 pending={memory.instructions?.[selected]?.pending} rejected={memory.instructions?.[selected]?.draft} change={change} expired={expired}
                 refresh={() => { if (selectedRef.current === selected) void history(selected); }} />}
-              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up)} busy={composerBusy}
+              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up && !/^(?:기억|대화) 검색[:：]/u.test(draft) && !personalResearchIntent(draft))} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
                 : pending?.status === "rejected" || pending?.status === "inbox" ? "다음 메시지를 작성하세요."
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."

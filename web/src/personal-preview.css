@@ -212,3 +212,46 @@
 }
 
 .member-demo-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--member-accent); }
+
+.task-heading, .task-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.task-heading { justify-content: space-between; }
+.task-heading h2 { margin: 0; }
+.task-heading button, .schedule-all, .task-step-back { color: var(--member-secondary); background: transparent; padding-inline: .5rem; }
+.personal-tasks .task-controls { margin: 14px 0 26px; }
+.task-create, .task-form button { background: var(--member-text); color: var(--member-canvas); padding: 8px 18px; border-radius: 18px; font-weight: 600; }
+.task-schedules, .task-form, .task-receipt { margin-top: 16px; padding: 14px 18px; border: 1px solid var(--member-divider); border-radius: 16px; background: var(--member-sheet); }
+.task-schedules summary { cursor: pointer; padding-block: 8px; font-weight: 650; }
+.task-schedules summary span, .task-schedule small, .task-preview, .task-row time, .task-step-detail time { color: var(--member-secondary); font-size: .84rem; }
+.task-schedule > button { display: flex; align-items: center; gap: 12px; width: 100%; text-align: start; padding: 8px 0; background: transparent; color: inherit; }
+.task-schedule small, .task-row-copy > * { display: block; }
+.schedule-clock, .personal-tasks .task-row > .task-marker { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: var(--member-field); color: var(--member-accent); flex-shrink: 0; }
+.schedule-settings { padding-inline-start: 12px; border-inline-start: 2px solid var(--member-divider); margin-left: 16px; }
+.task-actions button, .task-history button[aria-pressed=true] { background: var(--member-field); border-radius: 10px; padding-inline: 10px; }
+.task-form { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(210px,100%),1fr)); gap: 12px; align-items: end; }
+.task-form label { display: grid; gap: 5px; font-size: .9rem; }
+.task-form :is(input,select) { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; min-height: 44px; background: var(--member-field); color: var(--member-text); border: 1px solid var(--member-divider); border-radius: 9px; }
+.personal-tasks .task-row { grid-template-columns: auto minmax(0,1fr) auto; align-items: start; border-radius: 12px; }
+.task-row-copy { min-width: 0; }
+.task-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin-block: 4px; }
+.task-row time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.task-receipt h3 { font-size: .85rem; color: var(--member-secondary); margin: 12px 0 4px; }
+.task-receipt h3:first-child { margin-top: 0; }
+.task-receipt p { margin: 0; }
+.task-reader .task-meta { margin-block: 10px; }
+.task-trace[data-selected=true] { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.personal-tasks .task-history { list-style: none; margin: 0; padding: 0; }
+.personal-tasks .task-history li { padding: 0; position: relative; }
+.task-history li:not(:last-child)::before { content: ""; width: 1px; position: absolute; left: 15px; top: 28px; bottom: -13px; background: var(--member-divider); pointer-events: none; }
+.task-history button { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px; background: transparent; width: 100%; text-align: start; color: inherit; }
+.task-history .task-marker { color: var(--member-accent); font-size: .9rem; }
+.task-step-detail { align-self: start; padding: 12px 16px; background: var(--member-field); border-radius: 12px; }
+.task-step-detail h4 { margin: 4px 0 8px; }
+.task-step-detail p { white-space: pre-wrap; color: var(--member-text); }
+@media (max-width: 650px) {
+  .task-trace[data-selected=true] { display: block; }
+  .task-trace[data-selected=true] .task-history { display: none; }
+  .personal-tasks .task-row { padding-inline: 2px; gap: 8px; }
+  .task-schedules, .task-form, .task-receipt { padding: 12px; }
+}
+
+.member-task-link { align-self: flex-start; background: transparent; color: var(--member-secondary); min-height: 44px; padding: 6px 12px; font-size: .82rem; }

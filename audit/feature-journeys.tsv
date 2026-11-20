@@ -55,6 +55,9 @@ F17	F17-04	실물 iOS와 Android에서 앱을 닫은 상태로 기기 알림을 
 F18	F18-01	로그인하지 않고 공개 데모를 연다	합성 대화만 보이고 개인 API 요청은 발생하지 않는다	vitest	web/src/PublicDemo.test.tsx	opens the public timetable example without requesting a member session or private data	통과
 F18	F18-02	데모에서 예제 글을 작성한 뒤 실제 회원 계정으로 들어간다	예제 글과 미리보기 초안은 회원의 대화 목록에 남지 않는다	vitest	web/src/PublicDemo.test.tsx	keeps a practice question out of persistent storage and clears it on leaving the public demo	통과
 F18	F18-03	공개 스크린샷의 대화·이름·파일 표시를 확인한다	합성 fixture로 출처를 확인할 수 있는 표본만 이미지에 포함된다	recorded	audit/standard-journey-checks.md	F18 합성 미리보기	통과
+F18	F18-04	회원 업무 목록에서 날짜와 다섯 예약을 확인한다	오늘·어제 기록이 묶이고 예약 세 개에서 전체 다섯 개로 펼친다	vitest	web/src/PersonalTasks.test.tsx	shows three scheduled previews, opens all five, and renders history by local date	통과
+F18	F18-05	모바일 업무의 특정 근거를 연 뒤 해당 대화로 돌아간다	선택한 단계 본문을 읽고 타임라인 조작과 원래 대화를 다시 연다	recorded	docs/reviews/2026-11-21-member-workflows.md	업무 기록과 화면 이동	통과
+F18	F18-06	두 번째 회원으로 이전 회원의 업무 주소를 연다	목록과 예약은 빈 상태이고 직접 주소에서 개인 기록을 읽을 수 없다	recorded	docs/reviews/2026-11-21-member-workflows.md	업무 기록과 화면 이동	통과
 F19	F19-01	화자 이름으로 기억을 찾아 편집 후 해당 행으로 돌아간다	수정 결과와 원래 목록 행의 초점을 확인할 수 있다	vitest	web/src/PersonalMemories.test.tsx	searches by speaker, reads, edits, and restores focus to a reopened memory row	통과
 F19	F19-02	저장한 기억의 변경 이력을 펼친다	실제 저장 메타데이터와 각 버전의 시각을 표시한다	vitest	web/src/PersonalMemories.test.tsx	shows saved memory metadata and timestamps on expandable revision history	통과
 F19	F19-03	미래부터 적용할 사실을 미리 저장하고 현재와 과거를 조회한다	질문 시점에 유효한 사실만 결과에 포함된다	rust	crates/moosuri-store/src/knowledge/tests.rs	current_and_historical_validity_filters_do_not_expose_future_facts	통과
@@ -82,12 +85,18 @@ F26	F26-03	학습 근거였던 대화를 삭제하고 절차 목록을 다시 �
 F27	F27-01	대화에서 자료를 읽고 계산한 결과를 보고서로 요청한다	실제 읽기 근거와 계산을 사용해 개인 보고서 한 건을 저장한다	rust	crates/moosuri-agent/src/tests/missions.rs	current_chat_compound_request_reads_calculates_and_saves_one_real_private_report	통과
 F27	F27-02	일시정지한 업무의 완료 조건을 수정하다 응답을 잃는다	편집 내용과 요청 번호를 보존해 같은 조건 변경으로 재확인한다	vitest	web/src/Missions.test.tsx	edits paused acceptance without another approval, retaining fields and exact UUID after lost acknowledgement	통과
 F27	F27-03	업무를 맡기고 검토가 필요한 결과를 연다	요청이 저장되고 검토 중인 결과를 완료로 표시하지 않는다	vitest	web/src/Missions.test.tsx	submits an explicit durable request and shows review as incomplete	통과
+F27	F27-04	대화에서 기억 검색을 맡기고 같은 요청을 반복한 뒤 기억을 삭제한다	같은 업무·대화 턴 한 건을 열고 삭제 후 근거 본문은 보이지 않는다	rust	crates/moosuri-store/src/personal_browser/tasks/tests.rs	workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_forgotten_text	통과
+F27	F27-05	이전에 답변 받은 검색어로 대화 조사를 실행한다	실제 원래 질문과 응답을 근거 단계에서 연다	recorded	docs/reviews/2026-11-21-member-workflows.md	자료 조사 실행	통과
+F27	F27-06	조사 실행 응답을 잃은 뒤 화면에서 같은 내용으로 재시도한다	원래 요청 식별자를 재사용해 한 업무 상세로 이동한다	vitest	web/src/PersonalTasks.test.tsx	retries a lost manual research response with the same request identity	통과
 F28	F28-01	요청 기록에 저장된 날짜를 확인하고 새 날짜를 작성만 한다	저장한 알림 날짜와 미저장 편집값이 구분된다	vitest	web/src/Artifacts.test.tsx	shows only server saved followup notification dates and keeps unsaved edits separate	통과
 F28	F28-02	소식함에서 약속의 후속 확인을 선택한다	해당 기록의 버전과 날짜 영수증으로 원래 약속을 연다	vitest	web/src/Schedules.test.tsx	opens the actual followup with its pinned revision and date receipt	통과
 F28	F28-03	회신 일부를 받은 기록에 남은 의무를 적고 브리핑을 연 뒤 완료 처리한다	대기 중에는 최신 버전과 남은 의무가 보이고 명시적으로 완료한 뒤 브리핑에서 사라진다	rust	crates/moosuri-store/src/artifacts/tests.rs	honest_briefing_filters_lifecycle_mute_and_snooze_and_safe_exports_are_literal	통과
 F29	F29-01	현지 시각의 일일 알림을 등록하고 일시정지·재개한다	해석된 시간과 현재 버전을 사용해 같은 알림을 제어한다	vitest	web/src/Schedules.test.tsx	creates interpreted daily local reminders and edits/pauses/resumes/revokes with pinned revisions	통과
 F29	F29-02	주간 알림의 요일을 바꾸고 다시 연다	선택한 요일 집합과 소유자의 시간대가 유지된다	vitest	web/src/Schedules.test.tsx	weekly edits preserve exact weekdays and owning timezone and new rules sort selected weekdays	통과
 F29	F29-03	예약 요청에서 빠진 내용 또는 시각을 다음 답변으로 채운다	앞서 명시한 날짜·시간 필드를 보존하고 누락된 값만 추가한다	rust	crates/moosuri-store/src/schedules/chat/drafts/tests.rs	reminder_followup_missing_body_and_partial_civil_time_keep_exact_supplied_fields	통과
+F29	F29-04	일정을 여러 주기 넘긴 뒤 두 타이머를 실행하고 다시 시작한다	최근 예정 시각 한 회차만 생기고 재시작 뒤 같은 결과를 유지한다	rust	crates/moosuri-store/src/personal_browser/tasks/tests.rs	workflow_due_coalesces_once_across_concurrent_ticks_and_reopen	통과
+F29	F29-05	예약을 멈춰 수동 실행을 재시도하고 재개한 뒤 해제한다	기존 요청을 복구하고 해제 후에도 두 실행 이력을 다시 연다	rust	crates/moosuri-store/src/personal_browser/tasks/tests.rs	workflow_schedule_pause_resume_manual_retry_and_retirement_keep_prior_receipts	통과
+F29	F29-06	경로 세대와 권한이 바뀌거나 복원된 예약을 실행한다	이전 허가의 자동 실행을 차단하고 오래된 타이머는 새 허가를 보존한다	rust	crates/moosuri-store/src/personal_browser/tasks/tests.rs	workflow_registry_epoch_generation_and_restored_grants_fence_due_research	통과
 F30	F30-01	예약 일시정지 직전에 시작된 목록 조회가 뒤늦게 도착한다	수락한 정지 상태가 다시 활성으로 덮이지 않는다	vitest	web/src/Schedules.test.tsx	a refresh captured before an accepted pause cannot put the schedule back into active UI	통과
 F30	F30-02	실행 중인 정기 업무에서 공급자 연결을 철회한 뒤 재개한다	원래 선택값은 보존하고 소유자의 새 조작 전에는 실행하지 않는다	rust	crates/moosuri-store/src/recurring_missions/tests.rs	recurring_epoch_and_provider_withdrawal_require_fresh_owner_action_and_keep_original_pin	통과
 F30	F30-03	서머타임 시작·종료를 지나는 주간 업무와 놓친 회차를 처리한다	정의된 시간대 및 누락 회차 정책이 적용된다	rust	crates/moosuri-store/src/recurring_missions/tests.rs	recurring_uses_existing_dst_gap_fold_weekly_and_catchup_oracles	통과

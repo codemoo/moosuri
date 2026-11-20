@@ -287,6 +287,47 @@ async function openDrawer(user: ReturnType<typeof userEvent.setup>) {
   return within(await screen.findByRole("dialog", { name: "대화 목록" }));
 }
 
+it.each([false, true])("focuses the task's original turn after the newest conversation page settles (older page: %s)", async older => {
+  const user = userEvent.setup();
+  const taskTurn = turn(aid, "Original task turn");
+  const newerTurn = turn(bid, "Most recent message");
+  newerTurn.run.id = "55555555-5555-4555-8555-555555555555";
+  const id = taskTurn.run.id;
+  const summary = { id, thread_id: tid, title: "Saved task", state: "completed", next_actor: "none", created_at: 1 };
+  const originalFetch = globalThis.fetch;
+  let holdNewest = false;
+  let release: ((value: Response) => void) | undefined;
+  let olderReads = 0;
+  vi.stubGlobal("fetch", (url: string, init: RequestInit = {}) => {
+    if (url.endsWith("/personal/tasks")) return Promise.resolve(Response.json({ items: [summary], next_before: null }));
+    if (url.endsWith("/personal/tasks/" + id)) return Promise.resolve(Response.json({
+      task: summary, request: "Look up the time", thread_title: "A private thread", history: [],
+    }));
+    if (url.endsWith("/messages?before=2")) {
+      olderReads++;
+      return Promise.resolve(Response.json({ thread_id: tid, turns: [taskTurn], cursor: 1, next_before: null }));
+    }
+    if (url.endsWith("/messages")) {
+      if (holdNewest) return new Promise<Response>(resolve => { release = resolve; });
+      return Promise.resolve(Response.json({ thread_id: tid, turns: [taskTurn], cursor: 1, next_before: null }));
+    }
+    return originalFetch(url, init);
+  });
+  mount();
+  await screen.findByText("Original task turn");
+  await user.click(screen.getByRole("button", { name: "맡긴 일" }));
+  await user.click(await screen.findByRole("button", { name: /Saved task/ }));
+  holdNewest = true;
+  await user.click(await screen.findByRole("button", { name: /원래 대화 열기/ }));
+  await waitFor(() => expect(release).toBeDefined());
+  expect(olderReads).toBe(0);
+  release!(Response.json({ thread_id: tid, cursor: 2, turns: older ? [newerTurn] : [taskTurn, newerTurn],
+    next_before: older ? 2 : null }));
+  await waitFor(() => expect(document.getElementById("member-turn-" + id)).toHaveFocus());
+  expect(screen.getByText("Most recent message")).toBeVisible();
+  expect(olderReads).toBe(older ? 1 : 0);
+});
+
 it("routes a browser request and guidance into one run and resumes the viewed tab with an idempotent receipt", async () => {
   const workspaceId = "55555555-5555-4555-8555-555555555555";
   const base = `/threads/${tid}/browser`;

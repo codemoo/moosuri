@@ -707,9 +707,11 @@ function Workspace({
     setGoogleReads([]);
     setMailError("");
     setError("");
-    if (selected) {
+    if (selected && view === "chat") {
       void history(selected);
-      if (view === "chat") void mailHistory(selected);
+      void mailHistory(selected);
+    } else {
+      setReading(false);
     }
   }, [selected, scope, refresh, view]);
   useLayoutEffect(() => {

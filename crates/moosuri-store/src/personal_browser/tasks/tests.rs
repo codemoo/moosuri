@@ -70,6 +70,63 @@ async fn start(store: &Store, scope: &Scope, title: &str) -> (Uuid, Workspace) {
 }
 
 #[tokio::test]
+async fn personal_tasks_releases_expired_direct_control_once_without_reopening_chat() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member {
+        store,
+        scope,
+        root: _root,
+    } = member().await;
+    let (request, mut view) = start(&store, &scope, "Review the timetable").await;
+    let id = Uuid::parse_str(&view.run_id).unwrap();
+    view.state = "ready".into();
+    let view = store
+        .personal_browser_finish(scope.clone(), view, request, None)
+        .await
+        .unwrap();
+    store
+        .personal_browser_reserve(
+            scope.clone(),
+            Version {
+                workspace_id: view.id,
+                revision: view.revision,
+                request_id: Uuid::new_v4(),
+            },
+            "takeover",
+            Some("fixture-control".into()),
+        )
+        .await
+        .unwrap();
+    let detail = store
+        .personal_task_detail(scope.owner, scope.user.clone(), id)
+        .await
+        .unwrap();
+    assert_eq!(detail.task.state, "user_control");
+    store
+        .call(move |db| {
+            db.conn.execute(
+                "UPDATE personal_browser_jobs SET controller_until=unixepoch()-1 WHERE run_id=?1",
+                [id.to_string()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let page = store
+        .personal_task_page(scope.owner, scope.user.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].state, "ready");
+    let after = store
+        .personal_task_detail(scope.owner, scope.user, id)
+        .await
+        .unwrap();
+    assert_eq!(after.reason.as_deref(), Some("controller_expired"));
+    assert_eq!(after.history.len(), detail.history.len() + 1);
+    assert_eq!(after.history.last().unwrap().state, "ready");
+}
+
+#[tokio::test]
 async fn personal_tasks_page_cursor_survives_newer_jobs_and_preserves_original_ids() {
     let _guard = crate::tests::TEST_LOCK.lock().await;
     let Member {

@@ -63,6 +63,16 @@ fn expire_workers(c: &Connection, owner: VolumeOwner) -> Result<()> {
             )?;
         }
     }
+    // Release control when either the task list or the original chat observes
+    // expiry. Keep the expired deadline so a stale relay view cannot renew it.
+    c.execute(
+        "UPDATE personal_browser_jobs
+         SET view = json_set(view, '$.state', 'ready', '$.reason', 'controller_expired',
+                             '$.revision', json_extract(view, '$.revision') + 1)
+         WHERE tenant_id=?1 AND volume_id=?2 AND generation=?3 AND pending IS NULL
+           AND controller_until<=unixepoch() AND json_extract(view,'$.state')='user_control'",
+        params![owner.tenant.to_string(), owner.volume.to_string(), owner.generation as i64],
+    )?;
     Ok(())
 }
 fn current(c: &Connection, scope: &Scope) -> Result<Option<Job>> {

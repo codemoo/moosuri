@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run with python3 member-web-fullstack.py /path/to/moosuri (with embedded web assets).
 Requires nonroot Unix, Chrome stable, Python Playwright, and openssl on PATH.
-Use --local-model NAME --model-port PORT for three real loopback inference cases.
-Use --context-controls for general and missing-information questions in Korean.
+Use --claude for seven real answers from Claude Sonnet 5.5 at medium effort.
+The default, --expect-output-limit and --history-budget need no model login.
 Every invocation creates and removes a private fixture. Only the first member
 has a model binding because both synthetic member processes run as this UID.
 """
@@ -11,16 +11,16 @@ import base64
 import hashlib
 from contextlib import ExitStack, closing
 import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 import json
 import os
-import re
 from pathlib import Path
 import secrets
 import socket
 import sqlite3
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -28,6 +28,8 @@ from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "audit"))
+import claude_cli
 
 MODEL = "synthetic-model"
 PROMPT = "Fixture trip list"
@@ -41,6 +43,20 @@ EMPTY_MEMORIES = "아직 기록한 기억이 없습니다."
 LONG_PROMPTS = ["Original fixture: " + "A" * 1050, "Recent fixture: " + "B" * 750,
                 "Current fixture: " + "C" * 650]
 LONG_ANSWERS = ["First fixture recorded.", "Second fixture recorded.", "Recent fixture retained."]
+LIMIT_PROMPT = "123 곱하기 421을 계산해 줘. 답만 적어 줘."
+CLAUDE_DIALOGUES = (
+    (
+        ("ML-01", "23 + 19의 합만 숫자로 답해 줘.", "42"),
+        ("ML-02", "예시 열차 무궁화 82호는 14:37에 출발해. 출발 시각만 답해 줘.", "14:37"),
+        ("ML-03", "방금 이야기한 열차의 출발 시각을 다시 알려 줘. 시각만 답해 줘.", "14:37"),
+    ),
+    (
+        ("ML-05", "프랑스의 수도는 어디야? 한글 지명만 적어 줘.", "파리"),
+        ("ML-06", "내가 이 대화에서 예약한 좌석 번호를 알려 줘. 알려 준 적이 없으면 ‘확인 불가’라고만 답해 줘.", "확인 불가"),
+        ("ML-07", "입실은 09:07이야. 입실 시각을 콜론이 들어간 HH:MM 형식으로만 써 줘.", "09:07"),
+        ("ML-08", "방금 말한 입실 시각을 같은 HH:MM 형식으로만 다시 적어 줘.", "09:07"),
+    ),
+)
 
 
 def provider_turns(history_budget):
@@ -62,25 +78,41 @@ class QuietHandler(BaseHTTPRequestHandler):
 
 class Provider(QuietHandler):
     def do_POST(self):
+        if self.headers.get("Authorization") != "Bearer " + self.server.fixture_key:
+            self.send_error(403)
+            return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = [(m["role"], m["content"]) for m in body["messages"]]
-        valid = self.path == "/v1/chat/completions" and body["model"] == MODEL and body["stream"]
-        actual = [item for item in messages if item[0] in ("assistant", "user")]
+        valid = self.path == "/v1/chat/completions" and body["model"] == self.server.model and body["stream"]
         if not valid or self.server.calls >= len(self.server.turns):
             self.send_error(400)
             return
         expected, answer = self.server.turns[self.server.calls]
-        if actual != expected:
+        if not messages or messages[0][0] != "system" or messages[1:] != expected:
             self.send_error(400)
             return
         self.server.calls += 1
+        usage = {"prompt_tokens": 9, "completion_tokens": 4 if answer else 1}
+        if self.server.model == claude_cli.MODEL:
+            # Only a turn armed by the browser driver can reach the official CLI.
+            prompt = json.dumps({"format": "moosuri-local-history-v1", "history_is_quoted_context": True,
+                                 "history": [{"role": r, "text": t} for r, t in messages[1:-1]],
+                                 "current_user_request": messages[-1][1]}, ensure_ascii=False)
+            try:
+                answer, metrics = claude_cli.model(self.server.cli_cwd, prompt, 0.1, system=messages[0][1])
+            except RuntimeError as error:
+                self.server.claude_error = str(error)
+                self.send_error(502)
+                return
+            usage = {"prompt_tokens": sum(metrics[k] for k in claude_cli.USAGE if k != "output_tokens"),
+                     "completion_tokens": metrics["output_tokens"]}
         frames = [
-            {"choices": [{"index": 0, "delta": {"role": "assistant", "content": answer},
+            {"choices": [{"index": 0, "delta": {"role": "assistant", "content": answer or ""},
                           "finish_reason": None}]},
-            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
-            {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 4}},
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop" if answer else "length"}]},
+            {"choices": [], "usage": usage},
         ]
-        data = "".join(f"data: {json.dumps(dict(id='fixture', model=MODEL, **frame))}\n\n"
+        data = "".join(f"data: {json.dumps(dict(id='fixture', model=self.server.model, **frame))}\n\n"
                        for frame in frames) + "data: [DONE]\n\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -116,8 +148,8 @@ class Proxy(QuietHandler):
     do_GET = do_POST = do_PUT = do_DELETE = relay
 
 
-def serve(stack, handler, tls=None):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+def serve(stack, handler, tls=None, server_type=ThreadingHTTPServer):
+    server = server_type(("127.0.0.1", 0), handler)
     stack.callback(server.server_close)
     if tls:
         server.socket = tls.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
@@ -157,7 +189,7 @@ def start(stack, command, ready, env):
     raise RuntimeError(f"{command[1]} did not start listening")
 
 
-def provision(stack, binary, root, model, port, output_tokens):
+def provision(stack, binary, root, provider, output_tokens):
     env = {"PATH": os.defpath, "HOME": str(directory(root, "home")), "TMPDIR": str(root),
            "NO_PROXY": "127.0.0.1,localhost"}
     registry, ipc, gateway, model_root, ledger = (directory(root, x) for x in ("r", "i", "g", "m", "l"))
@@ -179,14 +211,17 @@ def provision(stack, binary, root, model, port, output_tokens):
         command = [*member, "serve", "--socket", sock]
         if index == 0:
             binding = {k: owner[k] for k in ("account_id", "tenant_id", "volume_id", "generation")}
+            call_limit = sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5
             binding.update(peer_uid=os.geteuid(),
-                           budget={"max_calls": 5, "max_tokens": 20480, "reservation_tokens": 4096})
+                           budget={"max_calls": call_limit, "max_tokens": 4096 * call_limit, "reservation_tokens": 4096})
+            fixture_key = root / "provider.key"
+            fixture_key.write_text(provider.fixture_key)
             config = root / "model.json"
             config.write_text(json.dumps({
-                "version": 1, "connection_revision": str(uuid4()), "model": model,
-                "provider": {"kind": "compatible", "base_url": f"http://127.0.0.1:{port}/v1",
+                "version": 1, "connection_revision": str(uuid4()), "model": provider.model,
+                "provider": {"kind": "compatible", "base_url": f"http://127.0.0.1:{provider.server_port}/v1",
                              "allowed_ips": ["127.0.0.1"], "router_providers": [], "zero_data_retention": False},
-                "bindings": [binding], "key_file": None,
+                "bindings": [binding], "key_file": str(fixture_key),
             }))
             fingerprint = root / "fingerprint"
             fingerprint.write_bytes(secrets.token_bytes(32))
@@ -334,94 +369,88 @@ def exercise_history_budget(page, member, origin, provider):
     passed("MB-03 an oversized current question stays a draft with zero additional provider calls or saved turns")
 
 
-def exercise_local_model(page, member, origin, limit_case, context_controls):
+def saved_reply(page, member, prompt, provider):
+    deadline = time.monotonic() + 75
+    with closing(sqlite3.connect(member[3].as_uri() + "?mode=ro", uri=True)) as db:
+        while time.monotonic() < deadline:
+            if provider.claude_error:
+                raise RuntimeError(provider.claude_error)
+            reply = db.execute(
+                "SELECT r.id, r.state, o.text FROM chat_runs r LEFT JOIN chat_output o "
+                "ON o.tenant_id=r.tenant_id AND o.run_id=r.id AND o.item='personal-text-preview-answer' "
+                "WHERE r.user_text=? ORDER BY o.ordinal DESC LIMIT 1", (prompt,)
+            ).fetchone()
+            if reply and reply[1] not in ("running", "queued"):
+                return reply
+            page.wait_for_timeout(120)
+    raise RuntimeError("No terminal member reply was committed before the deadline.")
+
+
+def exercise_output_limit(page, member, origin, provider):
     page.goto(origin)
     login(page, member, True)
     editor = page.get_by_role("textbox", name="메시지", exact=True)
-    cases = [
-        ("ML-01", "23 + 19의 합만 숫자로 답해 줘. /no_think", "42"),
-        ("ML-02", "예시 열차 무궁화 82호는 14:37에 출발해. 출발 시각만 답해 줘. /no_think", "14:37"),
-        ("ML-03", "방금 이야기한 열차의 출발 시각을 다시 알려 줘. 시각만 답해 줘. /no_think", "14:37"),
-    ]
-    if limit_case:
-        cases = [("ML-04", "123 곱하기 421을 계산해 줘. 답만 적어 줘.", None)]
-    if context_controls:
-        cases = [
-            ("ML-05", "프랑스의 수도는 어디야? 한글 지명만 적어 줘.", "파리"),
-            ("ML-06", "내가 이 대화에서 예약한 좌석 번호를 알려 줘. 알려 준 적이 없으면 ‘확인 불가’라고만 답해 줘.", "확인 불가"),
-            ("ML-07", "입실은 09:07이야. 입실 시각을 콜론이 들어간 HH:MM 형식으로만 써 줘.", "09:07"),
-            ("ML-08", "방금 말한 입실 시각을 같은 HH:MM 형식으로만 다시 적어 줘.", "09:07"),
-        ]
+    editor.fill(LIMIT_PROMPT)
+    editor.press("Enter")
+    run_id, state, text = saved_reply(page, member, LIMIT_PROMPT, provider)
+    assert state == "incomplete" and not text
+    notice = page.locator(f"#member-turn-{run_id}").get_by_text("답변 미완료 · 표시할 본문 없음", exact=True)
+    expect(notice).to_be_visible()
+    page.reload()
+    expect(notice).to_be_visible()
+    assert provider.calls == 1 and rows(member, "SELECT COUNT(*) FROM chat_runs") == [(1,)]
+    passed("ML-04 empty output limit remains visible after reload, one synthetic response and one run")
+
+
+def exercise_claude(page, member, origin, provider):
+    page.goto(origin)
+    login(page, member, True)
+    editor = page.get_by_role("textbox", name="메시지", exact=True)
     failures = []
-    for case, prompt, expected in cases:
-        editor.fill(prompt)
-        editor.press("Enter")
-        # Match the persisted result of this prompt, then check the visible reply.
-        deadline = time.monotonic() + 60
-        reply = None
-        while time.monotonic() < deadline:
-            with closing(sqlite3.connect(member[3].as_uri() + "?mode=ro", uri=True)) as db:
-                reply = db.execute(
-                    "SELECT r.state, o.text, r.error FROM chat_runs r LEFT JOIN chat_output o "
-                    "ON o.tenant_id=r.tenant_id AND o.run_id=r.id "
-                    "WHERE r.user_text=? ORDER BY o.ordinal DESC LIMIT 1", (prompt,)
-                ).fetchone()
-            if reply and reply[0] not in ("running", "queued"):
-                break
-            page.wait_for_timeout(120)
-        if limit_case:
-            assert reply and reply[0] == "incomplete" and not reply[1], "expected a confirmed limit without text"
-            expect(page.get_by_text("답변 미완료 · 표시할 본문 없음", exact=True)).to_be_visible()
-            page.reload()
-            expect(page.get_by_text("답변 미완료 · 표시할 본문 없음", exact=True)).to_be_visible()
-            assert rows(member, "SELECT COUNT(*) FROM chat_runs") == [(1,)]
-            passed(case + " output limit before visible text, persisted without retry")
-            continue
-        if not reply or reply[0] != "completed" or not reply[1]:
-            state, error = (reply[0], reply[2]) if reply else ("missing", None)
-            failures.append(f"{case}: local reply status {state}, reason {error}")
-            continue
-        answer = reply[1].strip()
-        expect(page.get_by_text(answer, exact=True).last).to_be_visible(timeout=5000)
-        if not re.fullmatch(r"[\s`*]*" + re.escape(expected) + r"[\s`*.!]*", answer):
-            # Restrict diagnostics to the public fixture's numbers, never transcript text.
-            values = re.findall(r"\d{1,4}(?::\d{2})?", answer)[:6]
-            failures.append(f"{case}: expected only {expected}, observed numbers {values}")
-            continue
-        passed(case + " real local model, browser and committed SQLite result")
+    for index, dialogue in enumerate(CLAUDE_DIALOGUES):
+        if index:
+            button(page, "새 대화").click()
+        history = []
+        for case, prompt, expected in dialogue:
+            history.append(("user", prompt))
+            provider.turns.append((history.copy(), None))
+            editor.fill(prompt)
+            editor.press("Enter")
+            run_id, state, answer = saved_reply(page, member, prompt, provider)
+            if state != "completed" or not answer:
+                raise RuntimeError(f"{case} ended with member state {state}.")
+            visible = page.locator(f"#member-turn-{run_id} .member-reply p")
+            expect(visible).to_be_visible()
+            if visible.inner_text() != answer or answer.strip() != expected:
+                failures.append(case)
+            else:
+                passed(f"{case} {claude_cli.MODEL} / {claude_cli.EFFORT}, browser and SQLite")
+            history.append(("assistant", answer))
+    assert provider.calls == sum(map(len, CLAUDE_DIALOGUES))
     if failures:
-        raise AssertionError(" / ".join(failures))
+        raise AssertionError("Answer or display mismatch in " + ", ".join(failures))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
-    parser.add_argument("--local-model", help="installed model of an opt-in loopback OpenAI-compatible provider")
-    parser.add_argument("--model-port", type=int, help="loopback TCP port for the selected provider")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--claude", action="store_true", help="seven questions using the authenticated Claude CLI")
     mode.add_argument("--expect-output-limit", action="store_true",
-                      help="use one output token to check a reasoning model ending before visible text")
-    mode.add_argument("--context-controls", action="store_true",
-                      help="check a general fact and a missing personal fact in a fresh conversation")
+                      help="check a synthetic output-limit response with no visible text")
     mode.add_argument("--history-budget", action="store_true",
                       help="exercise the real broker reservation with a synthetic deterministic provider")
     args = parser.parse_args()
-    if args.expect_output_limit and not args.local_model:
-        parser.error("--expect-output-limit requires --local-model")
-    if args.context_controls and not args.local_model:
-        parser.error("--context-controls requires --local-model")
-    if args.history_budget and args.local_model:
-        parser.error("--history-budget uses its own synthetic provider")
-    if bool(args.local_model) != (args.model_port is not None):
-        parser.error("--local-model and --model-port must be specified together")
-    if args.model_port is not None and not 1 <= args.model_port <= 65535:
-        parser.error("invalid loopback port")
     if os.geteuid() == 0:
         parser.error("run as an ordinary user")
     os.umask(0o077)
     with ExitStack() as stack:
         # Short socket paths also run on macOS's 104-byte sockaddr_un.
         root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="mweb-", dir="/tmp"))).resolve()
+        cli_cwd = None
+        if args.claude:
+            cli_cwd = directory(root, "claude")
+            claude_cli.require_login(cli_cwd)
         key, cert = root / "tls.key", root / "tls.pem"
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
                         "-subj", "/CN=127.0.0.1", "-keyout", key, "-out", cert], capture_output=True, check=True)
@@ -430,16 +459,19 @@ def main():
         spki = base64.b64encode(hashlib.sha256(public_der).digest()).decode("ascii")
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(cert, key)
-        provider = None
-        if args.local_model:
-            model, port, output_tokens = args.local_model, args.model_port, 1 if args.expect_output_limit else 1536
-        else:
-            provider = serve(stack, Provider)
-            provider.calls = 0
-            provider.turns = provider_turns(args.history_budget)
-            model, port, output_tokens = MODEL, provider.server_port, 64
+        provider = serve(stack, Provider, server_type=HTTPServer)
+        provider.model = claude_cli.MODEL if args.claude else MODEL
+        provider.fixture_key = secrets.token_urlsafe(32)
+        provider.cli_cwd = cli_cwd
+        provider.claude_error = None
+        provider.calls = 0
+        provider.turns = [] if args.claude else provider_turns(args.history_budget)
+        output_tokens = 512 if args.claude else 64
+        if args.expect_output_limit:
+            provider.turns = [([("user", LIMIT_PROMPT)], None)]
+            output_tokens = 1
         binary = args.binary.resolve(strict=True)
-        registry, ipc, gateway, members, env = provision(stack, binary, root, model, port, output_tokens)
+        registry, ipc, gateway, members, env = provision(stack, binary, root, provider, output_tokens)
         proxy = serve(stack, Proxy, tls)
         proxy.authority = f"127.0.0.1:{proxy.server_port}"
         proxy.gateway = gateway / "gateway.sock"
@@ -460,8 +492,10 @@ def main():
                 page = context.new_page()
                 if args.history_budget:
                     exercise_history_budget(page, members[0], origin, provider)
-                elif args.local_model:
-                    exercise_local_model(page, members[0], origin, args.expect_output_limit, args.context_controls)
+                elif args.expect_output_limit:
+                    exercise_output_limit(page, members[0], origin, provider)
+                elif args.claude:
+                    exercise_claude(page, members[0], origin, provider)
                 else:
                     exercise(page, members, origin, provider)
             finally:
@@ -469,4 +503,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from None

@@ -4,38 +4,17 @@ import json
 import math
 import os
 from pathlib import Path
-from shutil import which
 import subprocess
+import sys
 import tempfile
-import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-MODEL = "claude-sonnet-5-5"
+sys.path.insert(0, str(HERE.parent))
+from claude_cli import EFFORT, MODEL, USAGE, model, require_login
+
 ARMS = ("none", "raw", "structured")
 WORLD = json.loads((HERE / "world.json").read_text())
-USAGE = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
-
-
-def model(cwd, prompt, budget):
-    args = [
-        "claude", "-p", "--model", MODEL, "--effort", "medium", "--no-session-persistence",
-        "--tools", "", "--disable-slash-commands", "--mcp-config", '{"mcpServers":{}}',
-        "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk",
-        "--system-prompt", "Use only the supplied synthetic evidence and follow the requested output format.",
-        "--output-format", "json", "--max-budget-usd", str(budget),
-    ]
-    start = time.monotonic_ns()
-    proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, input=prompt,
-                          timeout=110, env={**os.environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "512"})
-    elapsed_ms = (time.monotonic_ns() - start) // 1_000_000
-    if proc.returncode:
-        raise RuntimeError(f"Claude exited with code {proc.returncode}, no model output logged")
-    data = json.loads(proc.stdout)
-    if data["is_error"] or set(data["modelUsage"]) != {MODEL}:
-        raise RuntimeError("Reader did not return a successful response on the exact model")
-    metrics = {k: data["usage"][k] for k in USAGE}
-    return data["result"].strip(), dict(metrics, wall_ms=elapsed_ms)
 
 
 def extract(cwd):
@@ -76,12 +55,11 @@ def read(cwd, case, source):
 
 
 def main():
-    if which("claude") is None:
-        raise SystemExit("Install and authenticate the Claude CLI to run this opt-in evaluation.")
     with tempfile.TemporaryDirectory(prefix="synthetic-reader-") as cwd:
+        require_login(cwd)
         selected, extraction = extract(cwd)
         inputs = stored(selected)
-        report = dict(model=MODEL, effort="medium", history_turns=WORLD["turns"],
+        report = dict(model=MODEL, effort=EFFORT, history_turns=WORLD["turns"],
                       extraction=dict(extraction, selected=selected, write_us=inputs["write_us"]),
                       rows=[], aggregate={})
         for i, (case, row) in enumerate(zip(WORLD["cases"], inputs["rows"], strict=True)):
@@ -104,4 +82,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from None

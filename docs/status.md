@@ -36,4 +36,6 @@
 
 운영에서 확인한 결과, 합성 공급자로 통과한 시험, 실기기에서 남은 검증을 구분한다. 과거 기록의 모델명·스키마·기능 제한은 각 시험 시점에 해당한다. [시험 기준](testing.md)
 
+제품 전체의 지원·배포 상태는 이 문서에서 갱신한다. Kiri 전환의 미완료 작업은 전환 작업표에, 기능별 개발과 수락은 해당 OpenSpec 변경에 기록한다. 표준 서버의 초기 재작성·추가 구현 계획과 날짜별 워크로그는 당시의 범위와 결정 근거를 보존한다. [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md) · [OpenSpec](../openspec/README.md) · [초기 계획](plan.md) · [표준 서버 추가 계획](additional-capabilities-plan.md)
+
 이전 배포 순서, 기능별 검증표와 당시 미완료 항목은 날짜별로 보존한다. [11월 19일까지의 누적 기록](reviews/2026-11-19-status-history.md) · [11월 13일까지의 누적 기록](reviews/2026-11-13-status-history.md)

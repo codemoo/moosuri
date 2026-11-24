@@ -1,8 +1,8 @@
 # 구현 설계
 
-Rust 서버·에이전트·CLI, React/TypeScript 웹, SQLite가 최종 결정이다. 아래 구조는 최종 구현 목표다. 실행 가능한 account/store/server/CLI와 React의 현재 범위는 [개발 안내](development.md)에 둔다. 사용자 지시의 추적은 [requirements](requirements.md), 개별 동작은 [features](features.md), 근거는 [references](references.md)에 둔다.
+서버·에이전트·CLI는 Rust, 웹은 React/TypeScript, 영속 저장소는 SQLite를 사용한다. 이 문서에는 공통 설계 원칙과 표준 서버의 구조를 기록한다. 제품의 지원 범위와 배포 상태는 [현재 상태](status.md), 실행 명령은 [개발 안내](development.md), 요구 사항과 동작 계약은 [요구 사항](requirements.md)과 [기능표](features.md)에서 확인한다.
 
-사용자별 컨테이너로 전환하는 제안은 [Kiri 기반 사용자별 무수리 설계](../openspec/changes/isolate-account-runtime/design.md)에 있다. 현행 dev.30의 단일 DB 구조와 전환 순서를 함께 기록했다.
+Linux 운영 Kiri는 회원별 컨테이너·볼륨과 설치 공용 모델 엔진을 사용한다. 회원 경계와 전환 순서에는 전용 설계와 작업표를 적용한다. [Kiri 설계](../openspec/changes/isolate-account-runtime/design.md) · [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md)
 
 ## 언어와 배포 경계
 

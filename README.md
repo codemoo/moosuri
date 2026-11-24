@@ -28,6 +28,8 @@ For installer requirements, updates and troubleshooting, see the [installation g
 
 Moosuri uses Rust for the server, agent and CLI, React/TypeScript for the web clients, and SQLite for storage. Start with the [development quickstart](docs/development.md) and [contribution guide](CONTRIBUTING.md). Automatic CI is disabled. Run the checks relevant to your change locally.
 
-For product scope, consult the [requirements](docs/requirements.md) and [feature contracts](docs/features.md). For implementation decisions and verification, see the [architecture](docs/architecture.md), [OpenSpec workflow](openspec/README.md) and [testing guide](docs/testing.md).
+For shared design decisions, start with the architecture. For a Kiri member feature, also read the member runtime design. Current support and deployment are recorded in the status page. Dated reviews preserve the evidence for the version they tested. [Architecture](docs/architecture.md) · [Kiri member runtime](openspec/changes/isolate-account-runtime/design.md) · [Current status](docs/status.md)
+
+The requirements and feature contracts define product scope. OpenSpec tracks individual changes and the testing guide links their acceptance evidence. [Requirements](docs/requirements.md) · [Feature contracts](docs/features.md) · [OpenSpec](openspec/README.md) · [Testing](docs/testing.md)
 
 Licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

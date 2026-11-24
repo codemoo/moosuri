@@ -14,7 +14,9 @@ const browserReasons: Partial<Record<string, string>> = {
   browser_unavailable: "브라우저 연결이 끊겼습니다. 마지막 동작이 반영됐는지 확인할 수 없습니다.",
   browser_worker_missing: "브라우저 세션이 종료되었습니다.",
   browser_stale: "페이지가 바뀌었습니다. 최신 화면을 확인해 주세요.",
+  browser_no_progress: "같은 화면과 같은 지시로는 새로운 내용이 없어 작업을 일시 중지했습니다. 추가 지시를 보내거나, 직접 조작으로 조건을 바꾸거나, 확인된 다른 링크를 열어 이어가세요.",
 };
+const noProgress = "browser_no_progress";
 
 export function PersonalBrowserCard({ browser, pending, onOpen }: {
   browser: PersonalBrowser; pending: boolean; onOpen: (trigger: HTMLButtonElement) => void;
@@ -27,6 +29,8 @@ export function PersonalBrowserCard({ browser, pending, onOpen }: {
       <div>
         <strong>{workspace ? browserStateLabel[workspace.state] : "브라우저 작업 요청 중"}</strong>
         {workspace?.title && <span>{workspace.title}</span>}
+        {workspace?.state === "ready" && workspace.reason === noProgress &&
+          <span data-reason={noProgress}>진행이 없어 일시 중지됨</span>}
       </div>
       {preview && <img src={browserFrameSource(preview)} alt="" />}
       {workspace && <button type="button" onClick={(event) => onOpen(event.currentTarget)}>
@@ -131,6 +135,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
   const watchable = browserCanWatch(value ?? null);
   const canTake = watchable && !!value && ["reading", "ready", "completed", "user_control"].includes(value.state);
   const handoff = browser.busy === "resume" || value?.state === "resuming";
+  const paused = value?.state === "ready" && value.reason === noProgress;
   const location = browserLocation(frame?.url ?? value?.url);
   const title = frame?.url === "about:blank" ? "빈 페이지" : location?.hostname ?? "브라우저 작업";
 
@@ -238,8 +243,10 @@ export function PersonalBrowserViewer({ browser, onClose }: {
       <div className="member-browser-content">
         {notice && <p role="status">{notice}</p>}
         {browser.error && <p className="member-browser-error" role="alert">{browser.error}</p>}
-        {value?.reason && browserReasons[value.reason] && <p role="status">{browserReasons[value.reason]}</p>}
-        {value?.state === "ready" && canTake && (
+        {value?.reason && browserReasons[value.reason] &&
+          (value.reason !== noProgress || value.state === "ready") &&
+          <p role="status" data-reason={value.reason}>{browserReasons[value.reason]}</p>}
+        {value?.state === "ready" && canTake && !paused && (
           <p>조건을 바꾸거나 입력하려면 직접 조작을 시작하세요.</p>
         )}
         {(watchable || value?.state === "starting") && (
@@ -311,7 +318,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
             onClick={() => {
               focusFrame.current = true;
               browser.mutate({ kind: "takeover" });
-            }}>직접 조작 시작</button>
+            }}>{paused ? "직접 조작으로 이어가기" : "직접 조작 시작"}</button>
         )}
       </footer>
     </aside>

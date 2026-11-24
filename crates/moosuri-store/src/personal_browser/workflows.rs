@@ -7,7 +7,13 @@ use moosuri_core::personal_browser::{
 use moosuri_core::{KnowledgeKind, KnowledgeQuery};
 use serde::{Deserialize, Serialize};
 
+mod conversation;
+pub(super) use conversation::detail as conversation_detail;
+
 const MAX_HITS: usize = 8;
+/// Memory filters page the ordinary search and keep only records that contain every literal.
+const FILTER_PAGE: usize = 32;
+const FILTER_PAGES: usize = 8;
 const SCHEDULES: &str = "SELECT id,title,scope,query,period,next_due,enabled,revision
  FROM member_workflows WHERE tenant_id=?1 AND account_id=?2 AND volume_id=?3 AND generation=?4 AND removed=0";
 
@@ -82,28 +88,77 @@ fn text_valid(text: &str, limit: usize) -> bool {
     !text.trim().is_empty() && text.len() <= limit && !text.chars().any(char::is_control)
 }
 
+fn memory_query(text: &str, cursor: Option<String>) -> KnowledgeQuery {
+    KnowledgeQuery {
+        kind: KnowledgeKind::Memory,
+        text: text.to_owned(),
+        match_mode: None,
+        collection_id: None,
+        subject: None,
+        speaker: None,
+        valid_at: None,
+        observed_from: None,
+        observed_until: None,
+        cursor,
+    }
+}
+fn has_all(filters: &[String], parts: &[&str]) -> bool {
+    let haystack = parts.join("\n").to_ascii_lowercase();
+    filters
+        .iter()
+        .all(|f| haystack.contains(&f.to_ascii_lowercase()))
+}
+
 fn search(
     connection: &Connection,
     owner: VolumeOwner,
     schedule: &WorkSchedule,
+    filters: &[String],
 ) -> Result<(Vec<SourceRef>, bool)> {
     let tenant = owner.tenant.to_string();
+    if schedule.scope == WorkScope::Memory && !filters.is_empty() {
+        // Every additional literal is applied to current source text before the hit limit.
+        let mut found = Vec::new();
+        let mut cursor = None;
+        for page in 0..FILTER_PAGES {
+            let result = crate::knowledge::search::search_owner(
+                connection,
+                &tenant,
+                memory_query(&schedule.query, cursor.take()),
+                FILTER_PAGE,
+            )?;
+            for hit in result.hits {
+                let source = SourceRef {
+                    id: hit.id,
+                    revision: hit.revision,
+                    read_at: 0,
+                };
+                if let Some((title, body)) =
+                    read_source(connection, owner, &WorkScope::Memory, &source)?
+                    && has_all(filters, &[title.as_str(), body.as_str()])
+                {
+                    found.push(source);
+                    if found.len() > MAX_HITS {
+                        found.truncate(MAX_HITS);
+                        return Ok((found, true));
+                    }
+                }
+            }
+            match result.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return Ok((found, result.truncated)),
+            }
+            if page + 1 == FILTER_PAGES {
+                return Ok((found, true));
+            }
+        }
+        return Ok((found, true));
+    }
     if schedule.scope == WorkScope::Memory {
         let result = crate::knowledge::search::search_owner(
             connection,
             &tenant,
-            KnowledgeQuery {
-                kind: KnowledgeKind::Memory,
-                text: schedule.query.clone(),
-                match_mode: None,
-                collection_id: None,
-                subject: None,
-                speaker: None,
-                valid_at: None,
-                observed_from: None,
-                observed_until: None,
-                cursor: None,
-            },
+            memory_query(&schedule.query, None),
             MAX_HITS,
         )?;
         return Ok((
@@ -120,7 +175,16 @@ fn search(
         ));
     }
     // Cap original turns before inspecting bodies. The extra row records the scan boundary.
-    let sql="WITH recent AS MATERIALIZED (
+    // Additional literals narrow the same bounded scan before rows are limited to MAX_HITS.
+    let narrowing: String = (0..filters.len())
+        .map(|i| {
+            format!(
+                " AND instr(lower(r.user_text||coalesce(char(10)||a.text,'')),lower(?{}))>0",
+                6 + i
+            )
+        })
+        .collect();
+    let sql=format!("WITH recent AS MATERIALIZED (
         SELECT r.id,r.version,r.user_text,r.admitted_order FROM chat_runs r
         JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id
         JOIN threads t ON t.tenant_id=r.tenant_id AND t.id=r.thread_id AND t.account_id=r.account_id
@@ -128,26 +192,25 @@ fn search(
         ORDER BY r.admitted_order DESC LIMIT 501)
         SELECT r.id,r.version,(SELECT count(*) FROM recent)>500 FROM (SELECT * FROM recent ORDER BY admitted_order DESC LIMIT 500) r
         LEFT JOIN chat_output a ON a.tenant_id=?1 AND a.run_id=r.id AND a.item='personal-text-preview-answer'
-        WHERE instr(lower(r.user_text),lower(?5))>0 OR instr(lower(a.text),lower(?5))>0
-        UNION ALL SELECT NULL,0,(SELECT count(*) FROM recent)>500 LIMIT 10";
+        WHERE (instr(lower(r.user_text),lower(?5))>0 OR instr(lower(a.text),lower(?5))>0){narrowing}
+        UNION ALL SELECT NULL,0,(SELECT count(*) FROM recent)>500 LIMIT 10");
+    let mut values: Vec<rusqlite::types::Value> = vec![
+        tenant.into(),
+        owner.account.to_string().into(),
+        owner.volume.to_string().into(),
+        (owner.generation as i64).into(),
+        schedule.query.clone().into(),
+    ];
+    values.extend(filters.iter().cloned().map(rusqlite::types::Value::from));
     let rows = connection
-        .prepare(sql)?
-        .query_map(
-            params![
-                tenant,
-                owner.account.to_string(),
-                owner.volume.to_string(),
-                owner.generation as i64,
-                schedule.query
-            ],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, bool>(2)?,
-                ))
-            },
-        )?
+        .prepare(&sql)?
+        .query_map(rusqlite::params_from_iter(values), |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, bool>(2)?,
+            ))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let limited =
         rows.iter().any(|r| r.2) || rows.iter().filter(|r| r.0.is_some()).count() > MAX_HITS;
@@ -172,6 +235,7 @@ fn execute(
     schedule: &WorkSchedule,
     request: Option<&str>,
     due: Option<i64>,
+    filters: &[String],
 ) -> Result<String> {
     if let Some(id) = connection
         .query_row(
@@ -184,7 +248,7 @@ fn execute(
         return Ok(id);
     }
     let started_at = now()?;
-    let (matches, limited) = search(connection, owner, schedule)?;
+    let (matches, limited) = search(connection, owner, schedule, filters)?;
     let searched_at = now()?;
     let mut sources = Vec::new();
     for mut source in matches {
@@ -258,7 +322,7 @@ impl Store {
             }
             let run_id = if request.period == 0 {
                 let schedule = get(&tx, owner, &request.request_id)?;
-                let id = execute(&tx, owner, &schedule, Some(&request.request_id), None)?;
+                let id = execute(&tx, owner, &schedule, Some(&request.request_id), None, &[])?;
                 if let Some(thread) = &request.thread_id { add_chat_receipt(&tx, &user, thread, &request, &id)?; }
                 Some(id)
             } else { None };
@@ -284,7 +348,7 @@ impl Store {
             let run_id = match action {
                 WorkAction::Run { request_id } => {
                     canonical(&request_id)?;
-                    Some(execute(&tx, owner, &saved, Some(&request_id), None)?)
+                    Some(execute(&tx, owner, &saved, Some(&request_id), None, &[])?)
                 }
                 WorkAction::Pause { revision } | WorkAction::Resume { revision } | WorkAction::Remove { revision } => {
                     if revision != saved.revision { return Err(StoreError::Conflict); }
@@ -312,6 +376,12 @@ impl Store {
         self.call(move |db| {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             owner.check_identity(&tx,None)?;
+            // A scheduled search can fail independently. Commit the conversation batch
+            // before processing recurring work so that its failure cannot rewind these receipts.
+            let conversation = conversation::dispatch(&tx, owner, host_epoch)?;
+            tx.commit()?;
+            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            owner.check_identity(&tx,None)?;
             // An older in-flight gateway tick cannot revoke a newer owner grant.
             tx.execute(
                 "UPDATE member_workflows SET enabled=0,next_due=NULL,revision=revision+1
@@ -330,11 +400,11 @@ impl Store {
             for schedule in &due {
                 let first = schedule.next_due.ok_or(StoreError::Corrupt)?;
                 let at = first + ((time-first)/schedule.period)*schedule.period;
-                execute(&tx, owner, schedule, None, Some(at))?;
+                execute(&tx, owner, schedule, None, Some(at), &[])?;
                 tx.execute("UPDATE member_workflows SET next_due=?2 WHERE id=?1", params![schedule.id, at + schedule.period])?;
             }
             tx.commit()?;
-            Ok(due.len())
+            Ok(due.len() + conversation)
         }).await
     }
 }
@@ -391,12 +461,15 @@ struct RunEvidence {
     thread_title: Option<String>,
     searched_at: i64,
     finished_at: i64,
+    /// Extra literal AND conditions captured by a conversation run; empty for every other run.
+    filters: Vec<String>,
 }
 
 fn run_evidence(connection: &Connection, owner: VolumeOwner, id: &str) -> Result<RunEvidence> {
     let mut stmt = connection.prepare(
-        "SELECT w.query,w.scope,r.sources,r.limited,t.title,r.searched_at,r.finished_at,w.message
+        "SELECT w.query,w.scope,r.sources,r.limited,t.title,r.searched_at,r.finished_at,w.message,c.filters
          FROM member_work_runs r JOIN member_workflows w ON w.id=r.workflow_id
+         LEFT JOIN member_conversation_runs c ON c.run_id=r.id
          LEFT JOIN threads t ON t.tenant_id=w.tenant_id AND t.account_id=w.account_id AND t.id=w.thread_id
          WHERE r.id=?1 AND w.tenant_id=?2 AND w.account_id=?3 AND w.volume_id=?4 AND w.generation=?5",
     )?;
@@ -423,7 +496,17 @@ fn run_evidence(connection: &Connection, owner: VolumeOwner, id: &str) -> Result
         thread_title: row.get(4)?,
         searched_at: row.get(5)?,
         finished_at: row.get(6)?,
+        filters: match row.get::<_, Option<String>>(8)? {
+            Some(raw) => serde_json::from_str(&raw).map_err(|_| StoreError::Corrupt)?,
+            None => Vec::new(),
+        },
     })
+}
+/// The searched terms as shown to the member, with any extra AND conditions.
+fn terms(query: &str, filters: &[String]) -> String {
+    filters
+        .iter()
+        .fold(query.to_owned(), |text, f| format!("{text}’ 그리고 ‘{f}"))
 }
 
 fn preview_text(scope: &WorkScope, count: usize, snippet: Option<&str>) -> String {
@@ -464,7 +547,9 @@ pub(super) fn detail(
         thread_title,
         searched_at,
         finished_at,
+        filters,
     } = run_evidence(connection, owner, &task.id)?;
+    let shown = terms(&query, &filters);
     let event = |state: &str, at: i64, title: String, detail: String| TaskEvent {
         state: state.into(),
         at: Some(at),
@@ -487,7 +572,7 @@ pub(super) fn detail(
             searched_at,
             format!("내 {}에서 검색", label(&scope)),
             format!(
-                "검색어 ‘{query}’ · 확인한 항목 {}개{}",
+                "검색어 ‘{shown}’ · 확인한 항목 {}개{}",
                 sources.len(),
                 if limited {
                     " · 조회 한도 도달"
@@ -529,7 +614,7 @@ pub(super) fn detail(
         first_snippet.as_deref(),
     ));
     let mut result = format!(
-        "검색어 ‘{query}’에 해당하는 {} {}건을 확인했습니다.{}",
+        "검색어 ‘{shown}’에 해당하는 {} {}건을 확인했습니다.{}",
         label(&scope),
         sources.len(),
         if limited {
@@ -548,9 +633,21 @@ pub(super) fn detail(
         "조사 완료".into(),
         result.clone(),
     ));
+    let (origin_turn_id, report_id) = connection.query_row(
+        "SELECT g.turn_id,d.id FROM member_conversation_runs cr JOIN member_conversation_tasks t ON t.id=cr.task_id
+         JOIN member_conversation_groups g ON g.id=t.group_id
+         LEFT JOIN member_conversation_reports d ON d.task_id=t.id AND d.run_id=cr.run_id AND d.thread_id=g.thread_id
+           AND d.tenant_id=g.tenant_id AND d.account_id=g.account_id AND d.volume_id=g.volume_id AND d.generation=g.generation
+         WHERE cr.run_id=?1 AND g.tenant_id=?2 AND g.account_id=?3 AND g.volume_id=?4 AND g.generation=?5",
+        params![task.id, owner.tenant.to_string(), owner.account.to_string(), owner.volume.to_string(), owner.generation as i64],
+        |r| Ok((Some(r.get::<_, String>(0)?), r.get::<_, Option<String>>(1)?)),
+    ).optional()?.unwrap_or_default();
     Ok(moosuri_core::personal_browser::TaskDetail {
+        origin_turn_id,
+        report_id,
+        runs: Vec::new(),
         task,
-        request: message.unwrap_or_else(|| format!("내 {}에서 ‘{query}’ 검색", label(&scope))),
+        request: message.unwrap_or_else(|| format!("내 {}에서 ‘{shown}’ 검색", label(&scope))),
         thread_title: thread_title.unwrap_or_default(),
         reason: None,
         history,

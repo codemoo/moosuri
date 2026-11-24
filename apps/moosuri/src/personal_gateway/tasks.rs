@@ -1,4 +1,5 @@
 use super::*;
+mod conversation;
 use moosuri_core::personal_browser::{
     TaskDetail, TaskPage, WorkAction, WorkReceipt, WorkRequest, task_cursor,
 };
@@ -8,6 +9,18 @@ const WORKFLOWS: &str = "/api/v1/personal/tasks/workflows";
 pub(super) fn routes() -> Router<Gateway> {
     Router::new()
         .route(BASE, get(handler))
+        .route(
+            "/api/v1/personal/tasks/conversations/{thread}",
+            get(handler).post(handler),
+        )
+        .route(
+            "/api/v1/personal/tasks/conversations/{thread}/control",
+            axum::routing::post(handler),
+        )
+        .route(
+            "/api/v1/personal/tasks/conversations/{thread}/reports/{report}",
+            get(handler),
+        )
         .route(WORKFLOWS, axum::routing::post(handler))
         .route(
             "/api/v1/personal/tasks/workflows/{id}",
@@ -34,6 +47,9 @@ async fn handle(
     body: &[u8],
 ) -> Result<Response, StatusCode> {
     g.headers(headers, &method)?;
+    if uri.path().starts_with(conversation::PREFIX) {
+        return conversation::forward(g, headers, method, &uri, body).await;
+    }
     if method == Method::POST {
         return mutate(g, headers, &uri, body).await;
     }

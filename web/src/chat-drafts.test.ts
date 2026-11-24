@@ -71,3 +71,16 @@ it("recovers instruction and mission UUID payloads only as uncertain beside sepa
     recovery.confirm(session("alice", "b".repeat(64)));
     expect(map.has(CHAT_DRAFT_KEY)).toBe(false);
 });
+
+it("restores the same multi-search request ID and scoped terms after an acknowledgement is lost", () => {
+    const { s } = store();
+    const original: PendingSend = {
+        request_id: id, text: "지난 출장 대화에서 일정 찾기", status: "sending",
+        work_request: { items: [{ title: "출장 일정", scope: "conversation", query: "일정", filters: ["출장"] }] },
+    };
+    const owner = () => new ChatDraftRecovery(() => s, () => 1000).confirm(session())!;
+    owner().save({ drafts: { thread: "다음 초안" }, pending: { thread: original } }, "thread", ["thread"]);
+    const restored = owner().load(["thread"]).memory;
+    expect(restored.pending.thread).toEqual({ ...original, status: "uncertain" });
+    expect(restored.drafts.thread).toBe("다음 초안");
+});

@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PersonalWorkflows, type WorkSchedule } from "./PersonalWorkflows";
 import { ApiFailure, isAborted, RequestScope } from "./api";
+import { parseReport, type ConversationReport } from "./conversation-work";
 import { browserStateLabel, type PersonalBrowserState } from "./personal-browser";
 
-type TaskState = PersonalBrowserState | "queued" | "running" | "failed" | "cancelled" | "incomplete" | "refused" | "awaiting_consent" | "dispatched" | "withdrawn" | "unknown";
+type TaskState = PersonalBrowserState | "queued" | "running" | "failed" | "cancelled" | "incomplete" | "refused" | "awaiting_consent" | "dispatched" | "withdrawn" | "unknown" | "needs_input";
 export type TaskSummary = {
-  id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail"; preview?: string | null;
+  id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail" | "conversation_work"; preview?: string | null;
   next_actor: "assistant" | "member" | "none"; created_at: number; scheduled_at?: number | null;
   schedule_id?: string | null;
 };
 export type TaskPage = { items: TaskSummary[]; next_before: string | null; schedules?: WorkSchedule[] };
 export type TaskDetail = {
-  task: TaskSummary; request: string; thread_title: string; reason: string | null;
+  origin_turn_id?: string | null; report_id?: string | null; runs?: string[]; task: TaskSummary; request: string; thread_title: string; reason: string | null;
   history: { state: string; at: number | null; title?: string | null; detail?: string | null }[];
   result: string | null; observation: string | null;
 };
@@ -37,7 +38,7 @@ const nextStep: Record<PersonalBrowserState, string> = {
   closed: "브라우저가 닫혔습니다.",
   outcome_unknown: "원래 대화에서 마지막으로 확인된 내용을 살펴보세요.",
 };
-const states:Record<string,string> = { starting:"시작됨", queued:"접수됨", running:"답변 작성 중", completed:"완료됨", failed:"실패", cancelled:"취소됨", incomplete:"일부 완료", refused:"응답 거절", outcome_unknown:"결과 확인 필요", awaiting_consent:"Google 연결 대기", ready:"조회 준비됨", dispatched:"조회 요청 전달", unknown:"조회 결과 확인 필요", withdrawn:"조회 권한 철회", prepared:"대화 문맥 준비", searched:"검색 완료", source_read:"자료 확인" };
+const states:Record<string,string> = { needs_input:"답변 필요", starting:"시작됨", queued:"접수됨", running:"답변 작성 중", completed:"완료됨", failed:"실패", cancelled:"취소됨", incomplete:"일부 완료", refused:"응답 거절", outcome_unknown:"결과 확인 필요", awaiting_consent:"Google 연결 대기", ready:"조회 준비됨", dispatched:"조회 요청 전달", unknown:"조회 결과 확인 필요", withdrawn:"조회 권한 철회", prepared:"대화 문맥 준비", searched:"검색 완료", source_read:"자료 확인" };
 function stateLabel(task:TaskSummary,state:string=task.state) {
   if ((!task.kind || task.kind==="browser") && state in browserStateLabel) return browserStateLabel[state as PersonalBrowserState];
   return states[state] ?? state;
@@ -59,6 +60,7 @@ function dayLabel(at:number,today:Date,yesterday:Date) {
 
 const reasons: Record<string, string> = {
   browser_model_unavailable: "페이지를 열었지만 모델 응답을 받지 못했습니다.",
+  browser_no_progress: "같은 내용을 다시 확인해 작업을 멈췄습니다. 원래 대화에서 지시하거나 페이지를 직접 조작할 수 있습니다.",
   browser_busy: "브라우저가 다른 작업을 처리하고 있습니다.",
   browser_authority_expired: "이 작업의 브라우저 세션이 종료됐습니다.",
   browser_worker_missing: "브라우저 연결이 종료됐습니다.",
@@ -71,6 +73,7 @@ const reasons: Record<string, string> = {
 const actorLabel = { assistant: "어시스턴트 진행", member: "내 확인 필요", none: "" };
 function taskOrigin(task: TaskSummary) {
   switch (task.kind) {
+    case "conversation_work": return "대화에서 맡긴 조사";
     case "research":
       if (task.scheduled_at != null) return "예약 실행";
       return task.thread_id ? "대화에서 실행" : "직접 실행";
@@ -80,7 +83,37 @@ function taskOrigin(task: TaskSummary) {
   }
 }
 
-function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask, onSchedule }: Props & {
+function OccurrenceReport({ account, thread, run, id, expired }: {
+  account: string; thread: string; run: string; id: string; expired: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [report, setReport] = useState<ConversationReport | null>(null);
+  const [issue, setIssue] = useState("");
+  const onExpired = useRef(expired);
+  onExpired.current = expired;
+  useEffect(() => {
+    if (!open) return;
+    const scope = new RequestScope(account);
+    const path = `/personal/tasks/conversations/${encodeURIComponent(thread)}/reports/${encodeURIComponent(id)}`;
+    void scope.request<unknown>(path).then(value => {
+      const read = parseReport(value);
+      if (!read || read.id !== id || read.run_id !== run) throw new Error("report mismatch");
+      setReport(read);
+    }).catch(error => {
+      if (isAborted(error)) return;
+      if (error instanceof ApiFailure && error.status === 401) onExpired.current();
+      else setIssue("보고서를 불러오지 못했습니다.");
+    });
+    return () => scope.close();
+  }, [account, thread, run, id, open]);
+  return <div><button type="button" aria-expanded={open} onClick={() => { setReport(null); setIssue(""); setOpen(!open); }}>
+    {open ? "보고서 닫기" : "이 회차의 보고서 보기"}</button>
+    {open && issue && <p role="alert">{issue}</p>}
+    {open && report && <section aria-label="저장한 보고서"><h3>{report.title}</h3><p className="task-result">{report.body}</p></section>}
+  </div>;
+}
+
+function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask, onOpenTask, onSchedule }: Props & {
   taskId: string; onTask: (task: TaskSummary) => void; onSchedule: (schedule: ScheduleLink) => void;
 }) {
   const [step,setStep] = useState<number | null>(null);
@@ -136,8 +169,13 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask, on
         <h3>요청 내용</h3><p className="task-result">{detail.request}</p>
         {detail.task.scheduled_at != null && <><h3>예약 회차</h3><TaskTime at={detail.task.scheduled_at}/></>}
         {detail.result && <><h3>작업 결과</h3><p className="task-result">{detail.result}</p></>}
+        {detail.report_id && <OccurrenceReport key={detail.report_id} account={accountId} thread={detail.task.thread_id}
+          run={detail.task.id} id={detail.report_id} expired={onExpired} />}
         {detail.observation && <><h3>확인한 내용</h3><p className="task-result">{detail.observation}</p></>}
       </div>
+      {!!detail.runs?.length && <section aria-label="실행 기록"><h3>실행 기록</h3>
+        {detail.runs.map((run, index) => <button type="button" key={run} onClick={() => onOpenTask(run)}>{index + 1}번째 실행 · 근거 보기</button>)}
+      </section>}
       <h3>진행 기록</h3><div className="task-trace" data-selected={!!selected}>
         <ol className="task-history">{detail.history.map((event,index)=>
           <li key={index}><button type="button" aria-pressed={index===step} onClick={e=>{stepTrigger.current=e.currentTarget;setStep(index);}}>
@@ -151,7 +189,7 @@ function TaskReader({ accountId, taskId, onBack, onThread, onExpired, onTask, on
           {selected.at!==null && <TaskTime at={selected.at}/>}<p>{stepBody}</p>
         </div>}
       </div>
-      {detail.task.thread_id && <button type="button" onClick={() => onThread(detail.task.thread_id, detail.task.kind==="gmail"?"":detail.task.id)}>
+      {detail.task.thread_id && <button type="button" onClick={() => onThread(detail.task.thread_id, detail.origin_turn_id ?? (detail.task.kind==="gmail"?"":detail.task.id))}>
         원래 대화 열기 · {detail.thread_title}
       </button>}
       {detail.task.schedule_id && <button type="button" onClick={() => {

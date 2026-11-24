@@ -377,6 +377,7 @@ impl Gateway {
                 if browser
                     || path.ends_with("/text-preview")
                     || path.starts_with("/api/v1/personal/tasks/workflows")
+                    || path.starts_with("/api/v1/personal/tasks/conversations/")
                 {
                     req = req.header(
                         moosuri_server::personal_text::SESSION_EPOCH_HEADER,

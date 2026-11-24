@@ -1,0 +1,160 @@
+{
+  "format": 1,
+  "schema": 92,
+  "base_schema": 91,
+  "migrations": [
+    {
+      "name": "0092_conversation_work.sql",
+      "sha256": "203d6320a82d9b5a88c37f13f3975a179f436f79dbfa55b1bf85b27ff374a15e"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_conversation_actions",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,t.account_id,t.tenant_id FROM member_conversation_actions x JOIN member_conversation_tasks t ON t.id=x.task_id",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "509606a3765e80bfd4eab7fe275e2169164f584673444eaa5e5b62f4d8fd3c66",
+      "columns": [
+        "task_id",
+        "from_revision",
+        "action",
+        "arg"
+      ]
+    },
+    {
+      "name": "member_conversation_events",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,t.account_id,t.tenant_id FROM member_conversation_events x JOIN member_conversation_tasks t ON t.id=x.task_id",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "2cba6143e5123210f0ac654630ea85db910c38a51173ed88dae86ede87499cfa",
+      "columns": [
+        "id",
+        "task_id",
+        "revision",
+        "state",
+        "text",
+        "at"
+      ]
+    },
+    {
+      "name": "member_conversation_groups",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_conversation_groups",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "42ce6e787a7dd232dfe79263c3f50276deaac466f4f0f73c3540ab58fa85abe0",
+      "columns": [
+        "id",
+        "turn_id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "host_epoch",
+        "auth_epoch",
+        "message",
+        "payload",
+        "origin_task",
+        "created_at",
+        "admitted_order"
+      ]
+    },
+    {
+      "name": "member_conversation_reports",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_conversation_reports",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "3f001d75c91e0c615680173b5eeea7e71758c2057da6fbf02200e7cbc3b3ab89",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "task_id",
+        "run_id",
+        "title"
+      ]
+    },
+    {
+      "name": "member_conversation_runs",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,t.account_id,t.tenant_id FROM member_conversation_runs x JOIN member_conversation_tasks t ON t.id=x.task_id",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "64f13cb5b88d252f8d260a17d6e2fcee9d588588bacffa8978e87527dfb8720b",
+      "columns": [
+        "run_id",
+        "task_id",
+        "revision",
+        "filters"
+      ]
+    },
+    {
+      "name": "member_conversation_tasks",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_conversation_tasks",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "22e119f266a6d60ea1b5ce4d29cf3f05b5b9a63dbd51c0add647e94537709c92",
+      "columns": [
+        "id",
+        "group_id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "position",
+        "title",
+        "scope",
+        "query",
+        "filters",
+        "state",
+        "revision",
+        "question_id",
+        "host_epoch",
+        "auth_epoch",
+        "queued_seq",
+        "task_order",
+        "created_at"
+      ]
+    },
+    {
+      "name": "personal_browser_progress",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT p.rowid AS rid,r.account_id,p.tenant_id FROM personal_browser_progress p JOIN chat_runs r ON r.tenant_id=p.tenant_id AND r.id=p.run_id",
+      "key_transition": "Preserve the member and originating work. Quarantine pending work during restore.",
+      "verification": "Verify the owner, parent work, volume generation and current access to referenced evidence.",
+      "on_failure": "Quarantine unresolved references and retain closed dispatch grants.",
+      "sql_sha256": "c44ac6cfd0dfef2249b94602d19b694a7df2f7b2dd8759b0c3a3745c8a364e6f",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "fingerprint",
+        "guidance",
+        "repeats"
+      ]
+    }
+  ],
+  "schema_sha256": "057944d8e4bec9fedf5ac0d428da836b6ce9366dc76a13e396613c138ee30b26"
+}

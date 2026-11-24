@@ -28,10 +28,11 @@ const destinations = {
 };
 
 export function PersonalWorkspaceChrome({
-  children, view, title, admin, threads, selected, loading, busy, user,
+  children, completionMenu, view, title, admin, threads, selected, loading, busy, user,
   drafts, inventoryError, chatActivity, onRefreshThreads, onNavigate, onThread, onNew, onDelete, onSignOut,
 }: {
   children: ReactNode;
+  completionMenu?: ReactNode;
   view: MemberView;
   title: string;
   admin: boolean;
@@ -139,9 +140,12 @@ export function PersonalWorkspaceChrome({
             </h1>
             {chatActivity && <p className="member-chat-activity" role="status">{chatActivity}</p>}
           </div>
-          <button type="button" className="member-add-chat" aria-label="새 대화" title="새 대화"
-            disabled={loading || busy} onClick={newChat}><WorkspaceIcon name="new" /></button>
         </>}
+        <div className="member-header-actions">
+          {completionMenu}
+          {view === "chat" && <button type="button" className="member-add-chat" aria-label="새 대화" title="새 대화"
+            disabled={loading || busy} onClick={newChat}><WorkspaceIcon name="new" /></button>}
+        </div>
       </header>
       <main className="member-body">{children}</main>
       <Dialog isOpen={drawer} id={drawerId} aria-label="대화 목록" padding={0}

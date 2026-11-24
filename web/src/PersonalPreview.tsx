@@ -44,6 +44,16 @@ import { usePersonalBrowser } from "./usePersonalBrowser";
 import { InstructionReceipts } from "./RunInstructions";
 import { PersonalTextFollowUp, clearSavedFollowUp, isTextFollowUp } from "./PersonalTextFollowUp";
 import { sameInstruction } from "./run-instructions";
+import {
+  compactMessage, parseWorkControl, parseWorkItems, resolveControl, WORK_PROVIDER_ID,
+  type WorkControl, type WorkItemInput,
+} from "./conversation-work";
+import { clearWorkRecovery } from "./conversation-work";
+import { useWorkCompletions } from "./useWorkCompletions";
+import { GroupForTurn, WorkCompletionMenu, useConversationWork, WorkComposer, WorkStatusNotice } from "./ConversationWork";
+import "./conversation-work.css";
+type WorkNotice = { thread: string; kind: "status"; groupId: string }
+  | { thread: string; kind: "clarify" | "choose"; text: string; draft: string; choices?: { label: string; run: () => void }[] };
 type SessionView = BaseSessionView & { installation_admin?: boolean };
 export const PREVIEW_DRAFT_KEY = "moosuri.personal-preview-drafts.v1";
 function draftStorage() {
@@ -82,6 +92,7 @@ export default function PersonalPreview() {
   function fence() {
     for (const s of scopes) s.close();
     recovery.clear();
+    clearWorkRecovery();
     clearAdminRecovery();
     clearPersonalGoogle();
     clearWorkspaceGoogle();
@@ -363,6 +374,7 @@ type Capability = {
 };
 const chatStarters = [
   { label: "기억 검색", prompt: "기억 검색: " },
+  { label: "대화·기억 함께 검색", prompt: "대화 검색: ; 기억 검색: " },
   { label: "문장 다듬기", prompt: "다음 문장을 자연스럽게 다듬어 줘.\n" },
   { label: "계획 세우기", prompt: "다음 일을 작은 단계로 나눠서 계획을 세워 줘.\n" },
 ];
@@ -449,6 +461,16 @@ function Workspace({
   const taskTurn = useRef<{ thread: string; run: string; lastCursor?: number } | null>(null);
   const olderScroll = useRef<{ top: number; height: number } | null>(null);
   const currentPage = page?.thread_id === selected ? page : null;
+  const receiptIds = (currentPage?.turns ?? []).filter(t => t.run.model?.provider_id === WORK_PROVIDER_ID).map(t => t.run.request_id).filter((id): id is string => typeof id === "string" && !!id);
+  const completions = useWorkCompletions(session.user.id, session.chat_draft_scope, view === "chat" ? selected : null);
+  const work = useConversationWork({
+    observe: completions.observe, sessionScope: session.chat_draft_scope,
+    accountId: session.user.id, thread: selected, enabled: view === "chat", receiptIds, expired,
+    onNewGroup: () => { if (selectedRef.current) void history(selectedRef.current); },
+  });
+  const [workNotice, setWorkNotice] = useState<WorkNotice | null>(null);
+  const workBypass = useRef<string | null>(null);
+  useEffect(() => { setWorkNotice(null); }, [selected, session.user.id]);
   const watching = view === "chat" && !!selected && watchThread === selected;
   const browser = usePersonalBrowser(session.user.id, view === "chat" ? selected : null, watching, expired,
     (thread) => { if (selectedRef.current === thread) void history(thread); });
@@ -833,16 +855,64 @@ function Workspace({
     setOpenInbox(intent);
     open({ view: "connections", service: "gmail" });
   }
-  async function send(event?: FormEvent, replay = false, followUp?: RunInstructionReceipt) {
+  // Deterministic follow-ups on existing work (status / cancel / refine). Returns true when
+  // the text was consumed here; false leaves it to ordinary chat.
+  function runControl(control: WorkControl, text: string, thread: string): boolean {
+    const shown = receiptIds.slice().reverse().map(id => work.groups[id]).filter(Boolean);
+    const extra = Object.values(work.groups).filter(g => !receiptIds.includes(g.id));
+    const resolution = resolveControl(control, [...shown, ...extra]);
+    const consume = () => change(m => {
+      const drafts = { ...m.drafts };
+      if (drafts[thread] === text) delete drafts[thread];
+      return { ...m, drafts };
+    });
+    switch (resolution.kind) {
+      case "pass":
+        if (!receiptIds.length) return false;
+        work.refresh();
+        setWorkNotice({ thread, kind: "clarify", text: "업무 기록을 불러오고 있습니다. 잠시 후 다시 확인해 주세요.", draft: text });
+        return true;
+      case "status":
+        consume(); work.refresh();
+        setWorkNotice({ thread, kind: "status", groupId: resolution.group.id });
+        return true;
+      case "clarify":
+        setWorkNotice({ thread, kind: "clarify", text: resolution.message, draft: text });
+        return true;
+      case "choose": {
+        const { action, text: term } = resolution;
+        setWorkNotice({
+          thread, kind: "choose", draft: text, text: "어느 검색에 적용할까요?",
+          choices: resolution.candidates.map(({ group, task }) => ({
+            label: `${task.title} (“${task.query}”)`,
+            run: () => { consume(); setWorkNotice(null); void work.act(group, task, action, term !== undefined ? { text: term, question_id: action === "answer" ? task.question_id ?? undefined : undefined } : {}); },
+          })),
+        });
+        return true;
+      }
+      case "act":
+        consume(); setWorkNotice(null);
+        for (const { group, task } of resolution.targets)
+          void work.act(group, task, resolution.action, resolution.text !== undefined ? { text: resolution.text, question_id: resolution.action === "answer" ? task.question_id ?? undefined : undefined } : {});
+        return true;
+    }
+  }
+  async function send(event?: FormEvent, replay = false, followUp?: RunInstructionReceipt, batch?: WorkItemInput[]) {
     event?.preventDefault();
     if (mutation.current || loading || (inventoryError && !initialized.current)) return;
     let thread = selected;
     const old = thread ? memoryRef.current.pending[thread] : undefined;
-    const text = followUp?.text ?? memoryRef.current.drafts[thread ?? "new"] ?? "";
+    const text = batch ? compactMessage(batch) : followUp?.text ?? memoryRef.current.drafts[thread ?? "new"] ?? "";
     if (followUp && (followUp.thread_id !== thread || followUp.reason !== "text_follow_up_saved")) return;
     if (old && !replay) return;
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
+    const bypass = workBypass.current === text;
+    workBypass.current = null;
+    if (!old && !followUp && !batch && !bypass && thread && browserMode === "chat") {
+      const control = parseWorkControl(text);
+      if (control && runControl(control, text, thread)) return;
+    }
     const intent = old || followUp || browserMode === "guide" || preferredMode === "chat"
       ? null : browserIntent(text, browserMode === "start");
     if (intent && !intent.url) {
@@ -862,16 +932,21 @@ function Workspace({
       setError("추가 지시가 너무 깁니다. 내용을 줄여 주세요.");
       return;
     }
-    const research = old ? old.research_request : (!followUp && !browserRequest && browserMode==="chat" ? personalResearchIntent(text) : null);
+    const parsedWork = old || followUp || browserRequest || browserMode !== "chat" ? null
+      : batch ? { kind: "items" as const, items: batch } : parseWorkItems(text);
+    if (parsedWork?.kind === "invalid") { setError(parsedWork.message); return; }
+    const workRequest = old ? old.work_request : parsedWork ? { items: parsedWork.items } : undefined;
+    const research = old ? old.research_request : (!followUp && !browserRequest && !workRequest && browserMode==="chat" ? personalResearchIntent(text) : null);
     if (research && new TextEncoder().encode(research.query).length>128){setError("검색어를 128바이트 이내로 줄여 주세요.");return;}
-    if (!browserRequest && !research && !ready) return;
-    if (!old && currentPage?.turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id)) return;
+    if (!browserRequest && !research && !workRequest && !ready) return;
+    if (!old && !workRequest && currentPage?.turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id)) return;
     const value: PendingSend = old ?? {
       request_id: followUp?.request_id ?? crypto.randomUUID(),
       text,
       status: "sending",
       ...(followUp ? { follow_up_run_id: followUp.run_id } : {}),
       ...(research ? { research_request: research } : {}),
+      ...(workRequest ? { work_request: workRequest } : {}),
       ...(browserRequest ? { browser_request: browserRequest } : {}),
     };
     followTail.current = true;
@@ -895,6 +970,23 @@ function Workspace({
       return { ...m, drafts, pending: { ...m.pending, [destination]: { ...value, status: "sending" } } };
     });
     try {
+      if (value.work_request) {
+        try {
+          await work.post(destination, { request_id: value.request_id, message: value.text, items: value.work_request.items });
+        } catch (e) {
+          if (!isAborted(e) && e instanceof ApiFailure && [400, 403, 404, 409, 422, 429].includes(e.status)) {
+            clearSend(destination, value, true);
+            setError(e.status === 429 ? "한꺼번에 맡길 수 있는 검색 수를 넘었습니다. 잠시 후 다시 시도해 주세요."
+              : "검색 요청을 처리하지 못했습니다. 입력을 유지했습니다.");
+            return;
+          }
+          throw e;
+        }
+        clearSend(destination, value);
+        if (selectedRef.current === destination) void history(destination);
+        void inventory().catch(fail);
+        return;
+      }
       if (value.research_request) {
         await scope.request<WorkReceipt>("/personal/tasks/workflows","POST",{
           request_id:value.request_id, thread_id:destination, message:value.text, title:value.research_request.query+" 조사",
@@ -1093,11 +1185,14 @@ function Workspace({
     : pending ? "답변을 기다리는 중" : undefined;
   function useStarter(prompt: string) {
     const key = selected ?? "new";
-    if (memoryRef.current.drafts[key] || (!ready && prompt!=="기억 검색: ") || composerBusy) return;
+    if (memoryRef.current.drafts[key] || (!ready && !/^(?:기억|대화) 검색: /u.test(prompt)) || composerBusy) return;
     change((value) => ({ ...value, drafts: { ...value.drafts, [key]: prompt } }));
     if (chatEditor.current?.disabled) requestAnimationFrame(()=>chatEditor.current?.focus({preventScroll:true}));
     else chatEditor.current?.focus({preventScroll:true});
   }
+  const hasWork = Object.keys(work.groups).length > 0;
+  // Work needs no model, so these drafts stay sendable while the chat engine is unavailable.
+  const draftWorkAllowed = browserMode === "chat" && (parseWorkItems(draft) !== null || (hasWork && parseWorkControl(draft) !== null));
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread ? threadDisplayTitle(thread.title) : "새 대화"
     : view === "tasks" ? "맡긴 일"
@@ -1110,7 +1205,9 @@ function Workspace({
       drafts={memory.drafts} inventoryError={inventoryError} chatActivity={chatActivity}
       onRefreshThreads={() => setRefresh((value) => value + 1)}
       onNavigate={navigate} onThread={openThread} onNew={() => openThread(null)}
-      onDelete={remove} onSignOut={onSignOut}>
+      onDelete={remove} onSignOut={onSignOut}
+      completionMenu={completions.completed.length > 0 && <WorkCompletionMenu items={completions.completed}
+        onDismiss={completions.dismiss} onOpen={run => { completions.dismiss(run); open({ view: "tasks", taskId: run }); }} />}>
       {view !== "chat" && (
         <div key={view} className="member-panel">
           {view === "admin" && admin ? (
@@ -1264,6 +1361,10 @@ function Workspace({
                         )}
                       </div>
                     )}
+                    {turn.run.model?.provider_id === WORK_PROVIDER_ID && (
+                      <GroupForTurn requestId={turn.run.request_id} work={work}
+                        openRun={(runId) => open({ view: "tasks", taskId: runId })} />
+                    )}
                     {(turn.run.model?.provider_id==="personal-browser" || turn.run.model?.provider_id==="member-workflow" || ["Deployment text-only preview","Deployment browser answer"].includes(turn.run.model?.provider_name)) && <button className="member-task-link" type="button" onClick={()=>open({view:"tasks",taskId:turn.run.id})}>업무 기록 보기</button>}
                     {browserWork?.run_id === turn.run.id && (
                       <PersonalBrowserCard browser={browser} pending={false} onOpen={openBrowser} />
@@ -1294,7 +1395,7 @@ function Workspace({
                             onClick={() => openInboxRequest(selected, pending.request_id)} />
                         ) : (
                           <Button label="이전 메시지 다시 보내기" variant="ghost"
-                            isDisabled={(!pending.browser_request && !pending.research_request && !ready) || mutating || busy}
+                            isDisabled={(!pending.browser_request && !pending.research_request && !pending.work_request && !ready) || mutating || busy}
                             onClick={() => void send(undefined, true)} />
                         )}
                         <Button label="이전 메시지 버리기" variant="ghost" isDisabled={mutating}
@@ -1316,6 +1417,22 @@ function Workspace({
                     )}
                   </div>
                 )}
+                {workNotice && workNotice.thread === selected && (workNotice.kind === "status"
+                  ? <WorkStatusNotice group={work.groups[workNotice.groupId]} onClose={() => setWorkNotice(null)} />
+                  : draft === workNotice.draft && (
+                    <div className="member-chat-notice work-clarify" role="status">
+                      <p>{workNotice.text}</p>
+                      <div className="member-retry-actions">
+                        {workNotice.choices?.map(choice => <button key={choice.label} type="button" onClick={choice.run}>{choice.label}</button>)}
+                        {workNotice.kind === "clarify" && (
+                          <button type="button" disabled={composerBusy || !ready} onClick={() => {
+                            workBypass.current = workNotice.draft; setWorkNotice(null); void send();
+                          }}>일반 메시지로 보내기</button>
+                        )}
+                        <button type="button" onClick={() => setWorkNotice(null)}>닫기</button>
+                      </div>
+                    </div>
+                  ))}
                 {mailError && <p className="member-chat-status" role="status">{mailError}</p>}
                 {googleReads.length > 0 && <GoogleReadHistory reads={googleReads} />}
                 {!turns.some((turn) => turn.run.id === browserWork?.run_id) && (
@@ -1325,13 +1442,19 @@ function Workspace({
               </div>
             </div>
           </div>
+          {!loading && browserMode === "chat" && (
+            <div className="work-composer-wrap">
+              <WorkComposer disabled={mutating || !!pending || (inventoryError && !initialized.current)}
+                onSubmit={(items) => void send(undefined, false, undefined, items)} />
+            </div>
+          )}
           {!loading && (
             <PersonalChatComposer key={selected ?? "new"} editor={chatEditor} draft={draft}
               followUp={selected && browserMode === "chat" && <PersonalTextFollowUp key={selected}
                 thread={selected} scope={scope} draft={draft} run={working?.run.accepts_text_follow_up ? working.run : undefined}
                 pending={memory.instructions?.[selected]?.pending} rejected={memory.instructions?.[selected]?.draft} change={change} expired={expired}
                 refresh={() => { if (selectedRef.current === selected) void history(selected); }} />}
-              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up && !/^(?:기억|대화) 검색[:：]/u.test(draft) && !personalResearchIntent(draft))} busy={composerBusy}
+              disabled={(inventoryError && !initialized.current) || (!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up && !/^(?:기억|대화) 검색[:：]/u.test(draft) && !personalResearchIntent(draft) && !draftWorkAllowed)} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
                 : pending?.status === "rejected" || pending?.status === "inbox" ? "다음 메시지를 작성하세요."
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."

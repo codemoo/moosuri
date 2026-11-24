@@ -11,7 +11,10 @@ use moosuri_connectors::browser::capsule::{WorkspaceFrame, WorkspaceInput, Works
 use moosuri_core::personal_browser::{Control, Frame, Link, Status, Tab, Workspace};
 use moosuri_store::{
     Store, StoreError,
-    personal_browser::{Admission, Job, Output, Scope, Version},
+    personal_browser::{
+        Admission, Job, Output, Scope, Version,
+        progress::{self, Progress},
+    },
     personal_volume::VolumeOwner,
 };
 use serde::{Deserialize, Serialize};
@@ -492,6 +495,9 @@ async fn observed(
     let mut tab = opened.tab_id;
     let mut p = opened.observation.page;
     let mut previous = Vec::new();
+    // Content already read by this execution; the store remembers the last read across executions.
+    let mut seen = Vec::new();
+    let mut stalled = false;
     let generated = loop {
         p.url = display_url(&p.url);
         p.title = scrub_urls(&p.title);
@@ -509,7 +515,28 @@ async fn observed(
             .personal_browser_publish(scope.clone(), request, j.view)
             .await?;
         drop(guard);
+        // Progress is judged on what was read and the instructions in force, never on UI wording.
+        let choices = p
+            .links
+            .iter()
+            .take(4)
+            .filter(|link| public_read_link(&p.url, &link.url))
+            .map(|link| (link.url.as_str(), link.text.as_str()))
+            .collect::<Vec<_>>();
+        let content = progress::fingerprint(&p.title, &p.text, &choices);
+        let advanced = s
+            .store
+            .personal_browser_progress(scope.clone(), request, j.view.id.clone(), content.clone())
+            .await?
+            == Progress::Advanced
+            && !seen.contains(&content);
+        seen.push(content);
         if wait {
+            break None;
+        }
+        if !advanced {
+            // Another model call or navigation cannot add evidence: pause before any further effect.
+            stalled = true;
             break None;
         }
         let candidates = if previous.len() < 2 && !j.human_touched && j.remaining_reads > 0 {
@@ -599,7 +626,9 @@ async fn observed(
         }
         None => {
             let text = p.text.chars().take(2000).collect::<String>();
-            let note = if wait {
+            let note = if stalled {
+                "같은 화면과 같은 지시로는 새로운 내용이 없어 작업을 일시 중지했습니다. 추가 지시를 보내거나, 직접 조작으로 조건을 바꾸거나, 확인된 다른 링크를 열어 이어가세요."
+            } else if wait {
                 "현재 화면입니다. 조건을 변경한 뒤 완료를 눌러 주세요."
             } else {
                 "페이지에서 확인한 내용입니다. 모델 답변을 받지 못해 작업을 열어 두었습니다."
@@ -607,7 +636,9 @@ async fn observed(
             (
                 Output::Observation(format!("{note}\n\n{}\n{}\n\n{text}", p.title, p.url)),
                 true,
-                if wait {
+                if stalled {
+                    progress::NO_PROGRESS
+                } else if wait {
                     "waiting_for_user"
                 } else {
                     "browser_model_unavailable"
@@ -939,6 +970,9 @@ async fn dispatch(
     Ok(status_view(&s, Some(view)))
 }
 
+#[cfg(test)]
+#[path = "browser_progress_tests.rs"]
+mod progress_tests;
 #[cfg(test)]
 #[path = "browser_tests.rs"]
 mod tests;

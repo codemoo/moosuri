@@ -10,7 +10,7 @@ has a model binding because both synthetic member processes run as this UID.
 import argparse
 import base64
 import hashlib
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, suppress
 import http.client
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 import json
@@ -139,13 +139,18 @@ class Proxy(QuietHandler):
             gateway.request(self.command, self.path, body=body, headers=headers)
             response = gateway.getresponse()
             payload = response.read()
+            if self.command == "POST" and self.path == self.server.drop_ack_path and response.status == 200:
+                # The gateway has committed. Close this test connection before sending a single response byte.
+                self.close_connection = True
+                return
             self.send_response(response.status)
             for key, value in response.getheaders():
                 if key.lower() not in ("connection", "transfer-encoding", "content-length", "date", "server"):
                     self.send_header(key, value)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            with suppress(BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+                self.wfile.write(payload)
 
     do_GET = do_POST = do_PUT = do_DELETE = relay
 
@@ -264,9 +269,9 @@ def logout(page):
     expect(page.get_by_label("이메일", exact=True)).to_be_visible()
 
 
-def rows(member, sql):
+def rows(member, sql, params=()):
     with closing(sqlite3.connect(member[3].as_uri() + "?mode=ro", uri=True)) as db:
-        return db.execute(sql).fetchall()
+        return db.execute(sql, params).fetchall()
 
 
 def context_counts(member):
@@ -451,6 +456,8 @@ def main():
     parser.add_argument("--channel", choices=("chrome", "chromium", "webkit"), default="chrome",
                         help="installed Chrome stable or a Playwright browser")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--conversation-work", action="store_true",
+                      help="exercise multi-task chat, its timer, evidence and member boundaries")
     mode.add_argument("--workflows", action="store_true", help="exercise task evidence and the installation schedule timer")
     mode.add_argument("--claude", action="store_true", help="seven questions using the authenticated Claude CLI")
     mode.add_argument("--expect-output-limit", action="store_true",
@@ -490,6 +497,7 @@ def main():
         binary = args.binary.resolve(strict=True)
         registry, ipc, gateway, members, env = provision(stack, binary, root, provider, output_tokens)
         proxy = serve(stack, Proxy, tls)
+        proxy.drop_ack_path = None
         proxy.authority = f"127.0.0.1:{proxy.server_port}"
         proxy.gateway = gateway / "gateway.sock"
         origin = "https://" + proxy.authority
@@ -512,7 +520,11 @@ def main():
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
                               else route.abort())
                 page = context.new_page()
-                if args.workflows:
+                if args.conversation_work:
+                    import member_conversation_scenarios
+                    member_conversation_scenarios.exercise(page, members, origin, provider, proxy, login=login,
+                                                          logout=logout, rows=rows, passed=passed)
+                elif args.workflows:
                     import member_workflow_scenarios
                     member_workflow_scenarios.exercise(page, members, origin, provider, login=login,
                                                        logout=logout, rows=rows, passed=passed,

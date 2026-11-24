@@ -72,6 +72,7 @@ export type PendingSend = {
   follow_up_run_id?: string;
   research_request?: { scope: "memory" | "conversation"; query: string };
   browser_request?: import("./personal-browser").PersonalBrowserRequest;
+  work_request?: { items: import("./conversation-work").WorkItemInput[] };
   status: "sending" | "accepted" | "uncertain" | "rejected" | "inbox";
 };
 export type PendingThreadCreation = {

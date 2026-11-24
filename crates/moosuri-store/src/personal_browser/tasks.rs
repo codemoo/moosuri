@@ -22,14 +22,23 @@ const INBOX_TASKS:&str="SELECT g.work_id,g.thread_id,'Gmail 받은편지함 조�
  JOIN threads t ON t.tenant_id=g.tenant_id AND t.id=g.thread_id AND t.account_id=g.account_id
  WHERE g.tenant_id=?1 AND g.account_id=?2 AND g.volume_id=?3 AND g.generation=?4 AND t.mission_internal=0";
 
-fn all_tasks() -> String {
-    format!("{CHAT_TASKS} UNION ALL {WORK_TASKS} UNION ALL {INBOX_TASKS}")
+// Each conversation child keeps its original ledger entry across retries and finished occurrences.
+const CONVERSATION_TASKS: &str = "SELECT c.id,c.thread_id,c.title,c.created_at,c.state,c.task_order AS ord,'conversation_work',
+ CASE c.state WHEN 'needs_input' THEN '검색어가 필요합니다' WHEN 'queued' THEN '조회 대기 중' ELSE NULL END,NULL,NULL
+ FROM member_conversation_tasks c JOIN threads t ON t.tenant_id=c.tenant_id AND t.id=c.thread_id AND t.account_id=c.account_id
+ WHERE c.tenant_id=?1 AND c.account_id=?2 AND c.volume_id=?3 AND c.generation=?4 AND t.mission_internal=0";
+
+fn all_tasks(work_filter: &str) -> String {
+    format!(
+        "{CHAT_TASKS} UNION ALL {WORK_TASKS} {work_filter} UNION ALL {INBOX_TASKS} UNION ALL {CONVERSATION_TASKS}"
+    )
 }
 
 fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskSummary> {
     let state: String = row.get(4)?;
     let actor = match state.as_str() {
-        "ready" | "user_control" | "outcome_unknown" | "unknown" | "awaiting_consent" => "member",
+        "ready" | "user_control" | "outcome_unknown" | "unknown" | "awaiting_consent"
+        | "needs_input" => "member",
         "starting" | "reading" | "resuming" | "stopping" | "running" | "queued" | "dispatched" => {
             "assistant"
         }
@@ -94,7 +103,9 @@ impl Store {
                 parameters.push(id.to_string().into());
                 format!("{WORK_TASKS} AND w.period>0 AND w.id=?8")
             } else {
-                all_tasks()
+                all_tasks(
+                    "AND NOT EXISTS(SELECT 1 FROM member_conversation_tasks c WHERE c.id=w.id)",
+                )
             };
             let sql = format!(
                 "SELECT * FROM ({source}) WHERE {filter} ORDER BY created_at DESC,ord DESC LIMIT ?7"
@@ -147,7 +158,7 @@ impl Store {
             let id = id.to_string();
             let task = tx
                 .query_row(
-                    &format!("SELECT * FROM ({}) WHERE id=?5", all_tasks()),
+                    &format!("SELECT * FROM ({}) WHERE id=?5", all_tasks("")),
                     params![
                         user.tenant.0,
                         user.account.id,
@@ -162,6 +173,7 @@ impl Store {
             let detail = match task.kind.as_str() {
                 "research" => workflows::detail(&tx, owner, task)?,
                 "gmail" => mail_detail(&tx, &user.tenant.0, task)?,
+                "conversation_work" => workflows::conversation_detail(&tx, owner, task)?,
                 _ => chat_detail(&tx, &user.tenant.0, task)?,
             };
             tx.commit()?;
@@ -228,6 +240,9 @@ fn chat_detail(c: &Connection, tenant: &str, task: TaskSummary) -> Result<TaskDe
         events
     };
     Ok(TaskDetail {
+        origin_turn_id: None,
+        report_id: None,
+        runs: Vec::new(),
         task,
         request,
         thread_title,
@@ -245,6 +260,9 @@ fn mail_detail(c: &Connection, tenant: &str, task: TaskSummary) -> Result<TaskDe
         "Gmail 받은편지함을 확인했습니다. 원래 대화에서 저장된 조회 결과를 열 수 있습니다.".into()
     });
     Ok(TaskDetail {
+        origin_turn_id: None,
+        report_id: None,
+        runs: Vec::new(),
         task,
         request: "Gmail 받은편지함 조회".into(),
         thread_title,
@@ -255,4 +273,4 @@ fn mail_detail(c: &Connection, tenant: &str, task: TaskSummary) -> Result<TaskDe
     })
 }
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

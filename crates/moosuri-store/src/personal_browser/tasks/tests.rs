@@ -1,11 +1,11 @@
 use super::*;
 
-struct Member {
-    root: tempfile::TempDir,
-    store: Store,
-    scope: Scope,
+pub(in crate::personal_browser) struct Member {
+    pub(in crate::personal_browser) root: tempfile::TempDir,
+    pub(in crate::personal_browser) store: Store,
+    pub(in crate::personal_browser) scope: Scope,
 }
-async fn member() -> Member {
+pub(in crate::personal_browser) async fn member() -> Member {
     let root = crate::tests::directory();
     let path = root.path().canonicalize().unwrap();
     let owner = VolumeOwner {

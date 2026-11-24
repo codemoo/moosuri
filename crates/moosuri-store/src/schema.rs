@@ -371,6 +371,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 91,
         sql: include_str!("../../../migrations/assistant/0091_member_workflows.sql"),
     },
+    Migration {
+        version: 92,
+        sql: include_str!("../../../migrations/assistant/0092_conversation_work.sql"),
+    },
 ];
 
 pub(crate) const CURRENT_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;

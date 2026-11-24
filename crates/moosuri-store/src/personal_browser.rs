@@ -6,6 +6,9 @@ use moosuri_core::{
 };
 use personal_volume::VolumeOwner;
 
+pub mod progress;
+mod reports;
+
 mod tasks;
 mod workflows;
 
@@ -266,6 +269,7 @@ impl Store {
                 return Err(StoreError::Conflict);
             }
             tx.execute("INSERT INTO run_instructions(tenant_id,run_id,request_id,attempt,execution_attempt,sequence,text,state,session_digest,auth_epoch) VALUES(?1,?2,?3,1,1,?4,?5,'received',?6,?7)", params![tenant, run.id, request.to_string(), job.guidance.len() as i64 + 1, text, scope.user.digest.as_slice(), scope.user.epoch])?;
+            progress::guided(&tx, &scope)?;
             let updated = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
             tx.commit()?;
             Ok(updated)
@@ -346,6 +350,9 @@ impl Store {
             }
             tx.execute("INSERT INTO personal_browser_actions VALUES(?1,?2,?3,?4)", params![tenant, run, id, op])?;
             tx.execute("UPDATE personal_browser_jobs SET pending=?3 WHERE tenant_id=?1 AND run_id=?2", params![tenant, run, (op != "takeover").then_some(id)])?;
+            if matches!(op, "takeover" | "resume" | "follow") {
+                progress::release(&mut job.view);
+            }
             job.view.revision += 1;
             save(&tx, &scope, &job.view)?;
             tx.commit()?;

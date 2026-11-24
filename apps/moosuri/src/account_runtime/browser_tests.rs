@@ -14,13 +14,13 @@ use tokio::{
 };
 use tower::ServiceExt;
 
-struct Member {
-    store: Store,
-    owner: VolumeOwner,
-    token: String,
-    thread: String,
+pub(super) struct Member {
+    pub(super) store: Store,
+    pub(super) owner: VolumeOwner,
+    pub(super) token: String,
+    pub(super) thread: String,
 }
-async fn member(path: &std::path::Path) -> Member {
+pub(super) async fn member(path: &std::path::Path) -> Member {
     fs::create_dir(path).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     let owner = VolumeOwner {
@@ -62,7 +62,7 @@ async fn member(path: &std::path::Path) -> Member {
         thread,
     }
 }
-async fn request(
+pub(super) async fn request(
     app: &Router,
     method: &str,
     path: &str,
@@ -95,7 +95,7 @@ async fn request(
     let bytes = to_bytes(resp.into_body(), 1 << 22).await.unwrap();
     (code, serde_json::from_slice(&bytes).unwrap_or_default())
 }
-async fn wait_state(app: &Router, path: &str, m: &Member, state: &str) -> Value {
+pub(super) async fn wait_state(app: &Router, path: &str, m: &Member, state: &str) -> Value {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let result = request(app, "GET", path, m.owner.account, &m.token, Value::Null)
@@ -110,7 +110,7 @@ async fn wait_state(app: &Router, path: &str, m: &Member, state: &str) -> Value 
     .await
     .unwrap()
 }
-fn listener(socket: &std::path::Path) -> UnixListener {
+pub(super) fn listener(socket: &std::path::Path) -> UnixListener {
     let l = UnixListener::bind(socket).unwrap();
     fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).unwrap();
     l

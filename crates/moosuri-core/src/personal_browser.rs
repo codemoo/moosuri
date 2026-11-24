@@ -1,5 +1,7 @@
 //! Private member browser responses. Only the takeover response carries a controller capability.
 use serde::{Deserialize, Serialize};
+mod conversation;
+pub use conversation::*;
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tab {
     pub id: String,
@@ -90,6 +92,12 @@ pub struct TaskEvent {
 
 #[derive(Serialize, Deserialize)]
 pub struct TaskDetail {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<String>,
     pub task: TaskSummary,
     pub request: String,
     pub thread_title: String,
@@ -103,7 +111,7 @@ fn browser_kind() -> String {
     "browser".into()
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkScope {
     Memory,

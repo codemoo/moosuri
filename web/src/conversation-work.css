@@ -1,0 +1,39 @@
+.work-group { margin: 8px 0; }
+.work-group > ul, .work-status-notice ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.work-status-notice ul { gap: 2px; margin: 6px 0; }
+.work-task { padding: 12px 14px; background: var(--member-field); border-radius: 14px; display: grid; gap: 6px; min-width: 0; }
+.work-task-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.work-task-head strong { overflow-wrap: anywhere; }
+.work-state { font-size: .8rem; color: var(--member-accent); white-space: nowrap; }
+.work-task[data-state=failed] .work-state, .work-task[data-state=cancelled] .work-state { color: var(--member-secondary); }
+.work-meta { margin: 0; font-size: .82rem; color: var(--member-secondary); overflow-wrap: anywhere; }
+.work-summary, .work-question, .work-notice { margin: 0; color: var(--member-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.work-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.work-group button, .work-composer button, .work-composer-toggle button, .work-clarify button, .work-status-notice button { min-height: 44px; padding: 6px 12px; font-size: .85rem; }
+.work-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.work-form label { display: grid; gap: 4px; flex: 1 1 200px; font-size: .82rem; color: var(--member-secondary); }
+.work-form input, .work-composer-row input { min-height: 44px; min-width: 0; font: inherit; padding: 0 10px; }
+.work-history ol, .work-runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: .85rem; }
+.work-history li time { color: var(--member-secondary); font-variant-numeric: tabular-nums; margin-inline-start: 6px; }
+.work-report { padding: 12px 14px; border: 1px solid var(--member-divider); border-radius: 12px; }
+.work-report h4 { margin: 0 0 6px; }
+.work-report-body { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.work-composer-wrap { width: min(100%, 800px); margin: 0 auto; padding: 0 16px; box-sizing: border-box; }
+.work-composer { display: grid; gap: 8px; padding: 10px 12px; background: var(--member-field); border-radius: 14px; margin-bottom: 8px; }
+.work-composer-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; }
+.work-composer-row select { min-height: 44px; font: inherit; }
+.work-composer small { color: var(--member-secondary); overflow-wrap: anywhere; }
+@media (max-width: 650px) {
+  .work-composer-wrap { padding: 0 8px; }
+  .work-task { padding: 10px 12px; }
+}
+
+
+.member-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; justify-self: end; }
+.work-complete { position: relative; }
+.member-topbar .work-complete-trigger { color: var(--member-accent); gap: 4px; padding-inline: 9px; font-size: 12px; white-space: nowrap; }
+.work-complete-list { position: absolute; inset-inline-end: 0; top: calc(100% + 6px); z-index: 8; width: min(270px, calc(100vw - 78px)); max-height: 45vh; overflow-y: auto; background: var(--member-field); border: 1px solid var(--member-divider); box-shadow: 0 6px 22px #0004; border-radius: 14px; padding: 4px; }
+.work-complete-list > div { display: flex; align-items: center; }
+.member-topbar .work-complete-list button:first-child { flex: 1; align-items: flex-start; display: grid; justify-content: start; text-align: start; line-height: 1.35; gap: 2px; padding: 7px 9px; white-space: normal; overflow-wrap: anywhere; }
+.work-complete-list small { font-size: 12px; color: var(--member-secondary); }
+.member-topbar:has(.work-complete) { grid-template-columns: auto minmax(0,1fr) auto; }

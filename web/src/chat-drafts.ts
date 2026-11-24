@@ -50,7 +50,7 @@ function creation(v: unknown): PendingThreadCreation | null {
 }
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): PendingSend | null {
-    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "follow_up_run_id", "status"]) ||
+    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "work_request", "follow_up_run_id", "status"]) ||
         !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain", "rejected", "inbox"].includes(String(v.status)))
         return null;
     if (v.status === "inbox")
@@ -65,6 +65,23 @@ function pending(v: unknown): PendingSend | null {
         if (!exact(v, ["request_id","text","status","research_request"]) || !object(r) || !exact(r,["scope","query"]) ||
             (r.scope !== "memory" && r.scope !== "conversation") || typeof r.query !== "string" || !r.query.trim() || bytes(r.query)>128) return null;
         out.research_request={scope:r.scope,query:r.query};
+    }
+    if (v.work_request !== undefined) {
+        const w = v.work_request;
+        if (!exact(v, ["request_id", "text", "status", "work_request"]) || !object(w) || !exact(w, ["items"]) ||
+            !Array.isArray(w.items) || w.items.length < 1 || w.items.length > 6) return null;
+        const items: NonNullable<PendingSend["work_request"]>["items"] = [];
+        for (const item of w.items) {
+            if (!object(item) || !exact(item, ["title", "scope", "query", "filters"]) || (item.scope !== "memory" && item.scope !== "conversation") ||
+                typeof item.title !== "string" || !item.title.trim() || item.title.length > 200 ||
+                typeof item.query !== "string" || bytes(item.query) > 128) return null;
+            const filters = item.filters;
+            if (filters !== undefined && (!Array.isArray(filters) || filters.length > 4 ||
+                !filters.every((term): term is string => typeof term === "string" && !!term.trim() && bytes(term) <= 128))) return null;
+            items.push({ title: item.title, scope: item.scope, query: item.query,
+                ...(Array.isArray(filters) ? { filters: filters.slice() as string[] } : {}) });
+        }
+        out.work_request = { items };
     }
     if (v.browser_request !== undefined) {
         const request = v.browser_request;

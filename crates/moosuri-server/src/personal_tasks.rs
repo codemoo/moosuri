@@ -1,5 +1,6 @@
 //! Historical reads remain available if the browser worker is closed or offline.
 use super::*;
+mod conversation;
 use axum::extract::Query;
 #[cfg(unix)]
 use axum::{extract::connect_info::Connected, serve::IncomingStream};
@@ -16,6 +17,7 @@ struct MemberTasks {
 
 pub fn routes(store: Store, owner: VolumeOwner) -> Router {
     Router::new()
+        .merge(conversation::routes())
         .route("/api/v1/personal/tasks", get(page))
         .route("/api/v1/personal/tasks/{id}", get(detail))
         .route(

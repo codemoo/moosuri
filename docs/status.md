@@ -14,6 +14,8 @@
 
 ## 로컬 회원 UI 개편판
 
+대화 개편의 다음 목표는 회원이 평소 말 한 번으로 일을 맡기고 같은 대화에서 확인된 결과를 받는 것이다. 11월 25일 Linux 비교에서 정형 표현은 업무 두 개를 생성했지만 같은 의미의 자연스러운 부탁은 텍스트 응답으로 끝났다. 회원의 실제 Muse 사용에서 확인한 짧은 후속 질문, 메일 기반 신청 준비, 기한이 있는 구매와 브라우저 인계, 정기 브리핑을 수락 대상으로 삼는다. [현행판 대조와 개발 순서](research/kiri-conversation-work-2026-11-25.md) · [Kiri 전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md)
+
 11월 25일 Kiri 회원 대화에 복수 업무 인계를 추가했다. 원래 메시지에서 기억·대화 조사를 함께 맡기고, 각 업무에만 조건이나 답을 보태며 회차별 근거와 보고서를 다시 연다. 다른 대화에서 글을 쓰는 동안에도 완료된 조사를 상단에서 확인한다. 회원 스키마는 92다. Linux에서 업무 시나리오 27개를 검증했고, 실제 Claude 대화 7개와 웹 회귀 805개가 통과했다. [사용 안내](member-tasks.md) · [기능별 워크로그와 Linux 수락 결과](reviews/2026-11-25-conversation-work.md)
 
 11월 21일 운영 설치에서 회원에게 적용되는 모델이 Claude Sonnet 5.5 · medium이고 새 요청을 받는 상태임을 확인했다. Linux 서버의 격리된 개편판에서 같은 설정으로 회원 대화 7건이 통과했다. 1,002턴의 동명이인 대화에서는 원문과 구조화 기억을 제공했을 때 모두 3건에 정확히 답했다. [대화 검증](reviews/2026-11-20-kiri-scenarios.md#claude-대화-검증) · [기억 측정](../audit/memory-reader/results.md#linux-서버-재검증) · [Linux 전체 실행 기록](../audit/standard-journey-checks.md#linux-서버-재검증)

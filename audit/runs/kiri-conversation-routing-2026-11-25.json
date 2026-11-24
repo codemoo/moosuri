@@ -1,0 +1,105 @@
+{
+  "date": "2026-11-25",
+  "runtime": "Linux x86_64, isolated Kiri member services, HTTPS gateway, Chromium, synthetic member volumes",
+  "product_commit": "905a9a280ac25ebee549fb4113e6f4ff3c9a03a4",
+  "binary_sha256": "c6e4f3f12a39818e0fe0634d917fdcdbc750aa63c6f36c91a603b14641b6e890",
+  "schema": 92,
+  "observed_text_model": "claude-sonnet-5-5",
+  "requested_effort": "medium",
+  "delta_order": [
+    "member_conversation_groups",
+    "member_conversation_tasks",
+    "member_conversation_runs",
+    "member_conversation_reports"
+  ],
+  "sessions": [
+    {
+      "fixture": "synthetic conversation and two memories",
+      "observations": [
+        {
+          "case": "1. 복수 검색",
+          "path": "conversations",
+          "delta_group_task_run_report": [
+            1,
+            2,
+            2,
+            0
+          ]
+        },
+        {
+          "case": "2. 복수 검색 바꿔 말하기",
+          "path": "text-preview",
+          "delta_group_task_run_report": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "input_omits_marker": true,
+          "answer_contains_marker": false
+        },
+        {
+          "case": "3. 순서로 조건 수정",
+          "path": "local notice",
+          "delta_group_task_run_report": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "case": "4. 이름으로 조건 수정",
+          "path": "conversations/control",
+          "delta_group_task_run_report": [
+            0,
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "case": "5. 카드 근거 재질문",
+          "path": "text-preview",
+          "delta_group_task_run_report": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "input_omits_marker": true,
+          "answer_contains_marker": false
+        }
+      ],
+      "interruption": "The next attempted report-by-chat check did not obtain a completed text response. Cause undetermined. The report contrast below used a fresh fixture."
+    },
+    {
+      "fixture": "fresh member with the same two memories and a refined task card",
+      "observations": [
+        {
+          "case": "6. 대화로 보고서 저장",
+          "path": "text-preview",
+          "delta_group_task_run_report": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "input_omits_marker": true,
+          "answer_contains_marker": false
+        },
+        {
+          "case": "7. 버튼으로 보고서 저장·다시 열기",
+          "path": "conversations/control",
+          "delta_group_task_run_report": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "verified_receipt": 1
+        }
+      ]
+    }
+  ]
+}

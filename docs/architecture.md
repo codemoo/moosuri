@@ -50,7 +50,7 @@ audit/                        # 구 소스 경로·해시·이전 판정·시험
 
 빈 제품 crate를 미리 만들어 완료처럼 표시하지 않는다. memory/tasks/media 등은 module로 시작하고 별도 feature·OS·암호 경계가 있을 때 crate를 나눈다. `core ← store/connectors ← agent/server/CLI` 의존 방향을 유지한다. React는 생성 DTO/OpenAPI 계약으로 Rust와 연결하며 DB 타입·credential을 받지 않는다. vault는 agent/memory/tool에 의존하지 않는다.
 
-## 단일 호스트 실행과 SQLite
+## 표준 서버의 단일 호스트 실행과 SQLite
 
 ```mermaid
 flowchart LR

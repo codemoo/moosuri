@@ -1,0 +1,996 @@
+{
+  "date": "2026-11-25",
+  "product_commit": "ddaf9b2f3adbe63ad570c11c9332f085e0697106",
+  "runtime": "Linux x86_64, isolated Kiri HTTPS gateway and per-member SQLite volumes",
+  "basis": {
+    "member_utterances": 76,
+    "assistant_utterances": 186,
+    "scheduled_items": 5,
+    "synthetic_derivatives_only": true,
+    "research": "docs/research/kiri-conversation-work-2026-11-25.md",
+    "prior_ui_and_worklog": "docs/reviews/2026-11-21-member-workflows.md",
+    "prior_conversation_work": "docs/reviews/2026-11-25-conversation-work.md"
+  },
+  "model": {
+    "provider": "authenticated first-party Claude CLI",
+    "id": "claude-sonnet-5-5",
+    "effort": "medium",
+    "other_real_models": 0
+  },
+  "worklog_reference_availability": "The four original staged images were no longer available in this final checkout. Task and timeline behavior was verified using the retained worklog, user requirements, and the member UI.",
+  "browser_run_provenance": "Runs span the implementation and fixes. The shared HTTPS gateway served the compiled member UI. Deterministic responses, synthetic receipts and replays do not count as additional real model answers.",
+  "product_files_verified_by_sha256_on_linux": 143,
+  "delivery_binary_sha256": "9c469e90cb3979e120a200f3f6b4136ebf2be78b05f845fb5a1879ba80b51e49",
+  "catalogue": {
+    "features": 71,
+    "scenarios": 256,
+    "states": {
+      "통과": 235,
+      "부분 확인": 9,
+      "실환경 대기": 9,
+      "후속 범위": 3
+    },
+    "source": "audit/feature-journeys.tsv"
+  },
+  "worklog": {
+    "features": 15,
+    "scenarios": 73,
+    "source": "docs/reviews/2026-11-25-member-work-from-chat.md",
+    "mapping": [
+      {
+        "number": 1,
+        "feature": "부탁 알아듣기",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "work/SW-01"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "work/SW-06"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "supplement/SUP-01"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "work/SW-07"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 2,
+        "feature": "여러 일에 이어 말하기",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "conversation/Q1",
+              "conversation/Q2"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "conversation/S1"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "conversation/S3"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "conversation/Q3",
+              "conversation/Q4",
+              "conversation/H3"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 3,
+        "feature": "찾은 근거로 답하기",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "work/SW-04"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "personal_browser::workflows::conversation::tests::two_dated_trips_offer_both_dates_without_picking_then_selection_shows_that_value"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "personal_browser::workflows::conversation::tests::one_trip_with_incompatible_departures_is_a_conflict_in_the_result_and_the_combined_report"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "personal_browser::workflows::conversation::tests::editing_or_forgetting_an_original_never_reveals_its_old_departure"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 4,
+        "feature": "한 장으로 받기",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "work/SW-03"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "supplement/SUP-03"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "work/SW-05"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "personal_browser::workflows::conversation::tests::cancelled_or_failed_work_never_becomes_a_successful_report"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 5,
+        "feature": "웹과 연결 자료 읽기",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "account_runtime::browser::progress_tests::guidance_then_follow_proceeds_once_and_a_replayed_follow_has_no_second_effect"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "account_runtime::browser::progress_tests::repeated_identical_observation_pauses_with_resumable_reason_before_another_model_call"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "account_runtime::browser::progress_tests::unchanged_selection_pauses_and_a_real_change_after_takeover_continues"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "mail::member_google::tests::pinned_disconnect_reconnect_logout_and_password_changes_fence_inflight_work"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 6,
+        "feature": "Gmail 회신",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "mail::member_mail_work::tests::prepare_cites_the_read_source_replays_and_stays_local_on_readonly"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "mail::member_mail_work::tests::gmail_draft_receipt_comes_only_from_the_adapter_and_unknown_is_never_resolved_locally"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "mail::member_mail_work::tests::wrong_mailbox_scope_and_changed_preview_cannot_be_approved"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "personal_google::mail_work::tests::standard_writer_runs_once_its_receipt_is_recorded_and_replays_without_a_second_write"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "mail::member_mail_work::tests::source_withdrawal_destroys_the_draft_and_cancels_an_unsent_approval"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 7,
+        "feature": "개인 일정",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "personal_google::calendar::tests::scenario_create_with_local_preview_then_confirmed_provider_receipt"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "personal_google::calendar::tests::scenario_ambiguous_title_needs_explicit_selection_then_move_keeps_other_fields"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "personal_google::calendar::tests::scenario_stale_concurrent_version_is_a_definite_conflict_with_no_write"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "personal_google::calendar::tests::scenario_lost_acknowledgement_is_reconciled_by_readback_and_never_duplicates"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "mail::member_google::calendar::tests::create_commits_dispatch_first_then_provider_receipt_and_content_is_encrypted"
+            ]
+          },
+          {
+            "number": 6,
+            "passed_evidence": [
+              "personal_google::calendar::tests::scenario_permission_owner_epoch_and_revocation"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 8,
+        "feature": "바뀔 때만 알림 받기",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "work/MW-01",
+              "work/MW-02"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "personal_browser::workflows::monitors::tests::watch_notifies_only_for_real_changes_and_never_carries_source_text"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "personal_browser::workflows::monitors::tests::concurrent_ticks_and_restart_produce_one_alert"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "personal_browser::workflows::monitors::tests::stop_cancels_pending_pushes_and_replays_while_expiry_ends_checks"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "work/MW-03",
+              "work/MW-04"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 9,
+        "feature": "기억과 일회 조건",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "supplement/SUP-02"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "supplement/SUP-03"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "supplement/SUP-07"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "supplement/SUP-08"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "supplement/SUP-05a",
+              "supplement/SUP-05b",
+              "supplement/SUP-05c",
+              "supplement/SUP-05d"
+            ]
+          },
+          {
+            "number": 6,
+            "passed_evidence": [
+              "supplement/SUP-06a",
+              "supplement/SUP-06b"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 10,
+        "feature": "검증된 절차 재사용",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "conversation/P1",
+              "conversation/P2"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "conversation/P3"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "personal_browser::workflows::conversation::tests::withdrawn_sources_are_hidden_and_reuse_needs_a_readable_proven_search"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "conversation/P4"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 11,
+        "feature": "배송 기한이 있는 구매",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "journey/J4"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "research/R2"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "research/R3"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "research/R4",
+              "research/R5"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "personal_browser::research_outcomes::tests::shopping_s5_uncertain_checkout_is_never_called_paid",
+              "personal_browser::research_outcomes::tests::shopping_s6_receipt_needs_phrase_reference_and_the_same_site"
+            ]
+          },
+          {
+            "number": 6,
+            "passed_evidence": [
+              "research/R9",
+              "research/R12"
+            ]
+          },
+          {
+            "number": 7,
+            "passed_evidence": [
+              "journey/J6"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 12,
+        "feature": "연구 지원 신청 준비",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "journey/J3"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "research/R6",
+              "research/R10"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "personal_browser::research_outcomes::tests::application_a2_changed_deadline_in_mail_is_a_conflict_without_a_draft",
+              "personal_browser::research_outcomes::tests::application_a3_issuer_change_between_reads_is_a_conflict"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "personal_browser::research_outcomes::tests::application_a1_consistent_notice_and_mail_yield_a_cited_unsubmitted_draft"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "personal_browser::research_outcomes::tests::application_a5_interrupted_shared_tab_and_missed_deadline",
+              "personal_browser::research_outcomes::tests::application_a6_submission_only_counts_with_a_page_reference"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 13,
+        "feature": "짧은 연속 대화",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "ordinary/GAME-01"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "ordinary/GAME-02"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "ordinary/GAME-03"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 14,
+        "feature": "중요한 메일과 오늘 일정 브리핑",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "brief/BRIEF-01"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "brief/BRIEF-02"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "brief/BRIEF-03"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "brief/BRIEF-04"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "mail::member_briefs::tests::important_only_is_explicit_pinned_in_the_fingerprint_and_reaches_the_lease",
+              "personal_google::local_gws::tests::important_page_is_provider_selected_label_verified_and_identity_bound"
+            ]
+          },
+          {
+            "number": 6,
+            "passed_evidence": [
+              "mail::member_briefs::tests::slot_is_claimed_once_across_restart_and_evidence_is_minimal_encrypted_and_alerted_once",
+              "mail::member_briefs::tests::reopening_after_host_change_or_restore_withdraws_the_previous_brief",
+              "personal_google::tests::cancelled_brief_read_settles_its_refresh_and_the_next_slot_reads_once"
+            ]
+          }
+        ]
+      },
+      {
+        "number": 15,
+        "feature": "공개 서비스 변경 감시",
+        "checks": [
+          {
+            "number": 1,
+            "passed_evidence": [
+              "watch/PW-01"
+            ]
+          },
+          {
+            "number": 2,
+            "passed_evidence": [
+              "watch/PW-02"
+            ]
+          },
+          {
+            "number": 3,
+            "passed_evidence": [
+              "reader/PW-05",
+              "reader/PW-06",
+              "reader/PW-07"
+            ]
+          },
+          {
+            "number": 4,
+            "passed_evidence": [
+              "watch/PW-03"
+            ]
+          },
+          {
+            "number": 5,
+            "passed_evidence": [
+              "personal_browser::public_watches::tests::restart_and_crash_dedup_never_rereads_and_stops_only_its_own_disposable_workspaces"
+            ]
+          },
+          {
+            "number": 6,
+            "passed_evidence": [
+              "watch/PW-04"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "browser_suites": {
+    "ordinary": {
+      "group": "Chromium / Claude Sonnet 5.5 medium",
+      "ids": [
+        "ML-01",
+        "ML-02",
+        "ML-03",
+        "ML-05",
+        "ML-06",
+        "ML-07",
+        "ML-08",
+        "GAME-01",
+        "GAME-02",
+        "GAME-03"
+      ]
+    },
+    "work": {
+      "group": "Chromium / Claude Sonnet 5.5 medium",
+      "ids": [
+        "SW-01",
+        "SW-02",
+        "SW-03",
+        "SW-04",
+        "SW-05",
+        "SW-06",
+        "SW-07",
+        "MW-01",
+        "MW-02",
+        "MW-03",
+        "MW-04"
+      ],
+      "send_to_receipt_seconds": 1.7,
+      "send_to_reopened_report_seconds": 4.3,
+      "interpretation_routes": 6,
+      "chat_turns": 1
+    },
+    "work_webkit": {
+      "group": "WebKit / deterministic responses",
+      "ids": [
+        "SW-01",
+        "SW-02",
+        "SW-03",
+        "SW-04",
+        "SW-05",
+        "SW-06",
+        "SW-07",
+        "MW-01",
+        "MW-02",
+        "MW-03",
+        "MW-04"
+      ]
+    },
+    "conversation": {
+      "group": "WebKit / deterministic responses",
+      "ids": [
+        "H1",
+        "H2",
+        "H3",
+        "S1",
+        "S2",
+        "S4",
+        "R1",
+        "R2",
+        "P1",
+        "P2",
+        "P4",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "R3",
+        "P3",
+        "S3",
+        "H6",
+        "R4",
+        "H5",
+        "R5"
+      ]
+    },
+    "conversation_chromium": {
+      "group": "Chromium / deterministic responses",
+      "ids": [
+        "H1",
+        "H2",
+        "H3",
+        "S1",
+        "S2",
+        "S4",
+        "R1",
+        "R2",
+        "P1",
+        "P2",
+        "P4",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "R3",
+        "P3",
+        "S3",
+        "H6",
+        "R4",
+        "H5",
+        "R5"
+      ]
+    },
+    "supplement": {
+      "group": "Chromium / deterministic responses",
+      "ids": [
+        "SUP-01",
+        "SUP-02",
+        "SUP-03",
+        "SUP-04a",
+        "SUP-04b",
+        "SUP-05a",
+        "SUP-05b",
+        "SUP-05c",
+        "SUP-05d",
+        "SUP-06a",
+        "SUP-06b",
+        "SUP-07",
+        "SUP-08",
+        "SUP-09",
+        "SUP-10"
+      ]
+    },
+    "supplement_webkit": {
+      "group": "WebKit / deterministic responses",
+      "ids": [
+        "SUP-01",
+        "SUP-02",
+        "SUP-03",
+        "SUP-04a",
+        "SUP-04b",
+        "SUP-05a",
+        "SUP-05b",
+        "SUP-05c",
+        "SUP-05d",
+        "SUP-06a",
+        "SUP-06b",
+        "SUP-07",
+        "SUP-08",
+        "SUP-09",
+        "SUP-10"
+      ]
+    },
+    "research": {
+      "group": "Chromium / fixture browser and model",
+      "ids": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R10",
+        "R11",
+        "R12",
+        "R9",
+        "R13"
+      ],
+      "broker_opens": 3,
+      "model_reads": 3
+    },
+    "journey": {
+      "group": "Chromium / fixture browser and model, desktop and 390px",
+      "ids": [
+        "J1",
+        "J2",
+        "J3",
+        "J4",
+        "J6",
+        "J5"
+      ],
+      "broker_opens": 4,
+      "broker_ops": [
+        "frame",
+        "open",
+        "stop",
+        "tabs"
+      ],
+      "broker_rejected": 0,
+      "classifier_calls": 0,
+      "detail_survived_reload": true,
+      "mail_read_offered_not_clicked": true,
+      "model_chat_calls": 0,
+      "model_reads": 4
+    },
+    "short": {
+      "group": "Chromium / deterministic responses",
+      "ids": [
+        "C1"
+      ],
+      "model_calls": 3
+    },
+    "brief": {
+      "group": "Chromium / two members with no grant",
+      "ids": [
+        "BRIEF-01",
+        "BRIEF-02",
+        "BRIEF-03",
+        "BRIEF-04"
+      ]
+    },
+    "brief_webkit": {
+      "group": "WebKit / two members with no grant",
+      "ids": [
+        "BRIEF-01",
+        "BRIEF-02",
+        "BRIEF-03",
+        "BRIEF-04"
+      ]
+    },
+    "watch": {
+      "group": "Chromium / unavailable page reader",
+      "ids": [
+        "PW-01",
+        "PW-02",
+        "PW-03",
+        "PW-04"
+      ]
+    },
+    "reader": {
+      "group": "WebKit / four isolated page reads",
+      "ids": [
+        "PW-05",
+        "PW-06",
+        "PW-07"
+      ],
+      "closed_workspaces": 4,
+      "cumulative_notifications": [
+        0,
+        0,
+        1,
+        1
+      ]
+    },
+    "reader_chromium": {
+      "group": "Chromium / four isolated page reads",
+      "ids": [
+        "PW-05",
+        "PW-06",
+        "PW-07"
+      ]
+    }
+  },
+  "vitest": {
+    "web": {
+      "tests": 886,
+      "passed": 886,
+      "failed": 0,
+      "skipped": 0
+    },
+    "vault_web": {
+      "tests": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "rust": {
+    "coverage": "Workspace sweep taken during implementation, followed by focused Linux runs on changed surfaces. Counts for focused runs overlap the sweep.",
+    "workspace_sweep_observed_test_lines": {
+      "ok": 1874,
+      "FAILED": 26,
+      "ignored": 12
+    },
+    "workspace_reported_test_summaries": {
+      "passed": 1882,
+      "failed": 26,
+      "ignored": 12
+    },
+    "initial_failed_unique_tests": 26,
+    "subsequently_passing": 26,
+    "unresolved_observed_failures": [],
+    "initial_failed_doctest_targets": [
+      "moosuri-agent",
+      "moosuri-credential-broker",
+      "moosuri-eval",
+      "moosuri-server",
+      "moosuri-store"
+    ],
+    "ignored_unique_tests": [
+      "backup::tests::reference_go_age_reads_export_and_rust_reads_reference_ciphertext",
+      "cli_setup_create_and_reference_decrypt_work_without_a_server_key",
+      "component_packages_real_prebuilt_broker_and_vault_signed_https_delivery",
+      "conversation_recall::tests::full_window_namesake_search_timing",
+      "conversation_recall::tests::memory_reader::export_namesake_reader_inputs",
+      "credential_chat::session_tests::actual_gitea_vault_totp_original_chat_and_reuse",
+      "cutover::tests::reference_age_decrypts_standard_six_entry_checkpoint",
+      "github_skills_tests::explicit_public_github_package_preview_install_roundtrip",
+      "local_browser::tests::actual_local_chromium_pipe_blank_window_and_cleanup",
+      "signed_multiversion_update_interruption_retry_preserves_content_and_never_rolls_database_back",
+      "tests::live_memory::live_chatgpt_memory_semantics",
+      "tests::mail_attachments::gmail_attachment_large_pdf_uses_real_fixed_child_and_reports_no_text_invalid_and_unavailable"
+    ],
+    "focused": {
+      "gateway": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      "installation": {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0
+      },
+      "missions": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      "tasks": {
+        "passed": 11,
+        "failed": 0,
+        "ignored": 0
+      },
+      "server": {
+        "passed": 27,
+        "failed": 0,
+        "ignored": 0
+      },
+      "google": {
+        "passed": 35,
+        "failed": 0,
+        "ignored": 0
+      },
+      "brief_store": {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      },
+      "public_watch_store": {
+        "passed": 7,
+        "failed": 0,
+        "ignored": 0
+      },
+      "public_watch_adapter": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      "backup_recovery": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      },
+      "conversation_store": {
+        "passed": 23,
+        "failed": 0,
+        "ignored": 0
+      },
+      "research_store": {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      },
+      "schema_registry": {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      "schema92_member_upgrade": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      "workspace_doctests": {
+        "passed": 7,
+        "failed": 0,
+        "ignored": 0
+      },
+      "notices": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    }
+  },
+  "volume": {
+    "prior_member_schema": 92,
+    "schema": 100,
+    "schema92_reopened_with_original_member_and_thread": true,
+    "new_grants_on_upgrade": 0,
+    "offline_shared_installation": {
+      "mode": "explicit-offline-snapshot",
+      "application_tables": 241,
+      "schema": 100,
+      "rows": 15,
+      "accounts": 1,
+      "cross_owner_fk_relationships_checked": 247,
+      "cutover_ready": false
+    }
+  },
+  "openspec": "Totals: 195 passed, 0 failed (195 items)",
+  "plan": "Plan verified: 523 sources, 108 entrypoints, 99 historical test files (772 Python / 215 TS declarations), 30 requirements, 71 features, 71 planned scenario groups, 4 connector scope records, 1649 local links.",
+  "external_conditions": [
+    "Real Google OAuth for two distinct members, live mail delivery and live calendar changes",
+    "Actual order or application acceptance with an external receipt",
+    "Physical mobile soft keyboard, app return and push notification",
+    "Public release and production deployment with separate migration and recovery verification"
+  ]
+}

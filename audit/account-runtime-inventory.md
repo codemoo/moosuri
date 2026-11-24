@@ -26,6 +26,8 @@ Schema 91 has 216 application tables. The member workflow definition binds an ow
 
 Schema 92 has 223 application tables. Conversation groups, tasks, actions, events, runs and saved report receipts retain the owning member. Restore closes pending searches and questions. Browser progress digests expire with their job. [Schema 92 classification](account-runtime-schema92.json)
 
+Schemas 93–100 extend the same member volume with interpreted work, combined reports, recurring checks, scoped Gmail and Calendar actions, research outcomes, linked task history, connected briefs and public watches. Schema 100 classifies 241 application tables. The briefing and public-watch ledgers pin their source authority and scheduled occurrence; encrypted excerpts are bound to the member and grant. [Schema 100 classification](account-runtime-schema100.json) · [Ciphertext bindings](account-runtime-artifacts.json)
+
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,

@@ -98,6 +98,15 @@ python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py target/debug/moos
 
 The runner creates two temporary member volumes, an HTTPS gateway, a model broker with a synthetic reply, and a real installation timer. It drives the browser from chat through a source read, runs a scheduled search during logout, and checks which results remain visible after forgetting the source. Set `MOOSURI_SYNTHETIC_WORK_SCREENS` to an output directory to capture the mobile list, timeline and source, and the desktop split view. The `--claude` mode uses the installation's authenticated Claude Sonnet 5.5 at medium effort for the separate conversation checks. [Work log and scenarios](../../../docs/reviews/2026-11-21-member-workflows.md)
 
+## Conversation work
+
+The `--conversation-work` mode sends one natural-language request with two searches through the ordinary composer. It checks member-owned child records and timer receipts, targeted follow-ups, persisted questions, saved reports, source withdrawal, fresh searches and account isolation. It runs on a disposable Linux member installation with Chromium or WebKit.
+
+```sh
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py /absolute/path/to/moosuri --conversation-work --channel chromium
+python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py /absolute/path/to/moosuri --conversation-work --channel webkit
+```
+
 ## Observed result, 2026-11-19 KST
 
 | Check | Observed result |

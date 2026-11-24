@@ -20,13 +20,18 @@ F06	F06-03	같은 스트림 이벤트가 반복되고 중간 순번이 누락된
 F07	F07-01	메시지 접수 응답을 잃고 재확인을 누른다	사용자가 누른 때만 동일 요청 ID로 다시 확인한다	vitest	web/src/Chat.test.tsx	keeps the same request ID after a lost acknowledgement and resubmits only on the user's action	통과
 F07	F07-02	다음 초안을 편집하다 실패한 실행을 재시도한다	원래 실행만 재시도하고 새 초안과 현재 시도의 본문이 유지된다	vitest	web/src/Chat.test.tsx	retries the original run without replacing the draft or resurrecting old-attempt text	통과
 F07	F07-03	확인 전인 전송과 다음 초안이 있는 탭을 다시 연다	먼저 읽기 요청만 보내고 재시도에 원래 요청 내용을 그대로 사용한다	vitest	web/src/ChatDraftContinuity.test.tsx	reload reconciles pending by GET only, preserves next draft and exact original resend carrier	통과
+F07	F07-04	게이트웨이 저장 직후 응답을 끊고 대화를 새로고침한다. 같은 요청도 재전송한다.	원래 턴·업무 ID와 조건이 유지되고 같은 ID로 본문을 바꾸면 거절된다.	recorded	docs/reviews/2026-11-25-conversation-work.md	복수 업무 접수와 대화 계속하기	통과
+F07	F07-05	접수된 질문 답변을 같은 내용으로 다시 보낸다.	서버가 기존 답을 인정하고 해당 업무의 실행 회차는 하나다.	recorded	docs/reviews/2026-11-25-conversation-work.md	질문 대기와 재개	통과
 F08	F08-01	다른 탭과 메시지를 주고받을 수 없는 상태에서 앱으로 복귀한다	포커스를 얻으면 서버에서 현재 세션을 다시 확인한다	vitest	web/src/App.test.tsx	rechecks the shared session on focus when cross-tab messaging is unavailable	통과
 F08	F08-02	켜 둔 대화의 스트림이 조용해지거나 연결이 끊긴다	정상 하트비트는 유지하고 끊긴 스트림은 읽기 요청으로만 복구한다	vitest	web/src/Chat.test.tsx	keeps quiet heartbeat connections healthy and recovers a half-open stream by GET only	통과
 F08	F08-03	A가 로그아웃하고 B가 로그인한 뒤 A의 늦은 응답을 받는다	B의 화면에 A의 응답이 표시되지 않는다	vitest	web/src/App.test.tsx	discards A’s late response after logout and B login	통과
+F08	F08-04	서버 도착 전에 복수 업무 전송을 끊고 새로고침한 뒤 ‘동일 요청 다시 확인’을 누른다.	수동 재시도 전 접수는 0건이다. 재전송 본문·ID·견학 조건이 같고 새 업무 묶음은 하나다.	recorded	docs/reviews/2026-11-25-conversation-work.md	복수 업무 접수와 대화 계속하기	통과
 F09	F09-01	한글 조합을 마치는 Enter를 누른다	조합을 완료하고 메시지는 전송하지 않는다	vitest	web/src/PersonalPreview.test.tsx	does not submit an Enter that completes Korean composition	통과
 F09	F09-02	긴 답변 생성 중 이전 문단으로 스크롤한다	읽는 위치가 유지되고 최신 답변으로 이동하는 버튼을 사용할 수 있다	vitest	web/src/Chat.test.tsx	does not pull a reader down for new text and offers an explicit jump to the response	통과
 F09	F09-03	키보드로 메뉴를 건너뛰고 입력 중에 배경 갱신을 받는다	선택한 화면만 현재 페이지로 표시하고 입력 초점이 유지된다	vitest	web/src/App.test.tsx	bypasses long navigation, marks only the destination and leaves draft focus alone on refresh	통과
 F09	F09-04	iOS와 Android에서 소프트 키보드를 열고 화면을 회전한다	작성 중인 문구와 전송 버튼을 볼 수 있고 키보드를 닫으면 대화 위치로 복귀한다	external	docs/testing.md	실물 휴대폰 키보드 및 접근성 검사	부분 확인
+F09	F09-05	복수 업무를 접수한 직후 같은 대화에서 별도의 인사말을 요청한다.	대화가 답변을 받고 두 조사도 회원 타이머에서 완료된다.	recorded	docs/reviews/2026-11-25-conversation-work.md	복수 업무 접수와 대화 계속하기	통과
+F09	F09-06	검색 두 개를 맡기고 새 대화에 초안을 쓰는 동안 완료를 기다린다.	입력 초점과 초안이 유지되고 상단 완료 목록에 각 회차가 한 번씩 표시된다.	recorded	docs/reviews/2026-11-25-conversation-work.md	결과·근거·보고서	통과
 F10	F10-01	사진 업로드 중 다른 텍스트를 보낸다	텍스트가 전송되고 완료되지 않은 첨부 선택은 남는다	vitest	web/src/Media.test.tsx	pending uploads do not block unrelated text; ready snapshots remove only their own selection	통과
 F10	F10-02	업로드 응답을 잃고 다시 확인한다	동일한 업로드 번호와 준비한 바이트를 사용한다	vitest	web/src/Media.test.tsx	lost upload ACK retries the same UUID and exact prepared Blob	통과
 F10	F10-03	업로드를 취소하고 로그아웃한다	취소 기록을 남기고 요청과 임시 미리보기 주소를 해제한다	vitest	web/src/Media.test.tsx	cancel posts a tombstone and account lifetime closes work and object URLs	통과
@@ -45,6 +50,7 @@ F14	F14-03	처리 중인 음성의 세션이 끝난 다음 늦은 결과를 받�
 F15	F15-01	문서를 만들고 다시 편집한 뒤 이력을 연다	같은 문서 ID의 다음 버전과 실제 저장 이력을 표시한다	vitest	web/src/Artifacts.test.tsx	creates a persistent ID, edits its later revision and opens actual history	통과
 F15	F15-02	이전 버전을 열어 둔 상태로 저장해 충돌을 받는다	작성한 초안 전체를 유지하고 현재 저장 내용을 확인할 수 있다	vitest	web/src/Artifacts.test.tsx	a stale revision conflict preserves the complete draft and lets the user inspect current content	통과
 F15	F15-03	외부 읽기를 근거로 저장한 문서에서 원본 연결을 철회한다	해당 읽기의 출처가 사라지고 남은 출처는 일반 텍스트로 표시된다	vitest	web/src/Artifacts.test.tsx	shows exact external read provenance as inert text and removes it after withdrawal	통과
+F15	F15-04	보고서를 만든 뒤 같은 요청을 재전송하고 후속 조건을 추가한 다음 과거 회차를 연다.	저장된 문서 한 건이 원래 회차에서 열리고 존재하지 않는 문서 주소는 404로 응답한다.	recorded	docs/reviews/2026-11-25-conversation-work.md	결과·근거·보고서	통과
 F16	F16-01	온라인으로 사용하다 네트워크 없이 앱을 다시 연다	오프라인에는 공개 앱 껍데기만 열리고 인증 응답은 캐시에 남지 않는다	vitest	web/src/public-shell.test.ts	online navigation never stores a credential-bearing response; offline uses only public shell	통과
 F16	F16-02	공유를 받은 뒤 워커가 재시작하고 두 창이 같은 내용을 연다	한 창만 원문을 가져갈 수 있다	vitest	web/src/share-state.test.ts	committed pending handoff survives module restart, but only one racing window claims plaintext	통과
 F16	F16-03	공유한 글을 열어 수정하고 현재 대화에 넣는다	최신 초안에 한 번 추가되고 자동 전송은 발생하지 않는다	vitest	web/src/IncomingShare.test.tsx	explicit import reveals inert editable text, explicit insertion appends latest draft once and never sends	통과
@@ -67,30 +73,44 @@ F20	F20-03	자동 추출 응답이 불명인 상태에서 서버를 다시 시�
 F21	F21-01	원문 인용을 잊게 한 뒤 같은 원문을 갱신하고 추출을 다시 켠다	잊은 인용이 다시 기억으로 생성되지 않는다	rust	crates/moosuri-store/src/automatic_memory/tests.rs	forgetting_suppresses_same_source_quote_across_reenable_and_new_source_revision	통과
 F21	F21-02	이미 답변의 근거로 사용한 원본을 삭제한다	검색 후보와 이에 의존한 문맥이 먼저 제거된다	rust	crates/moosuri-store/src/conversation_recall/tests.rs	every_search_candidate_and_context_descendant_is_purged_before_source_deletion	통과
 F21	F21-03	연결 해제 시 자료를 유지한 뒤 나중에 삭제한다	해제 상태에서 해당 보관 자료를 삭제할 수 있다	vitest	web/src/SourceConnections.test.tsx	lets a retained disconnected collection be deleted later	통과
+F21	F21-04	보고서의 근거가 된 기억을 수정한 뒤 잊고 원래 회차의 보고서를 다시 연다.	이전·수정 본문 모두 과거 보고서에 나타나지 않고 당시 확인한 건수와 철회 안내가 남는다.	recorded	docs/reviews/2026-11-25-conversation-work.md	결과·근거·보고서	통과
 F22	F22-01	채팅의 근거 표시를 선택한다	답변에서 참조한 동일한 근거 버전을 연다	vitest	web/src/Chat.test.tsx	opens only the exact backend evidence revision from a chat reference	통과
 F22	F22-02	원본의 출처에서 수집 영수증을 연다	해당 영수증 정보가 열리고 내부 체크포인트는 노출하지 않는다	vitest	web/src/SourceConnections.test.tsx	drills down from source provenance to the safe receipt without checkpoints	통과
 F22	F22-03	긴 대화 두 개에 동명이인의 서로 다른 사실을 저장한 뒤 과거 사실을 묻는다	검색 상위 5개 결과의 정답 근거 적중률과 최종 답의 사실 정확도를 별도로 측정한다	recorded	audit/memory-reader/results.md	F22 동명이인 대화 회상	통과
+F22	F22-04	대화와 기억에 서로 다른 자료를 넣고 조건 변경 전후의 결과를 연다.	카드에 실제 조회 건수와 발췌가 표시되고 첫 회차에서 읽은 두 자료도 다시 확인할 수 있다.	recorded	docs/reviews/2026-11-25-conversation-work.md	결과·근거·보고서	통과
 F23	F23-01	수집 배치 일부가 실패한 뒤 체크포인트를 확인한다	영수증과 커서는 성공한 커밋에 대해서만 함께 이동한다	rust	crates/moosuri-store/src/knowledge/tests.rs	batch_receipt_cursor_cas_and_failed_batch_are_atomic	통과
 F23	F23-02	배치 접수와 완료 응답을 잃은 뒤 수집기를 다시 실행한다	원래 본문과 커서를 유지하고 같은 접수 결과를 복구한다	rust	crates/moosuri-connectors/src/work_sessions/tests.rs	local_file_to_custom_ingest_recovers_unknown_batch_and_finish_without_cursor_or_body_drift	통과
 F23	F23-03	생산자가 하트비트와 완료 보고를 차례로 보낸다	자료 커밋과 생존 신호와 생산자 자체 완료 보고가 서로 다른 상태로 표시된다	vitest	web/src/SourceConnections.test.tsx	keeps local commit, heartbeat, and producer completion report distinct	통과
 F24	F24-01	텍스트만 검증된 모델에서 도구를 사용하려 한다	실제 도구 능력 응답을 확인한 뒤에만 사용 가능 상태가 된다	vitest	web/src/ProviderSettings.test.tsx	requires an actual tool-capability response before enabling a verified text model	통과
 F24	F24-02	선택 모델이 요청한 작업을 수행할 수 없는 경우를 연다	해당 모델 설정을 열 수 있고 작업을 성공으로 표시하지 않는다	vitest	web/src/Chat.test.tsx	shows model settings for an operation blocked by the selected model capability	통과
 F24	F24-03	읽기 전용 도구 목록을 조회한다	해당 읽기에 허용되는 도구만 나오고 외부 쓰기와 미등록 도구는 제외된다	rust	crates/moosuri-core/src/tool_policy.rs	read_surfaces_keep_effects_native_routes_and_unknown_tools_out	통과
+F24	F24-04	멈춘 업무에 새 지시를 주고 페이지를 이어 읽은 뒤 같은 진행 요청을 재전송한다.	원래 업무에서 한 번 진행한다. 직접 조작 후 달라진 선택 내용도 반영된다.	recorded	docs/reviews/2026-11-25-conversation-work.md	브라우저 반복 중단과 이어가기	통과
 F25	F25-01	절차 카드에서 연결 상태를 확인하고 저장된 견적 두 개의 비교를 맡긴다	누락된 연결을 표시하고 합성 공급자 실행에서는 카탈로그 메타데이터로 선택한 비교 절차 본문을 읽은 뒤 저장 근거와 정확한 합계를 반환한다	recorded	audit/standard-journey-checks.md	F25 절차 선택	통과
 F25	F25-02	기본 제공되는 공개 절차 묶음을 기여자 검사기로 검증한다	고정한 실제 카탈로그 파일의 모든 묶음이 설치기와 동일한 형식 검사를 통과한다	rust	crates/moosuri-store/src/community_skills/author.rs	author_compatibility_matches_installer_and_curated_pins_remain_exact	통과
 F25	F25-03	기본 절차의 본문·도구·입력·제한을 확인하고 공개 묶음을 제외 원본의 공개 지문과 대조한다	기본 절차 8개의 사용 조건을 확인하고 공개 파일 26개 안에서 제외 원본 전체의 바이트열과 일치하는 부분은 0건이다	recorded	audit/standard-journey-checks.md	F25 공개 절차 출처	통과
 F26	F26-01	독립된 두 입력에서 결과가 채택된 후 새 입력에 절차를 사용한다	서로 다른 최종 영수증으로 학습하고 새 입력의 자료를 읽는다	rust	crates/moosuri-store/src/agent_execution/tests/skills.rs	learned_private_routes_require_independent_adopted_final_receipts_and_bind_fresh_c	통과
 F26	F26-02	일본우편 조회 절차를 학습한 뒤 새 번호를 요청한다	현재 번호의 실제 조회를 수행하고 이전 번호의 결과를 재사용하지 않는다	rust	crates/moosuri-agent/src/tests/learned_parcel.rs	learned_parcel_actual_provider_receipts_promote_then_dispatch_fresh_current_number	통과
 F26	F26-03	학습 근거였던 대화를 삭제하고 절차 목록을 다시 본다	해당 절차는 사용 가능 상태에서 내려가고 무관한 도구 발견 기록은 유지된다	rust	crates/moosuri-store/src/agent_execution/tests/skills.rs	learned_training_thread_deletion_demotes_route_and_preserves_unrelated_discovery	통과
+F26	F26-04	완료된 준비물 카드에서 ‘새 검색어로 다시’를 누르고 ‘기차표’를 입력한다.	같은 기억 범위에서 별도 업무와 새 회차가 생긴다.	recorded	docs/reviews/2026-11-25-conversation-work.md	검증된 검색 절차 재사용	통과
+F26	F26-05	새 기차표 업무를 열어 원래 준비물 조사 결과와 비교한다.	새 기억의 좌석 정보가 표시되고 이전 충전기 발췌가 따라오지 않는다.	recorded	docs/reviews/2026-11-25-conversation-work.md	검증된 검색 절차 재사용	통과
+F26	F26-06	답변 대기·취소 상태 또는 근거가 철회된 업무의 절차를 다시 실행하려 한다.	새 검색이 접수되지 않고 근거 철회 후 카드의 재사용 버튼도 사라진다.	recorded	docs/reviews/2026-11-25-conversation-work.md	검증된 검색 절차 재사용	통과
+F26	F26-07	같은 재사용 요청을 다시 보낸다.	같은 새 업무를 반환한다. 같은 키로 검색어를 바꿔 보내면 충돌한다.	recorded	docs/reviews/2026-11-25-conversation-work.md	검증된 검색 절차 재사용	통과
 F27	F27-01	대화에서 자료를 읽고 계산한 결과를 보고서로 요청한다	실제 읽기 근거와 계산을 사용해 개인 보고서 한 건을 저장한다	rust	crates/moosuri-agent/src/tests/missions.rs	current_chat_compound_request_reads_calculates_and_saves_one_real_private_report	통과
 F27	F27-02	일시정지한 업무의 완료 조건을 수정하다 응답을 잃는다	편집 내용과 요청 번호를 보존해 같은 조건 변경으로 재확인한다	vitest	web/src/Missions.test.tsx	edits paused acceptance without another approval, retaining fields and exact UUID after lost acknowledgement	통과
 F27	F27-03	업무를 맡기고 검토가 필요한 결과를 연다	요청이 저장되고 검토 중인 결과를 완료로 표시하지 않는다	vitest	web/src/Missions.test.tsx	submits an explicit durable request and shows review as incomplete	통과
 F27	F27-04	대화에서 기억 검색을 맡기고 같은 요청을 반복한 뒤 기억을 삭제한다	같은 업무·대화 턴 한 건을 열고 삭제 후 근거 본문은 보이지 않는다	rust	crates/moosuri-store/src/personal_browser/tasks/tests.rs	workflow_research_reads_sources_replays_one_chat_turn_and_withdraws_forgotten_text	통과
 F27	F27-05	이전에 답변 받은 검색어로 대화 조사를 실행한다	실제 원래 질문과 응답을 근거 단계에서 연다	recorded	docs/reviews/2026-11-21-member-workflows.md	자료 조사 실행	통과
 F27	F27-06	조사 실행 응답을 잃은 뒤 화면에서 같은 내용으로 재시도한다	원래 요청 식별자를 재사용해 한 업무 상세로 이동한다	vitest	web/src/PersonalTasks.test.tsx	retries a lost manual research response with the same request identity	통과
+F27	F27-07	대화에서 지난 출장 일정과 기억 속 준비물을 한 문장으로 맡긴다.	원래 메시지 하나에 업무 두 개가 생기고 출장 조건이 수업 일정을 걸러 낸다.	recorded	docs/reviews/2026-11-25-conversation-work.md	복수 업무 접수와 대화 계속하기	통과
+F27	F27-08	‘준비물은 전자기기만’이라고 지시한다.	준비물만 두 번째로 실행되어 2건이 1건으로 줄고 출장 일정의 회차는 그대로다.	recorded	docs/reviews/2026-11-25-conversation-work.md	후속 지시와 회차별 워크로그	통과
+F27	F27-09	조건을 두 번 좁힌 뒤 ‘맡긴 일’에서 두 번째 회차와 원래 대화를 차례로 연다.	목록에는 해당 업무 한 줄이 남는다. 각 회차의 근거와 원래 대화의 카드를 다시 연다.	recorded	docs/reviews/2026-11-25-conversation-work.md	후속 지시와 회차별 워크로그	통과
 F28	F28-01	요청 기록에 저장된 날짜를 확인하고 새 날짜를 작성만 한다	저장한 알림 날짜와 미저장 편집값이 구분된다	vitest	web/src/Artifacts.test.tsx	shows only server saved followup notification dates and keeps unsaved edits separate	통과
 F28	F28-02	소식함에서 약속의 후속 확인을 선택한다	해당 기록의 버전과 날짜 영수증으로 원래 약속을 연다	vitest	web/src/Schedules.test.tsx	opens the actual followup with its pinned revision and date receipt	통과
 F28	F28-03	회신 일부를 받은 기록에 남은 의무를 적고 브리핑을 연 뒤 완료 처리한다	대기 중에는 최신 버전과 남은 의무가 보이고 명시적으로 완료한 뒤 브리핑에서 사라진다	rust	crates/moosuri-store/src/artifacts/tests.rs	honest_briefing_filters_lifecycle_mute_and_snooze_and_safe_exports_are_literal	통과
+F28	F28-04	‘둘 다 어디까지 됐어?’라고 묻는다.	화면에 두 업무의 상태가 뜨며 조회 전후 실행 수와 모델 호출 수가 같다.	recorded	docs/reviews/2026-11-25-conversation-work.md	후속 지시와 회차별 워크로그	통과
+F28	F28-05	답을 기다리는 업무가 둘일 때 ‘그거 멈춰’라고 한 뒤 기억 검색을 선택한다.	선택 전에는 둘 다 대기한다. 선택한 업무만 취소되고 다른 업무는 계속 답을 받을 수 있다.	recorded	docs/reviews/2026-11-25-conversation-work.md	후속 지시와 회차별 워크로그	통과
+F28	F28-06	검색어가 없는 일정 조사와 검색어가 있는 승차권 조사를 같이 맡긴다.	일정 조사에는 질문 번호가 생기고 승차권 조사는 독립적으로 완료된다.	recorded	docs/reviews/2026-11-25-conversation-work.md	질문 대기와 재개	통과
+F28	F28-07	새로고침한 후 대기 카드에 ‘일정’이라고 답한다. 다른 대기 업무에는 대화 입력창으로 답한다.	두 입력 경로 모두 해당 질문이 속한 업무를 재개하고 형제 업무 이력은 유지된다.	recorded	docs/reviews/2026-11-25-conversation-work.md	질문 대기와 재개	통과
 F29	F29-01	현지 시각의 일일 알림을 등록하고 일시정지·재개한다	해석된 시간과 현재 버전을 사용해 같은 알림을 제어한다	vitest	web/src/Schedules.test.tsx	creates interpreted daily local reminders and edits/pauses/resumes/revokes with pinned revisions	통과
 F29	F29-02	주간 알림의 요일을 바꾸고 다시 연다	선택한 요일 집합과 소유자의 시간대가 유지된다	vitest	web/src/Schedules.test.tsx	weekly edits preserve exact weekdays and owning timezone and new rules sort selected weekdays	통과
 F29	F29-03	예약 요청에서 빠진 내용 또는 시각을 다음 답변으로 채운다	앞서 명시한 날짜·시간 필드를 보존하고 누락된 값만 추가한다	rust	crates/moosuri-store/src/schedules/chat/drafts/tests.rs	reminder_followup_missing_body_and_partial_civil_time_keep_exact_supplied_fields	통과
@@ -139,6 +159,8 @@ F41	F41-03	작업 세션 수집 완료 응답을 잃은 뒤 같은 파일로 재
 F42	F42-01	공개 검색 결과를 열고 인용의 종류를 확인한다	검색 발췌문과 실제 페이지 읽기가 구분된다	vitest	web/src/WebEvidence.test.tsx	labels search snippets separately from page reading	통과
 F42	F42-02	일본우편의 표시 이력을 날짜순으로 읽는다	실제 행의 날짜·상태·식별자를 보존하고 제공되지 않은 시간대를 덧붙이지 않는다	rust	crates/moosuri-connectors/src/parcel/history.rs	history_preserves_paired_rows_dates_and_identity_without_inferred_timezone	통과
 F42	F42-03	동의한 실제 일본우편 시험 배송물을 공식 페이지와 대조한다	같은 번호의 공개 표시 행과 결과가 일치하고 지원하지 않는 배송사는 구분된다	external	docs/parcel-tracking.md	실물 시험 배송물의 공식 표시 이력 대조	실환경 대기
+F42	F42-04	브라우저 업무에서 같은 관찰을 반복한다.	다음 추론을 요청하기 전에 원래 업무에 반복 중단 이유가 남는다.	rust	apps/moosuri/src/account_runtime/browser_progress_tests.rs	repeated_identical_observation_pauses_with_resumable_reason_before_another_model_call	통과
+F42	F42-05	제목이 같은 페이지의 본문 또는 읽을 수 있는 문서 선택지를 바꾼다.	내용이나 허용된 선택지가 달라지면 작업을 계속할 수 있다.	recorded	docs/reviews/2026-11-25-conversation-work.md	브라우저 반복 중단과 이어가기	통과
 F43	F43-01	기본 설치에서 차량 조회를 요청한다	사적인 차량 프록시를 기본 연결로 선택하지 않고 미지원 상태를 알린다	deferred	docs/features.md	F43 차량 후속 범위	후속 범위
 F43	F43-02	지리 경로를 요청하지만 설치에 경로 공급자가 없다	경로를 만들었다고 표시하지 않고 필요한 연결을 구분한다	deferred	audit/evaluation-scenarios.tsv	TASK03	후속 범위
 F43	F43-03	일시정지한 Todoist 연결과 미검증 로컬 전사 기능의 상태를 확인한다	일시정지와 미검증을 구분하고 기능 수락 전에는 완료를 주장하지 않는다	deferred	docs/features.md	F43 Todoist·로컬 STT 후속 범위	후속 범위
@@ -188,6 +210,10 @@ F57	F57-03	지출 결과가 불명일 때 서비스를 재시작한다	세대 �
 F58	F58-01	계정 A의 지연된 응답이 계정 B 로그인 뒤 도착한다	B의 대화 화면에 A의 내용이 들어가지 않는다	vitest	web/src/App.test.tsx	discards A’s late response after logout and B login	통과
 F58	F58-02	개인 브라우저를 보던 중 대화나 계정을 바꾼다	이전 화면 픽셀과 대기 중인 응답이 비워진다	vitest	web/src/BrowserWorkspace.test.tsx	purges pixels and pending responses on account/thread changes and auth rejection	통과
 F58	F58-03	소유자별 자료가 있는 저장소를 닫고 다시 연다	재시작 뒤에도 회원 범위와 철회된 세션의 제한이 유지된다	rust	crates/moosuri-store/src/tests.rs	tenant_scope_restriction_revocation_and_durable_reopen	통과
+F58	F58-04	접수 후 회원 권한·호스트 세대를 바꾸거나 다른 볼륨 세대로 원래 업무를 조회한다.	기존 실행 권한이 만료되고 다른 세대는 원래 업무를 열 수 없다.	recorded	docs/reviews/2026-11-25-conversation-work.md	복수 업무 접수와 대화 계속하기	통과
+F58	F58-05	이미 쓴 답변의 질문 번호를 바꾸거나 다른 회원 세션으로 답한다.	오래된 질문에는 충돌을 반환하고 다른 회원은 첫 회원의 업무를 변경할 수 없다.	recorded	docs/reviews/2026-11-25-conversation-work.md	질문 대기와 재개	통과
+F58	F58-06	다른 회원으로 로그인해 첫 회원의 업무 목록과 보고서 주소를 연다.	문서 본문을 받을 수 없고 두 번째 회원의 실행 기록도 늘지 않는다.	recorded	docs/reviews/2026-11-25-conversation-work.md	결과·근거·보고서	통과
+F58	F58-07	서로 다른 브라우저 업무에서 똑같은 내용을 관찰한다.	업무별로 반복 여부를 판정하고 다른 업무의 이전 관찰은 합산하지 않는다.	rust	crates/moosuri-store/src/personal_browser/progress.rs	progress_pauses_only_identical_reads_and_is_isolated_per_run	통과
 F59	F59-01	설치 관리자가 내 모델에서 Anthropic 설정을 열고 저장한다	실제 관리자 연결 편집기를 거쳐 공용 설정 API에 저장한다	vitest	web/src/ProviderSettings.test.tsx	opens the real Anthropic editor from My model and saves through the shared admin endpoint	통과
 F59	F59-02	공식 로그인을 끝내고 모델 목록 화면으로 돌아간다	모델 ID를 수동 입력하지 않아도 해당 연결의 모델을 조회한다	vitest	web/src/ClaudeModelRecovery.test.tsx	automatically checks models after successful official login with no manual model ID	통과
 F59	F59-03	승인된 OpenAI·Anthropic API 또는 공식 구독 계정별로 검증 요청을 실행한다	인증한 계정과 실제 모델·가능 기능을 일치시켜 기록하고 지원하지 않는 기능은 구분한다	external	docs/provider-settings.md	실제 공급자별 로그인·응답·청구 수락	부분 확인
@@ -197,6 +223,7 @@ F60	F60-03	각 로컬 엔진에 설치된 모델을 대상으로 텍스트·도�
 F61	F61-01	같은 데이터 디렉터리에 두 번째 쓰기 프로세스를 시작한다	기존 서비스가 쓰기 잠금을 유지하고 두 번째 프로세스는 잠금을 얻지 못한다	rust	crates/moosuri-store/src/tests.rs	separate_process_cannot_take_writer_lock	통과
 F61	F61-02	WAL에 커밋된 데이터를 다른 프로세스가 사용하는 동안 백업한다	커밋된 내용과 별도 프로세스의 쓰기 잠금이 보존된다	rust	crates/moosuri-store/src/backup/tests.rs	committed_wal_and_distinct_process_writer_lock_are_preserved	통과
 F61	F61-03	무관한 파일이 있는 기존 디렉터리를 새 저장소 위치로 지정한다	해당 디렉터리와 원래 파일을 변경하지 않는다	rust	crates/moosuri-store/src/tests.rs	unrelated_nonempty_directory_is_untouched	통과
+F61	F61-04	접수 후 회원 DB를 닫았다 열고 타이머 두 개를 동시에 호출한다.	각 업무의 실제 읽기는 한 회차이며 다음 호출의 추가 실행은 0건이다.	rust	crates/moosuri-store/src/personal_browser/workflows/conversation/tests.rs	queued_work_survives_restart_and_concurrent_ticks_read_each_child_once	통과
 F62	F62-01	Tailscale 연결·재개 후 개인 경로 연결을 해제한다	사용자 계정과 무관한 기존 경로는 유지된다	rust	apps/moosuri/tests/guided_setup.rs	tailscale_connect_resume_and_disconnect_preserve_accounts_and_unrelated_routes	통과
 F62	F62-02	다른 서비스 포트가 구성된 tailnet에 전용 경로를 추가한다	기존 포트를 보존하고 공개 또는 공유된 원점을 전용 경로로 수락하지 않는다	rust	apps/moosuri/src/installation/setup/tailscale/tests.rs	tailnet_route_preserves_other_ports_and_refuses_public_or_shared_origin	통과
 F62	F62-03	실제 tailnet과 일반 HTTPS에서 각각 로그인하고 OAuth로 돌아온다	앱 인증을 유지하고 선택한 원점으로 복귀하며 비서·볼트 주소가 분리된다	external	audit/evaluation-scenarios.tsv	OPS02	실환경 대기

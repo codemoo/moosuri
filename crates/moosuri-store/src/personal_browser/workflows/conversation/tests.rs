@@ -1182,3 +1182,719 @@ async fn failed_recurring_search_cannot_rollback_independent_chat_work() {
     assert_eq!(current["id"], group["id"]);
     assert_eq!(states(current), ["completed"]);
 }
+
+// ------------------------------------------------------------ combined group reports
+
+async fn make_reported(m: &Member, id: Uuid, items: Value, save: bool) -> Result<Value> {
+    m.store
+        .create_conversation_work_with_report(
+            m.scope.owner,
+            m.scope.user.clone(),
+            1,
+            m.scope.thread.clone(),
+            req(id, "조사하고 보고서도 만들어 줘", items),
+            save,
+        )
+        .await
+        .map(|g| plain(&g))
+}
+async fn ask_in(m: &Member, thread: String, group: &str, request: &str) -> Result<Value> {
+    m.store
+        .request_conversation_group_report(
+            m.scope.owner,
+            m.scope.user.clone(),
+            1,
+            thread,
+            group.to_owned(),
+            request.to_owned(),
+        )
+        .await
+        .map(|g| plain(&g))
+}
+async fn ask(m: &Member, group: &str, request: Uuid) -> Result<Value> {
+    ask_in(m, m.scope.thread.clone(), group, &request.to_string()).await
+}
+async fn open(
+    m: &Member,
+    thread: &str,
+    id: &str,
+) -> Option<moosuri_core::personal_browser::ConversationReport> {
+    let (owner, thread, id) = (m.scope.owner, thread.to_owned(), id.to_owned());
+    m.store
+        .call(move |db| group_report(&db.conn, owner, &thread, &id))
+        .await
+        .unwrap()
+}
+async fn in_state(store: &Store, state: &'static str) -> i64 {
+    store
+        .call(move |db| {
+            Ok(db.conn.query_row(
+                "SELECT count(*) FROM member_conversation_group_reports WHERE state=?1",
+                [state],
+                |r| r.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap()
+}
+fn reported(group: &Value) -> Option<&str> {
+    group.get("group_report_id").and_then(Value::as_str)
+}
+
+#[tokio::test]
+async fn combined_report_waits_for_every_child_then_opens_once_and_drops_withdrawn_text() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    let notebook = remember!(m.store, &m.scope.user, "수첩 색상", "합성 파란 표지");
+    remember!(m.store, &m.scope.user, "잉크 색상", "합성 검은 잉크");
+    let id = Uuid::new_v4();
+    let items = json!([
+        item("수첩", "memory", "수첩"),
+        item("잉크", "memory", "잉크"),
+        item("질문", "memory", "")
+    ]);
+    let created = make_reported(&m, id, items.clone(), true).await.unwrap();
+    assert_eq!(created["report_requested"], true);
+    assert!(reported(&created).is_none());
+    // Exact replay is the same group; a changed flag or payload under the same id conflicts.
+    assert_eq!(
+        make_reported(&m, id, items.clone(), true).await.unwrap(),
+        created
+    );
+    assert!(conflict(make_reported(&m, id, items.clone(), false).await));
+    assert!(conflict(
+        m.store
+            .create_conversation_work(
+                m.scope.owner,
+                m.scope.user.clone(),
+                1,
+                m.scope.thread.clone(),
+                req(id, "조사하고 보고서도 만들어 줘", items.clone())
+            )
+            .await
+    ));
+    let rows = "SELECT count(*) FROM member_conversation_group_reports";
+    assert_eq!(count(&m.store, rows).await, 1);
+    // Two children finish, but one still waits for an answer: no early result.
+    assert_eq!(tick(&m).await, 2);
+    let waiting = page(&m).await["groups"][0].clone();
+    assert_eq!(waiting["report_requested"], true);
+    assert!(reported(&waiting).is_none());
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM member_conversation_group_reports WHERE state='ready'"
+        )
+        .await,
+        0
+    );
+    assert!(
+        open(&m, &m.scope.thread, &Uuid::new_v4().to_string())
+            .await
+            .is_none()
+    );
+    let (asking, question) = (
+        text(&created["tasks"][2]["id"]).to_owned(),
+        text(&created["tasks"][2]["question_id"]).to_owned(),
+    );
+    control(
+        &m,
+        act(
+            &id.to_string(),
+            &asking,
+            1,
+            json!({"action": "answer", "question_id": question, "text": "수첩"}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(reported(&page(&m).await["groups"][0]).is_none());
+    // The timer alone completes the report; nobody has to open anything.
+    assert_eq!(tick(&m).await, 1);
+    let done = page(&m).await["groups"][0].clone();
+    let report = reported(&done).unwrap().to_owned();
+    assert_eq!(done["report_requested"], true);
+    assert!(
+        done["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["report_id"].is_null())
+    );
+    assert_eq!(tick(&m).await, 0);
+    assert_eq!(page(&m).await["groups"][0], done);
+    // Reload: the same single object, with every child's evidence.
+    let Member { root, store, scope } = m;
+    drop(store);
+    let store = scope
+        .owner
+        .open_verified(&root.path().canonicalize().unwrap())
+        .await
+        .unwrap();
+    let m = Member { root, store, scope };
+    let thread = m.scope.thread.clone();
+    let opened = open(&m, &thread, &report).await.unwrap();
+    assert_eq!(opened.id, report);
+    assert_eq!(opened.title, "조사 3건 묶음 보고서");
+    assert_eq!(opened.run_id, text(&done["tasks"][0]["run_id"]));
+    assert!(opened.body.contains("3건 중 3건"));
+    for expected in [
+        "1. 수첩",
+        "2. 잉크",
+        "3. 질문",
+        "읽은 근거",
+        "합성 파란 표지",
+        "합성 검은 잉크",
+    ] {
+        assert!(opened.body.contains(expected), "{expected}");
+    }
+    assert_eq!(page(&m).await["groups"][0], done);
+    // Withdrawing a source removes its text from the combined report but not the other child's.
+    m.store
+        .forget_memory(&m.scope.user, notebook.id, notebook.revision)
+        .await
+        .unwrap();
+    let after = open(&m, &thread, &report).await.unwrap();
+    assert!(!after.body.contains("합성 파란 표지"));
+    assert!(after.body.contains("더 이상 볼 수 없습니다"));
+    assert!(after.body.contains("합성 검은 잉크"));
+    // The report is not copied into plain chat history.
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM chat_output WHERE text LIKE '%합성 검은 잉크%'"
+        )
+        .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn a_report_requested_after_completion_replays_binds_to_one_group_and_keeps_history() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    remember!(m.store, &m.scope.user, "수첩 파란", "파란 표지 수첩");
+    remember!(m.store, &m.scope.user, "수첩 초록", "초록 표지 수첩");
+    let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+    let items = json!([
+        item("파랑", "memory", "수첩"),
+        item("초록", "memory", "수첩")
+    ]);
+    let plain_group = make(&m, a, items.clone()).await;
+    // Groups made without a report carry neither optional field.
+    assert!(plain_group.get("report_requested").is_none() && reported(&plain_group).is_none());
+    let old: ConversationWorkGroup = serde_json::from_value(plain_group.clone()).unwrap();
+    assert!(old.group_report_id.is_none() && !old.report_requested);
+    make(&m, b, items).await;
+    // Early request: pending until both children are read.
+    let first = Uuid::new_v4();
+    let pending = ask(&m, &a.to_string(), first).await.unwrap();
+    assert_eq!(pending["report_requested"], true);
+    assert!(reported(&pending).is_none());
+    assert_eq!(ask(&m, &a.to_string(), first).await.unwrap(), pending);
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM member_conversation_group_reports"
+        )
+        .await,
+        1
+    );
+    assert_eq!(tick(&m).await, 4);
+    let listed = page(&m).await;
+    let ready = listed["groups"][0].clone();
+    let report = reported(&ready).unwrap().to_owned();
+    assert!(reported(&listed["groups"][1]).is_none());
+    // Another request id for a report that exists, and an exact replay, are the same object.
+    assert_eq!(
+        ask(&m, &a.to_string(), Uuid::new_v4()).await.unwrap(),
+        ready
+    );
+    assert_eq!(ask(&m, &a.to_string(), first).await.unwrap(), ready);
+    // One request id never serves two groups, and the id of another group is not a request id.
+    assert!(conflict(ask(&m, &b.to_string(), first).await));
+    assert!(conflict(ask(&m, &b.to_string(), a).await));
+    assert!(matches!(
+        ask(&m, &Uuid::new_v4().to_string(), Uuid::new_v4()).await,
+        Err(StoreError::NotFound)
+    ));
+    assert!(matches!(
+        ask_in(&m, m.scope.thread.clone(), &b.to_string(), "not-a-uuid").await,
+        Err(StoreError::InvalidInput)
+    ));
+    let elsewhere = m
+        .store
+        .create_thread(&m.scope.user, "다른 대화".into())
+        .await
+        .unwrap()
+        .id;
+    assert!(matches!(
+        ask_in(&m, elsewhere, &b.to_string(), &Uuid::new_v4().to_string()).await,
+        Err(StoreError::NotFound)
+    ));
+    // Completed work can be reported at once.
+    let late = ask(&m, &b.to_string(), Uuid::new_v4()).await.unwrap();
+    assert!(reported(&late).is_some() && late["report_requested"] == true);
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM member_conversation_group_reports WHERE state='ready'"
+        )
+        .await,
+        2
+    );
+    // Refining a child later leaves the saved report on the run it was built from.
+    let thread = m.scope.thread.clone();
+    let before = open(&m, &thread, &report).await.unwrap();
+    assert!(!before.body.contains("다시 조사"));
+    let child = &ready["tasks"][0];
+    let first_run = text(&child["run_id"]).to_owned();
+    control(
+        &m,
+        act(
+            &a.to_string(),
+            text(&child["id"]),
+            2,
+            json!({"action": "refine", "text": "파란"}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tick(&m).await, 1);
+    let current = page(&m).await["groups"][0].clone();
+    assert_eq!(current["tasks"][0]["runs"].as_array().unwrap().len(), 2);
+    let revised = reported(&current).unwrap();
+    assert_ne!(revised, report);
+    assert_eq!(current["previous_reports"][0], report);
+    let revised = m
+        .store
+        .conversation_work_report(
+            m.scope.owner,
+            m.scope.user.clone(),
+            Uuid::parse_str(&thread).unwrap(),
+            Uuid::parse_str(revised).unwrap(),
+        )
+        .await
+        .unwrap();
+    let (first_work, sibling) = revised.body.split_once("\n\n2. 초록").unwrap();
+    assert!(!first_work.contains("초록 표지 수첩"));
+    assert!(sibling.contains("초록 표지 수첩"));
+
+    let history = open(&m, &thread, &report).await.unwrap();
+    assert_eq!(history.run_id, first_run);
+    assert!(
+        history
+            .body
+            .contains("다시 조사해 현재 결과와 다를 수 있습니다")
+    );
+    assert!(history.body.contains("초록 표지 수첩"));
+}
+
+#[tokio::test]
+async fn cancelled_or_failed_work_never_becomes_a_successful_report() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    remember!(m.store, &m.scope.user, "수첩 색상", "합성 파란 표지");
+    let state = |s: &'static str| in_state(&m.store, s);
+    // Partial: one child cancelled, the other completes; the report names what it leaves out.
+    let partial = Uuid::new_v4();
+    let two = json!([
+        item("취소될 조사", "memory", "수첩"),
+        item("남는 조사", "memory", "수첩")
+    ]);
+    let created = make_reported(&m, partial, two.clone(), true).await.unwrap();
+    let cancelled = control(
+        &m,
+        act(
+            &partial.to_string(),
+            text(&created["tasks"][0]["id"]),
+            1,
+            json!({"action": "cancel"}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(reported(&cancelled).is_none() && cancelled["report_requested"] == true);
+    assert_eq!(tick(&m).await, 1);
+    let done = page(&m).await["groups"][0].clone();
+    let thread = m.scope.thread.clone();
+    let report = open(&m, &thread, reported(&done).unwrap()).await.unwrap();
+    assert!(report.body.contains("2건 중 1건"));
+    assert!(report.body.contains("취소될 조사: 취소됨"));
+    assert!(report.body.contains("합성 파란 표지"));
+    assert!(!report.body.contains("1. 취소될 조사"));
+    // Everything cancelled: no report, no claim of one, and no later request succeeds.
+    let none = Uuid::new_v4();
+    let created = make_reported(&m, none, two, true).await.unwrap();
+    let mut last = Value::Null;
+    for task in created["tasks"].as_array().unwrap() {
+        last = control(
+            &m,
+            act(
+                &none.to_string(),
+                text(&task["id"]),
+                1,
+                json!({"action": "cancel"}),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(last.get("report_requested").is_none() && reported(&last).is_none());
+    assert_eq!(state("unavailable").await, 1);
+    assert_eq!(page(&m).await["groups"][1], last);
+    assert!(conflict(ask(&m, &none.to_string(), Uuid::new_v4()).await));
+    assert_eq!(tick(&m).await, 0);
+    // Work closed by changed authority is failed, so its report is unavailable as well.
+    let stale = Uuid::new_v4();
+    make_reported(&m, stale, json!([item("권한 전", "memory", "수첩")]), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        m.store
+            .tick_member_workflows(m.scope.owner, 2)
+            .await
+            .unwrap(),
+        0
+    );
+    let failed = page(&m).await["groups"][2].clone();
+    assert_eq!(states(&failed), ["failed"]);
+    assert!(failed.get("report_requested").is_none() && reported(&failed).is_none());
+    assert_eq!(state("unavailable").await, 2);
+    assert_eq!(state("ready").await, 1);
+    assert!(conflict(ask(&m, &stale.to_string(), Uuid::new_v4()).await));
+    assert_eq!(
+        count(&m.store, "SELECT count(*) FROM member_work_runs").await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn combined_reports_stay_inside_their_member_thread_and_authority() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    remember!(m.store, &m.scope.user, "수첩 색상", "합성 파란 표지");
+    let id = Uuid::new_v4();
+    let items = json!([item("조사", "memory", "수첩")]);
+    // Concurrent identical creates are one group and one report request.
+    let (one, two) = tokio::join!(
+        make_reported(&m, id, items.clone(), true),
+        make_reported(&m, id, items.clone(), true)
+    );
+    assert_eq!(one.unwrap(), two.unwrap());
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM member_conversation_group_reports"
+        )
+        .await,
+        1
+    );
+    assert_eq!(tick(&m).await, 1);
+    let group = page(&m).await["groups"][0].clone();
+    let report = reported(&group).unwrap().to_owned();
+    let thread = m.scope.thread.clone();
+    assert!(open(&m, &thread, &report).await.is_some());
+    // Another thread, another generation and another member see nothing.
+    let other_thread = m
+        .store
+        .create_thread(&m.scope.user, "다른 대화".into())
+        .await
+        .unwrap()
+        .id;
+    assert!(open(&m, &other_thread, &report).await.is_none());
+    let mut newer = m.scope.owner;
+    newer.generation += 1;
+    let (t, r) = (thread.clone(), report.clone());
+    assert!(
+        m.store
+            .call(move |db| group_report(&db.conn, newer, &t, &r))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let stranger = member().await;
+    assert!(open(&stranger, &thread, &report).await.is_none());
+    assert!(matches!(
+        ask_in(
+            &stranger,
+            thread.clone(),
+            &id.to_string(),
+            &Uuid::new_v4().to_string()
+        )
+        .await,
+        Err(StoreError::NotFound)
+    ));
+    assert!(
+        page(&stranger).await["groups"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // Revoked authority before the timer: the work fails and no report is built from it.
+    let revoked = Uuid::new_v4();
+    make_reported(
+        &m,
+        revoked,
+        json!([item("권한 변경 전", "memory", "수첩")]),
+        true,
+    )
+    .await
+    .unwrap();
+    m.store
+        .call(|db| {
+            Ok(db
+                .conn
+                .execute("UPDATE accounts SET auth_epoch=auth_epoch+1", [])?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(tick(&m).await, 0);
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM member_conversation_group_reports WHERE state='ready'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &m.store,
+            "SELECT count(*) FROM member_conversation_group_reports WHERE state='unavailable'"
+        )
+        .await,
+        1
+    );
+}
+
+// ------------------------------------------------ departure evidence (dated trips)
+
+const ASK: &str = "지난 출장 출발 시각";
+
+async fn ask_departure(m: &Member, save: bool) -> (Uuid, Value) {
+    let id = Uuid::new_v4();
+    let created = make_reported(m, id, json!([item(ASK, "memory", "출장")]), save)
+        .await
+        .unwrap();
+    assert_eq!(tick(m).await, 1);
+    (id, created)
+}
+async fn summary_of(m: &Member) -> String {
+    text(&page(m).await["groups"][0]["tasks"][0]["summary"]).to_owned()
+}
+
+#[tokio::test]
+async fn two_dated_trips_offer_both_dates_without_picking_then_selection_shows_that_value() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    let user = &m.scope.user;
+    remember!(
+        m.store,
+        user,
+        "제주 출장",
+        "2026-03-04 출장: 출발 08:30, 도착 10:00"
+    );
+    remember!(
+        m.store,
+        user,
+        "부산 출장",
+        "2026-04-10 출장: 출발 오후 2시 15분, 도착 16:40"
+    );
+    let (id, created) = ask_departure(&m, false).await;
+    let summary = summary_of(&m).await;
+    assert!(summary.contains("출발 시각 선택 필요"), "{summary}");
+    assert!(
+        summary.contains("선택 2026-03-04 · 출발 08:30 · 제주 출장"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("선택 2026-04-10 · 출발 14:15 · 부산 출장"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("출발 시각:") && !summary.contains("충돌"),
+        "{summary}"
+    );
+    // Reading is pure: no new search, run or record change.
+    let runs = count(&m.store, "SELECT count(*) FROM member_work_runs").await;
+    for _ in 0..2 {
+        assert_eq!(summary_of(&m).await, summary);
+    }
+    assert_eq!(
+        count(&m.store, "SELECT count(*) FROM member_work_runs").await,
+        runs
+    );
+    // Choosing a date is the existing refine action; only that trip's value remains.
+    let task = text(&created["tasks"][0]["id"]).to_owned();
+    control(
+        &m,
+        act(
+            &id.to_string(),
+            &task,
+            2,
+            json!({"action": "refine", "text": "2026-03-04"}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tick(&m).await, 1);
+    let chosen = summary_of(&m).await;
+    assert!(chosen.contains("출발 시각: 08:30 (2026-03-04)"), "{chosen}");
+    assert!(
+        !chosen.contains("14:15") && !chosen.contains("선택 필요"),
+        "{chosen}"
+    );
+}
+
+#[tokio::test]
+async fn one_trip_with_incompatible_departures_is_a_conflict_in_the_result_and_the_combined_report()
+{
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    let user = &m.scope.user;
+    remember!(m.store, user, "출장 일정표", "2026-03-04 출장 출발 08:30");
+    let late = remember!(m.store, user, "출장 메모", "2026-03-04 출장 출발 09:15");
+    let (_, created) = ask_departure(&m, true).await;
+    let summary = summary_of(&m).await;
+    assert!(summary.contains("출발 시각 충돌 (2026-03-04)"), "{summary}");
+    for part in [
+        "08:30",
+        "09:15",
+        "출장 일정표",
+        "출장 메모",
+        late.id.as_str(),
+    ] {
+        assert!(summary.contains(part), "{part} missing: {summary}");
+    }
+    assert!(
+        !summary.contains("출발 시각:") && !summary.contains("선택 필요"),
+        "{summary}"
+    );
+    let group = page(&m).await["groups"][0].clone();
+    let report = open(&m, &m.scope.thread, reported(&group).unwrap())
+        .await
+        .unwrap();
+    for part in [
+        "출발 시각 충돌",
+        "08:30",
+        "09:15",
+        "출장 일정표",
+        "출장 메모",
+    ] {
+        assert!(
+            report.body.contains(part),
+            "{part} missing: {}",
+            report.body
+        );
+    }
+    assert_eq!(created["tasks"][0]["state"], "queued");
+}
+
+#[tokio::test]
+async fn arrival_times_and_agreeing_departures_are_not_conflicts() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    let user = &m.scope.user;
+    // Same trip: departures agree in different notation; arrivals differ; one record is arrival-only.
+    remember!(
+        m.store,
+        user,
+        "출장 항공",
+        "2026-03-04 출장 08:30 출발, 10:00 도착"
+    );
+    remember!(
+        m.store,
+        user,
+        "출장 메일",
+        "2026-03-04 출장 출발 오전 8시 30분 / 도착 11:20"
+    );
+    remember!(
+        m.store,
+        user,
+        "출장 숙소",
+        "2026-03-04 출장 숙소 도착 21:00"
+    );
+    ask_departure(&m, false).await;
+    let summary = summary_of(&m).await;
+    assert!(
+        summary.contains("출발 시각: 08:30 (2026-03-04)"),
+        "{summary}"
+    );
+    for arrival in ["10:00", "11:20", "21:00"] {
+        assert!(
+            !summary.contains(&format!("출발 {arrival}"))
+                && !summary.contains(&format!("{arrival} /")),
+            "{summary}"
+        );
+    }
+    assert!(
+        !summary.contains("충돌") && !summary.contains("선택 필요"),
+        "{summary}"
+    );
+    // A question that does not ask for a departure gets no departure analysis at all.
+    let plain_id = Uuid::new_v4();
+    make(&m, plain_id, json!([item("출장 조사", "memory", "출장")])).await;
+    assert_eq!(tick(&m).await, 1);
+    let listed = page(&m).await;
+    let plain_summary = text(&listed["groups"][1]["tasks"][0]["summary"]);
+    assert!(!plain_summary.contains("출발 시각"), "{plain_summary}");
+}
+
+#[tokio::test]
+async fn editing_or_forgetting_an_original_never_reveals_its_old_departure() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let m = member().await;
+    let user = &m.scope.user;
+    let first = remember!(m.store, user, "출장 일정표", "2026-03-04 출장 출발 08:30");
+    let second = remember!(m.store, user, "출장 메모", "2026-03-04 출장 출발 09:15");
+    let (_, _) = ask_departure(&m, true).await;
+    assert!(summary_of(&m).await.contains("출발 시각 충돌"));
+    // Edit the first original: its old value is gone from the list and from the combined report.
+    m.store
+        .correct_memory(
+            user,
+            first.id.clone(),
+            first.revision,
+            Uuid::new_v4().to_string(),
+            moosuri_core::MemoryDraft {
+                subject: "출장 일정표".into(),
+                text: "2026-03-04 출장 일정 변경됨".into(),
+                speaker: None,
+                evidence: vec![],
+                valid_from: None,
+                valid_until: None,
+            },
+        )
+        .await
+        .unwrap();
+    let edited = summary_of(&m).await;
+    assert!(
+        !edited.contains("08:30") && !edited.contains("충돌"),
+        "{edited}"
+    );
+    assert!(edited.contains("일부 원본이 변경되었거나"), "{edited}");
+    let group = page(&m).await["groups"][0].clone();
+    let report = open(&m, &m.scope.thread, reported(&group).unwrap())
+        .await
+        .unwrap();
+    assert!(!report.body.contains("08:30"), "{}", report.body);
+    // Forget the other one too: no departure value remains anywhere on reopen.
+    m.store
+        .forget_memory(user, second.id, second.revision)
+        .await
+        .unwrap();
+    let listed = serde_json::to_string(&page(&m).await).unwrap();
+    assert!(
+        !listed.contains("08:30") && !listed.contains("09:15"),
+        "{listed}"
+    );
+    let report = open(&m, &m.scope.thread, reported(&group).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        !report.body.contains("08:30") && !report.body.contains("09:15"),
+        "{}",
+        report.body
+    );
+}

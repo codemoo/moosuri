@@ -1,4 +1,5 @@
 //! Fixed-origin Google Calendar. IO is not authority; caller must persist dispatch first.
+pub mod member;
 use crate::gmail::{
     GmailError, SecretString,
     transport::{Body, Transport},
@@ -41,6 +42,12 @@ impl CalendarClient {
         Self {
             transport: Transport::google(),
         }
+    }
+    /// Member-local egress: loopback CONNECT proxy to the fixed Calendar origin only.
+    pub fn google_proxy(address: std::net::SocketAddr) -> Result<Self, GmailError> {
+        Ok(Self {
+            transport: Transport::google_calendar_proxy(address)?,
+        })
     }
     #[cfg(feature = "test-fixtures")]
     #[doc(hidden)]

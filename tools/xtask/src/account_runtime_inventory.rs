@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=92).contains(&schema),
+        (81..=100).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -86,6 +86,14 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 90 => 213,
                 91 => 216,
                 92 => 223,
+                93 => 227,
+                94 => 229,
+                95 => 230,
+                96 => 232,
+                97 => 235,
+                98 => 237,
+                99 => 239,
+                100 => 241,
 
                 _ => unreachable!(),
             },
@@ -480,7 +488,17 @@ fn check_ciphertext_registry(c: &Connection, manifest: &Value, artifacts: &Value
                 .ok_or("invalid inventory schema")?;
             if schema < since {
                 ensure(
-                    tables.iter().all(|t| t["name"] != name),
+                    tables.iter().all(|t| {
+                        t["name"] != name
+                            || (binding["new_columns"] == true
+                                && binding["columns"].as_array().is_some_and(|columns| {
+                                    columns.iter().all(|v| {
+                                        t["columns"]
+                                            .as_array()
+                                            .is_some_and(|present| !present.contains(v))
+                                    })
+                                }))
+                    }),
                     "ciphertext table predates declared schema",
                 )?;
                 continue;
@@ -588,9 +606,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81 through 92")?
+                        .ok_or("--schema requires 81 through 100")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81 through 92")?,
+                        .map_err(|_| "--schema requires 81 through 100")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -601,7 +619,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81..92] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81..100] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }

@@ -10,13 +10,20 @@ const BASE: &str = "/api/v1/personal/google";
 const TTL: u64 = 600;
 const AAD: &[u8] = b"moosuri/personal/google/gmail-readonly/callback/v1";
 // Positions are persisted in short-lived sealed callback envelopes. Append only.
-const WORKSPACE_SERVICES: [&str; 4] = ["drive", "docs", "slides", "sheets"];
+const CONSENT_SERVICES: [&str; 6] = [
+    "drive",
+    "docs",
+    "slides",
+    "sheets",
+    "calendar",
+    "mail-write",
+];
 const WORKSPACE_STATUS: &str = "/api/v1/personal/google/workspace";
 
 fn service_for_path(path: &str) -> Option<&'static str> {
     let relative = path.strip_prefix(BASE)?.strip_prefix('/')?;
     let name = relative.split('/').next()?;
-    WORKSPACE_SERVICES
+    CONSENT_SERVICES
         .iter()
         .copied()
         .find(|service| *service == name)
@@ -32,13 +39,33 @@ pub(super) fn routes() -> Router<Gateway> {
         .route("/api/v1/personal/google/inbox", post(member))
         .route("/api/v1/personal/google/history", post(member))
         .route("/api/v1/personal/google/disconnect", post(member));
-    for service in WORKSPACE_SERVICES {
+    for service in CONSENT_SERVICES {
         let base = format!("{BASE}/{service}");
+        if service == "mail-write" {
+            router = router.route(&format!("{base}/status"), get(member));
+            for action in ["start", "complete", "disconnect"] {
+                router = router.route(&format!("{base}/{action}"), post(member));
+            }
+            continue;
+        }
+        if service == "calendar" {
+            router = router.route(&format!("{base}/status"), get(member));
+            for action in ["prepare", "apply", "start", "complete", "disconnect"] {
+                router = router.route(&format!("{base}/{action}"), post(member));
+            }
+            continue;
+        }
         for action in ["start", "complete", "read", "disconnect"] {
             router = router.route(&format!("{base}/{action}"), post(member));
         }
     }
-    router.layer(DefaultBodyLimit::max(4096))
+    let mut mail = Router::new();
+    for action in crate::personal_google::mail_work::ACTIONS {
+        mail = mail.route(&format!("{BASE}/mail-work/{action}"), post(member));
+    }
+    router
+        .layer(DefaultBodyLimit::max(4096))
+        .merge(mail.layer(DefaultBodyLimit::max(32 * 1024)))
 }
 fn cipher(g: &Gateway) -> Result<LessSafeKey, StatusCode> {
     let master = hmac::Key::new(hmac::HMAC_SHA256, &g.key);
@@ -76,7 +103,7 @@ fn seal(
     data.extend_from_slice(state.as_bytes());
     data.extend_from_slice(&a.epoch.to_be_bytes());
     if let Some(service) = service {
-        let index = WORKSPACE_SERVICES
+        let index = CONSENT_SERVICES
             .iter()
             .position(|name| *name == service)
             .ok_or(StatusCode::BAD_REQUEST)?;
@@ -129,7 +156,7 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String, Option<&'static str>
     let service = plain
         .get(136)
         .map(|index| {
-            WORKSPACE_SERVICES
+            CONSENT_SERVICES
                 .get(usize::from(*index))
                 .copied()
                 .ok_or(StatusCode::BAD_REQUEST)
@@ -165,8 +192,17 @@ fn consent_url(
         authorization_url: String,
         flow_id: String,
     }
-    let result: Start =
-        serde_json::from_slice(bytes).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let write = service == Some("mail-write");
+    let mut reply: Value = serde_json::from_slice(bytes).map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if write {
+        if reply["state"] == "needs_connection" {
+            return Ok(response(StatusCode::OK, bytes.to_vec()));
+        }
+        if reply.as_object_mut().and_then(|o| o.remove("state")) != Some(json!("authorization")) {
+            return Err(StatusCode::BAD_GATEWAY);
+        }
+    }
+    let result: Start = serde_json::from_value(reply).map_err(|_| StatusCode::BAD_GATEWAY)?;
     let mut url =
         url::Url::parse(&result.authorization_url).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     // The member's typed projection verifies Google, PKCE and the exact scope.
@@ -182,8 +218,8 @@ fn consent_url(
     url.query_pairs_mut().clear().extend_pairs(fields);
     Ok(response(
         StatusCode::OK,
-        json!({"authorization_url":url.as_str(),"flow_id":result.flow_id})
-            .to_string()
+        (if write {json!({"state":"authorization","authorization_url":url.as_str(),"flow_id":result.flow_id})}
+          else {json!({"authorization_url":url.as_str(),"flow_id":result.flow_id})}).to_string()
             .into_bytes(),
     ))
 }

@@ -1,0 +1,94 @@
+{
+  "format": 1,
+  "schema": 93,
+  "base_schema": 92,
+  "migrations": [
+    {
+      "name": "0093_conversation_group_reports.sql",
+      "sha256": "5efd2076afe995371abe0d19343e8130415f5f97f43740d2c4840b13971dfd18"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_conversation_exclusions",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,p.account_id,p.tenant_id FROM member_conversation_exclusions x JOIN member_conversation_tasks p ON p.id=x.task_id",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "task_id",
+        "word"
+      ],
+      "sql_sha256": "ce2eb12cdc58b69df11603fbbc47d792d5c70006f6cf70bdf2488b26a2f83063"
+    },
+    {
+      "name": "member_conversation_group_report_items",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,p.account_id,p.tenant_id FROM member_conversation_group_report_items x JOIN member_conversation_group_reports p ON p.id=x.report_id",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "report_id",
+        "task_id",
+        "run_id",
+        "position"
+      ],
+      "sql_sha256": "751e2e4f31a8aac34c65e5db9954d7c8aaa8714d8614e054c003193521a7bd91"
+    },
+    {
+      "name": "member_conversation_group_reports",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_conversation_group_reports",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "id",
+        "group_id",
+        "request_id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "state",
+        "host_epoch",
+        "auth_epoch",
+        "superseded",
+        "title",
+        "created_at",
+        "finalized_at"
+      ],
+      "sql_sha256": "e961862503a2cc968f3d5f85e114a1485447c2e63f4492a260f81c9e70b3d923"
+    },
+    {
+      "name": "member_conversation_interpretations",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_conversation_interpretations",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "request_id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "host_epoch",
+        "auth_epoch",
+        "fingerprint",
+        "plan",
+        "outcome"
+      ],
+      "sql_sha256": "5b915a6b32f13cea00d86f309b75865ab6e7e9e4ea67b69a848e4fc93875ed09"
+    }
+  ],
+  "schema_sha256": "f10f89587fb7ffcefd1eb78af27539ccff238d4cd7b5a8ae1653370b686d454f"
+}

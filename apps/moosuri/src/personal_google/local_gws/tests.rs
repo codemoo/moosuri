@@ -326,6 +326,126 @@ esac
     assert_eq!(inbox.result.messages[1].subject, "First line");
 }
 
+#[tokio::test]
+async fn important_page_is_provider_selected_label_verified_and_identity_bound() {
+    use crate::personal_google::BrokerReply;
+
+    let get = |id: &str| {
+        format!(
+            r#"'gmail users messages get --params {{"fields":"id,labelIds,internalDate,payload(headers)","format":"metadata","id":"{id}","metadataHeaders":["Subject","From","Date"],"userId":"me"}} --format json')"#
+        )
+    };
+    // Only the label-filtered list query is served: the ordinary INBOX query exits non-zero, so a page
+    // full of newer ordinary mail can never be what this operation returns.
+    let script = format!(
+        r#"
+[ "$GOOGLE_WORKSPACE_CLI_TOKEN" = 'fixture-access' ]
+case "$*" in
+  'gmail users messages list --params {{"fields":"messages(id),nextPageToken","includeSpamTrash":false,"labelIds":["INBOX","IMPORTANT"],"maxResults":5,"userId":"me"}} --format json')
+    printf '%s\n' '{{"messages":[{{"id":"aa"}},{{"id":"bb"}},{{"id":"cc"}}],"nextPageToken":"more"}}' ;;
+  {aa}
+    printf '%s\n' '{{"id":"aa","labelIds":["INBOX","IMPORTANT"],"internalDate":"1000","payload":{{"headers":[{{"name":"Subject","value":"Important one"}}]}}}}' ;;
+  {bb}
+    printf '%s\n' '{{"id":"bb","labelIds":["INBOX"],"internalDate":"3000","payload":{{"headers":[]}}}}' ;;
+  {cc}
+    printf '%s\n' '{{"id":"cc","labelIds":["CATEGORY_UPDATES","IMPORTANT","INBOX"],"internalDate":"2000","payload":{{"headers":[]}}}}' ;;
+  *) exit 1 ;;
+esac
+"#,
+        aa = get("aa"),
+        bb = get("bb"),
+        cc = get("cc"),
+    );
+    let gws = adapter(GmailClient::google(), &script);
+    let owner = owner();
+    let claim_owner = Owner {
+        account_id: owner.account,
+        tenant_id: owner.tenant,
+        volume_id: owner.volume,
+        generation: owner.generation as i64,
+        peer_uid: unsafe { libc::geteuid() },
+    };
+    let token = secret("fixture-access");
+    let identity = Identity {
+        mailbox: EMAIL.into(),
+        subject: None,
+    };
+    let receipt = gws
+        .bind(
+            claim_owner,
+            "access",
+            &identity,
+            &token,
+            now().ok().unwrap() + 60,
+        )
+        .ok()
+        .unwrap();
+    async fn call(
+        gws: &LocalGws,
+        owner: VolumeOwner,
+        token: &SecretString,
+        receipt: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, Failure> {
+        gws.raw(
+            owner,
+            Uuid::new_v4(),
+            Some(gws.revision),
+            Operation::ImportantInboxPage {
+                access_token: Secret(token),
+                access_binding: receipt,
+            },
+        )
+        .await
+    }
+
+    let page: BrokerReply<ImportantInbox> =
+        decode(&call(&gws, owner, &token, &receipt).await.ok().unwrap()).unwrap();
+    assert_eq!(page.result.scope, IMPORTANT_SCOPE);
+    assert_eq!(page.result.mailbox, EMAIL);
+    // "bb" lost its IMPORTANT label between list and get: dropped, never reported as important.
+    assert_eq!(
+        page.result
+            .messages
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        ["cc", "aa"]
+    );
+    assert!(page.result.has_more);
+    assert!(
+        page.result
+            .into_inbox()
+            .is_some_and(|i| i.valid() && i.messages.len() <= PAGE_SIZE)
+    );
+
+    // The signed receipt must belong to this token and identity before anything is spawned.
+    assert!(
+        call(&gws, owner, &secret("another-access"), &receipt)
+            .await
+            .is_err()
+    );
+    assert!(call(&gws, owner, &token, "garbage").await.is_err());
+    // A calendar-bound adapter can never serve a Gmail read.
+    let calendar = adapter_for(
+        MemberGoogleService::Calendar,
+        GmailClient::google(),
+        None,
+        "exit 1",
+    );
+    let refused = calendar
+        .raw(
+            owner,
+            Uuid::new_v4(),
+            Some(calendar.revision),
+            Operation::ImportantInboxPage {
+                access_token: Secret(&token),
+                access_binding: &receipt,
+            },
+        )
+        .await;
+    assert!(refused.is_err());
+}
+
 #[cfg(feature = "test-fixtures")]
 struct TcpListenerFixture {
     address: SocketAddr,

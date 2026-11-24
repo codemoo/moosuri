@@ -2672,6 +2672,7 @@ name = "moosuri-core"
 version = "0.1.0-dev.30"
 dependencies = [
  "serde",
+ "serde_json",
  "ts-rs",
 ]
 

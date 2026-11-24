@@ -205,8 +205,8 @@ fn view(
         result,
     })
 }
-pub(super) fn withdraw(c: &Connection, u: &UserContext) -> Result<()> {
-    c.execute("UPDATE member_google_thread_reads SET phase='withdrawn',cipher=NULL,updated_at=unixepoch() WHERE tenant_id=?1 AND account_id=?2 AND phase!='withdrawn'",params![u.tenant.0,u.account.id])?;
+pub(super) fn withdraw(c: &Connection, tenant: &str, account: &str) -> Result<()> {
+    c.execute("UPDATE member_google_thread_reads SET phase='withdrawn',cipher=NULL,updated_at=unixepoch() WHERE tenant_id=?1 AND account_id=?2 AND phase!='withdrawn'",params![tenant,account])?;
     Ok(())
 }
 pub(super) fn connected(
@@ -326,10 +326,30 @@ impl Store {
         thread: Uuid,
     ) -> Result<Vec<MemberGoogleThreadRead>> {
         let u = u.clone();
-        self.call(move|db|{
-            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;let u=authority(&tx,&u,o)?;crate::chat::thread_exists(&tx,&u,&thread.to_string())?;
-            let ids=tx.prepare("SELECT request_id FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND thread_id=?3 ORDER BY created_at DESC,request_id DESC LIMIT 20")?.query_map(params![u.tenant.0,u.account.id,thread.to_string()],|r|parse_id(r.get(0)?))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            let values=ids.into_iter().map(|id|view(&tx,&db.provider_key,&u,o,id)).collect::<Result<Vec<_>>>()?;tx.commit()?;Ok(values)
-        }).await
+        self.call(move |db| {
+            let tx = db
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let values = member_thread_read_history(&tx, &db.provider_key, &u, o, thread)?;
+            tx.commit()?;
+            Ok(values)
+        })
+        .await
     }
+}
+
+pub(crate) fn member_thread_read_history(
+    c: &Connection,
+    key: &[u8; 32],
+    user: &UserContext,
+    owner: VolumeOwner,
+    thread: Uuid,
+) -> Result<Vec<MemberGoogleThreadRead>> {
+    let user = authority(c, user, owner)?;
+    crate::chat::thread_exists(c, &user, &thread.to_string())?;
+    let ids = c.prepare("SELECT request_id FROM member_google_thread_reads WHERE tenant_id=?1 AND account_id=?2 AND thread_id=?3 ORDER BY created_at DESC,request_id DESC LIMIT 20")?
+        .query_map(params![user.tenant.0,user.account.id,thread.to_string()], |r| parse_id(r.get(0)?))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    ids.into_iter()
+        .map(|id| view(c, key, &user, owner, id))
+        .collect()
 }

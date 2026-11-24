@@ -48,14 +48,27 @@ function creation(v: unknown): PendingThreadCreation | null {
         ["sending", "uncertain"].includes(String(v.status))
         ? { request_id: v.request_id, title: v.title, status: "uncertain" } : null;
 }
+/** An ordinary shopping / application request from the composer; `request_id` of the carrier is the outcome id. */
+export type MemberPendingRequest = { kind: "research"; outcome: "shopping" | "application"; criteria: { deadline?: string; budget_minor?: number; currency?: string; terms?: string[] } };
+/** PendingSend plus the member request (ChatPanel.tsx's type may later absorb `member_request` directly). */
+export type MemberPendingSend = PendingSend & { member_request?: MemberPendingRequest };
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
-function pending(v: unknown): PendingSend | null {
-    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "work_request", "follow_up_run_id", "status"]) ||
+function pending(v: unknown): MemberPendingSend | null {
+    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "work_request", "member_request", "follow_up_run_id", "interpret_group", "monitor_zone", "status"]) ||
         !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain", "rejected", "inbox"].includes(String(v.status)))
         return null;
     if (v.status === "inbox")
         return exact(v, ["request_id", "text", "status"]) ? { request_id: v.request_id, text: v.text, status: "inbox" } : null;
-    const out: PendingSend = { request_id: v.request_id, text: v.text, status: v.status === "rejected" ? "rejected" : "uncertain" };
+    const out: MemberPendingSend = { request_id: v.request_id, text: v.text, status: v.status === "rejected" ? "rejected" : "uncertain" };
+    if (v.monitor_zone !== undefined) {
+        if (typeof v.monitor_zone !== "string" || !(zone(v.monitor_zone) || /^[+-](?:0[0-9]|1[0-4]):[0-5][0-9]$/.test(v.monitor_zone)) ||
+            !exact(v, ["request_id", "text", "status", "monitor_zone"])) return null;
+        out.monitor_zone = v.monitor_zone;
+    }
+    if (v.interpret_group !== undefined) {
+        if (!uuid(v.interpret_group) || !exact(v, ["request_id", "text", "status", "interpret_group"])) return null;
+        out.interpret_group = v.interpret_group;
+    }
     if (v.follow_up_run_id !== undefined) {
         if (!uuid(v.follow_up_run_id) || !exact(v, ["request_id", "text", "status", "follow_up_run_id"])) return null;
         out.follow_up_run_id = v.follow_up_run_id;
@@ -65,6 +78,30 @@ function pending(v: unknown): PendingSend | null {
         if (!exact(v, ["request_id","text","status","research_request"]) || !object(r) || !exact(r,["scope","query"]) ||
             (r.scope !== "memory" && r.scope !== "conversation") || typeof r.query !== "string" || !r.query.trim() || bytes(r.query)>128) return null;
         out.research_request={scope:r.scope,query:r.query};
+    }
+    if (v.member_request !== undefined) {
+        const r = v.member_request;
+        if (!exact(v, ["request_id", "text", "status", "member_request"]) || !object(r) || !exact(r, ["kind", "outcome", "criteria"]) ||
+            r.kind !== "research" || (r.outcome !== "shopping" && r.outcome !== "application") || !object(r.criteria) ||
+            !exact(r.criteria, ["deadline", "budget_minor", "currency", "terms"])) return null;
+        const c = r.criteria, criteria: MemberPendingRequest["criteria"] = {};
+        if (c.deadline !== undefined) {
+            if (typeof c.deadline !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(c.deadline)) return null;
+            criteria.deadline = c.deadline;
+        }
+        if (c.budget_minor !== undefined) {
+            if (typeof c.budget_minor !== "number" || !Number.isSafeInteger(c.budget_minor) || c.budget_minor <= 0) return null;
+            criteria.budget_minor = c.budget_minor;
+        }
+        if (c.currency !== undefined) {
+            if (typeof c.currency !== "string" || !/^[A-Z]{3}$/.test(c.currency)) return null;
+            criteria.currency = c.currency;
+        }
+        if (c.terms !== undefined) {
+            if (!Array.isArray(c.terms) || c.terms.length > 6 || !c.terms.every((t): t is string => typeof t === "string" && !!t.trim() && bytes(t) <= 128)) return null;
+            criteria.terms = c.terms.slice() as string[];
+        }
+        out.member_request = { kind: "research", outcome: r.outcome as "shopping" | "application", criteria };
     }
     if (v.work_request !== undefined) {
         const w = v.work_request;

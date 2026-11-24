@@ -107,6 +107,20 @@ python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py /absolute/path/to
 python3 deployment/kiri/linux-vm-smoke/member-web-fullstack.py /absolute/path/to/moosuri --conversation-work --channel webkit
 ```
 
+## Chat work
+
+Build the member web assets first, then build the Linux binary with `cargo build --locked -p moosuri --features test-fixtures`. Run `member-web-fullstack.py /path/to/moosuri --channel chromium` with one of the following options. Each invocation provisions fresh members and a private gateway. For WebKit use `--channel webkit`.
+
+| Options | Verified path |
+| --- | --- |
+| `--semantic-work` or `--semantic-work --claude` | Everyday research, combined report, quoted evidence, local watches and briefs |
+| `--supplemental-work` or `--conversation-work` | Preferences, separate tasks and their follow-ups, recovery and source withdrawal |
+| `--research-work` or `--research-journey` | Shopping, applications, actual source reads, mobile navigation and manual browser handoff with a synthetic broker |
+| `--brief-work`, `--public-watch` or `--public-watch-read` | Recurring requests from chat, connection requirements, check history and stop |
+| `--claude` or `--short-corrections` | Ten real Claude turns including three game follow-ups, or three synthetic correction turns |
+
+The real model runs require a logged-in first-party Claude CLI. For Gmail and Calendar the Linux Rust route suites use isolated provider doubles and check returned identifiers, current grant, final approval, cancellation and recovery. [Scenario mapping](../../../docs/reviews/2026-11-25-member-work-from-chat.md)
+
 ## Observed result, 2026-11-19 KST
 
 | Check | Observed result |

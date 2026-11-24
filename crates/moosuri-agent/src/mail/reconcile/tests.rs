@@ -347,7 +347,7 @@ async fn actual_service_candidates_and_incomplete_search_never_become_sent() {
         *state.candidate_raw.lock().unwrap() =
             altered.map(|raw| encode_fixture_raw(raw.as_bytes()));
 
-        mail.dispatch(d, &CancellationToken::new()).await;
+        mail.dispatch(d, &CancellationToken::new(), None).await;
         let row = mail
             .check_unknown(&user, a.id, &CancellationToken::new())
             .await
@@ -424,7 +424,7 @@ async fn actual_service_discards_a_full_candidate_that_arrives_after_disconnect(
         mail.client = GmailClient::synthetic_loopback(addr).unwrap();
         mail.oauth = Some(oauth());
         let d = store.next_mail_dispatch().await.unwrap().unwrap();
-        mail.dispatch(d, &CancellationToken::new()).await;
+        mail.dispatch(d, &CancellationToken::new(), None).await;
         let check = tokio::spawn({
             let mail = mail.clone();
             let user = user.clone();

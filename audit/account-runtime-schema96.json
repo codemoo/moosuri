@@ -1,0 +1,132 @@
+{
+  "format": 1,
+  "schema": 96,
+  "base_schema": 95,
+  "migrations": [
+    {
+      "name": "0096_member_calendar.sql",
+      "sha256": "3f43f58b69eba051cc7396e5fe92d2503c2deaf0b81d6ac8d804baab15204751"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_calendar_actions",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_calendar_actions",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "request_id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "session_digest",
+        "app_revision",
+        "connection_id",
+        "connection_epoch",
+        "kind",
+        "event_id",
+        "before_etag",
+        "digest",
+        "state",
+        "confirmed_by",
+        "provider_etag",
+        "receipt",
+        "error",
+        "payload",
+        "event",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "sql_sha256": "666ce713fae75bce37c58d9e211568eae802a05f8bfa8da90bbe9731fcb41b4b"
+    },
+    {
+      "name": "member_calendar_candidates",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_calendar_candidates",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "candidate_ref",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "session_digest",
+        "app_revision",
+        "connection_id",
+        "connection_epoch",
+        "credential_version",
+        "event_id",
+        "etag",
+        "created_at",
+        "expires_at",
+        "consumed_by"
+      ],
+      "sql_sha256": "1fe16d711f31f9427155f4fc3a14878c419d1ea036476327df557625aa9a7f4c"
+    }
+  ],
+  "updated_tables": [
+    {
+      "name": "member_google_grants",
+      "kind": "table",
+      "sql_sha256": "51820f4b36b07ccc1e2ff42e37b6eba9b819ff5d4f9a386cb8345038ae95d91e",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_grants",
+      "key_transition": "Encrypted tokens and signed receipts bind each member, service, volume, generation and OAuth app. Reauthorize on migration or key change. Exclude from knowledge archives.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "app_revision",
+        "app_version",
+        "connection_id",
+        "epoch",
+        "credential_version",
+        "auth_epoch",
+        "consent_digest",
+        "mailbox",
+        "status",
+        "cipher",
+        "expires_at",
+        "refresh_nonce",
+        "refresh_request_id",
+        "refresh_phase",
+        "service"
+      ]
+    },
+    {
+      "name": "member_google_oauth",
+      "kind": "table",
+      "sql_sha256": "1df8609fb25d5fdf2e2c0edeb4503adc15c106f43a4e9e7e79520731ecb5dc8b",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_google_oauth",
+      "key_transition": "Expire incomplete consent and captured callbacks on cutover. Obtain fresh consent in the destination session.",
+      "verification": "Exact schema; row count; unique existing owner; declared FK integrity and cross-owner FK check",
+      "on_failure": "Stop dry run; quarantine unresolved ownership, never infer owner from email or table name.",
+      "columns": [
+        "state_hash",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "app_revision",
+        "app_version",
+        "epoch",
+        "service"
+      ]
+    }
+  ],
+  "schema_sha256": "70ef7feeba43f737d18239b4fda79dd58405659e5e70be1d893f7276199bf9a6"
+}

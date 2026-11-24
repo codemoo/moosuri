@@ -1,4 +1,5 @@
 //! Private member browser responses. Only the takeover response carries a controller capability.
+pub mod research_outcomes;
 use serde::{Deserialize, Serialize};
 mod conversation;
 pub use conversation::*;

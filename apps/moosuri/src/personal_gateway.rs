@@ -333,7 +333,7 @@ impl Gateway {
             path.starts_with("/api/v1/threads/") && path.split('/').nth(5) == Some("browser");
         let timeout = if browser {
             if path.ends_with("/frame") { 8 } else { 85 }
-        } else if path.ends_with("/text-preview") {
+        } else if path.ends_with("/text-preview") || path.ends_with("/work-interpret") {
             85
         } else if path.starts_with("/api/v1/personal/google") {
             75
@@ -376,7 +376,12 @@ impl Gateway {
                 req = req.header(header::COOKIE, format!("{SESSION}={token}"));
                 if browser
                     || path.ends_with("/text-preview")
+                    || path.ends_with("/work-interpret")
+                    || path.starts_with("/api/v1/personal/tasks/briefs")
+                    || path.starts_with("/api/v1/personal/tasks/public-watches")
+                    || path.starts_with("/api/v1/personal/tasks/monitors")
                     || path.starts_with("/api/v1/personal/tasks/workflows")
+                    || path.starts_with("/api/v1/personal/tasks/research-outcomes/")
                     || path.starts_with("/api/v1/personal/tasks/conversations/")
                 {
                     req = req.header(
@@ -426,6 +431,7 @@ enum Endpoint {
     PreviewInfo,
     TextPreview(Uuid),
     TextFollowUp(Uuid),
+    WorkInterpret(Uuid),
     Thread(Uuid),
     History(Uuid, Option<i64>),
 }
@@ -446,15 +452,21 @@ impl Endpoint {
                 if let Some(raw) = tail
                     .strip_suffix("/text-preview")
                     .or_else(|| tail.strip_suffix("/text-follow-ups"))
+                    .or_else(|| tail.strip_suffix("/work-interpret"))
                 {
                     let id = Uuid::parse_str(raw)
                         .ok()
                         .filter(|id| !id.is_nil() && id.to_string() == raw)
                         .ok_or(StatusCode::BAD_REQUEST)?;
+                    if method != Method::POST && tail.ends_with("/work-interpret") {
+                        return Err(StatusCode::METHOD_NOT_ALLOWED);
+                    }
                     if method != Method::POST || uri.query().is_some() {
                         return Err(StatusCode::BAD_REQUEST);
                     }
-                    return Ok(if tail.ends_with("/text-follow-ups") {
+                    return Ok(if tail.ends_with("/work-interpret") {
+                        Self::WorkInterpret(id)
+                    } else if tail.ends_with("/text-follow-ups") {
                         Self::TextFollowUp(id)
                     } else {
                         Self::TextPreview(id)
@@ -516,6 +528,7 @@ impl Endpoint {
             Self::PreviewInfo => "/api/v1/text-preview".into(),
             Self::TextFollowUp(id) => format!("/api/v1/threads/{id}/text-follow-ups"),
             Self::TextPreview(id) => format!("/api/v1/threads/{id}/text-preview"),
+            Self::WorkInterpret(id) => format!("/api/v1/threads/{id}/work-interpret"),
             Self::Thread(id) => format!("/api/v1/threads/{id}"),
             Self::History(id, before) => format!(
                 "/api/v1/threads/{id}/messages{}",
@@ -531,6 +544,7 @@ impl Endpoint {
                 | Self::History(..)
                 | Self::TextFollowUp(_)
                 | Self::TextPreview(_)
+                | Self::WorkInterpret(_)
                 | Self::PreviewInfo
         )
     }
@@ -591,6 +605,18 @@ fn thread_response(
             {
                 return Err(StatusCode::SERVICE_UNAVAILABLE);
             }
+        }
+        Endpoint::WorkInterpret(id) => {
+            // Closed alternatives only; a work projection must belong to this thread.
+            let reply: moosuri_core::WorkInterpretReply =
+                serde_json::from_slice(&body).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            if status != StatusCode::OK || !reply.valid_for(&id.to_string()) {
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+            return Ok(response(
+                status,
+                serde_json::to_vec(&reply).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+            ));
         }
         Endpoint::TextPreview(id) => {
             let turn: moosuri_core::ChatTurn =
@@ -993,6 +1019,13 @@ async fn handle(
                 return Err(StatusCode::BAD_REQUEST);
             }
             Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
+        } else if matches!(endpoint, Endpoint::WorkInterpret(_)) {
+            let input: moosuri_core::WorkInterpretRequest =
+                serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+            if !input.valid() {
+                return Err(StatusCode::UNPROCESSABLE_ENTITY);
+            }
+            Some(serde_json::to_vec(&input).map_err(|_| StatusCode::BAD_REQUEST)?)
         } else if matches!(endpoint, Endpoint::TextFollowUp(_)) {
             let input: moosuri_server::personal_text::FollowUp =
                 serde_json::from_slice(body).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
@@ -1163,6 +1196,10 @@ fn router(g: Gateway) -> Router {
             "/api/v1/threads/{id}/text-follow-ups",
             post(handler).layer(DefaultBodyLimit::max(16 * 1024)),
         )
+        .route(
+            "/api/v1/threads/{id}/work-interpret",
+            post(handler).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .route("/api/v1/text-preview", get(handler))
         .route(
             "/api/v1/threads/{id}/text-preview",
@@ -1325,6 +1362,43 @@ mod tests {
         assert_eq!(fs::symlink_metadata(&socket).unwrap().ino(), meta.ino());
         drop(listener);
         let _new_listener = bind_public_socket(&options).await.unwrap();
+    }
+    #[test]
+    fn work_interpret_is_a_closed_post_only_thread_endpoint() {
+        let id = Uuid::new_v4();
+        let uri: Uri = format!("/api/v1/threads/{id}/work-interpret")
+            .parse()
+            .unwrap();
+        let endpoint = Endpoint::parse(&Method::POST, &uri).unwrap();
+        assert!(matches!(endpoint, Endpoint::WorkInterpret(found) if found == id));
+        assert!(endpoint.threads());
+        assert_eq!(endpoint.path(), uri.path());
+        assert_eq!(
+            Endpoint::parse(&Method::GET, &uri).err(),
+            Some(StatusCode::METHOD_NOT_ALLOWED)
+        );
+        for bad in [
+            format!("/api/v1/threads/{id}/work-interpret?x=1"),
+            "/api/v1/threads/not-a-uuid/work-interpret".to_string(),
+            format!(
+                "/api/v1/threads/{}/work-interpret",
+                id.to_string().to_uppercase()
+            ),
+        ] {
+            assert!(Endpoint::parse(&Method::POST, &bad.parse().unwrap()).is_err());
+        }
+        // A reply for another thread, or an unknown alternative, is never relayed.
+        let other = Uuid::new_v4();
+        let chat = br#"{"kind":"chat"}"#.to_vec();
+        assert!(thread_response(endpoint, &Method::POST, StatusCode::OK, chat.clone()).is_ok());
+        assert!(thread_response(endpoint, &Method::POST, StatusCode::CREATED, chat).is_err());
+        for body in [
+            br#"{"kind":"shell"}"#.to_vec(),
+            br#"{"kind":"clarify","message":""}"#.to_vec(),
+            format!(r#"{{"kind":"chat","thread":"{other}"}}"#).into_bytes(),
+        ] {
+            assert!(thread_response(endpoint, &Method::POST, StatusCode::OK, body).is_err());
+        }
     }
     fn headers() -> HeaderMap {
         let mut h = HeaderMap::new();

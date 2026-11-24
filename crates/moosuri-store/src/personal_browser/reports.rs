@@ -66,6 +66,10 @@ impl Store {
             authorize_member(&tx, owner, &user)?;
             chat::thread_exists(&tx, &user, &thread)?;
             let id = id.to_string();
+            if let Some(report) = workflows::group_report(&tx, owner, &thread, &id)? {
+                tx.commit()?;
+                return Ok(report);
+            }
             let (title, run_id, work_title, created_at) = tx.query_row(
                 "SELECT d.title,r.id,w.title,r.created_at FROM member_conversation_reports d
                  JOIN member_conversation_tasks t ON t.id=d.task_id AND t.thread_id=d.thread_id

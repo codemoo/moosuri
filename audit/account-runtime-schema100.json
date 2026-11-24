@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "schema": 100,
+  "base_schema": 99,
+  "migrations": [
+    {
+      "name": "0100_member_public_watches.sql",
+      "sha256": "88d7c2f5b7e31f9d9eddcb51d5b4fafd6b1afef6971ad18759b468afb618cf4b"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_public_watch_checks",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_public_watch_checks",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "watch_id",
+        "due_at",
+        "state",
+        "workspace_id",
+        "closed",
+        "reason",
+        "fingerprint",
+        "cipher",
+        "notification_id",
+        "skipped",
+        "claimed_at",
+        "finished_at"
+      ],
+      "sql_sha256": "8b93908ee2b03e7dec92bb44ed832ecd56fffead227f7a0b9ab13b2e1032a263"
+    },
+    {
+      "name": "member_public_watches",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_public_watches",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "host_epoch",
+        "thread_id",
+        "url",
+        "host",
+        "every_seconds",
+        "days",
+        "state",
+        "end_reason",
+        "revision",
+        "created_at",
+        "expires_at",
+        "next_due",
+        "ended_at",
+        "request_digest",
+        "stop_request_id",
+        "fingerprint",
+        "last_due",
+        "last_observed_at",
+        "last_changed_at",
+        "alerts"
+      ],
+      "sql_sha256": "db44e7bd8f9a664e45f31e47bcbcbc7ca70a6cf3c0bcbe1b5dab4583d265a446"
+    }
+  ],
+  "schema_sha256": "47278ed9a63e49b7b026ac48c9201bdf1c7d08c8b46efd2d99ce0b9e291d97bf"
+}

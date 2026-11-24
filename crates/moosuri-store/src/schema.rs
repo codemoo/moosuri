@@ -375,6 +375,38 @@ const MIGRATIONS: &[Migration] = &[
         version: 92,
         sql: include_str!("../../../migrations/assistant/0092_conversation_work.sql"),
     },
+    Migration {
+        version: 93,
+        sql: include_str!("../../../migrations/assistant/0093_conversation_group_reports.sql"),
+    },
+    Migration {
+        version: 94,
+        sql: include_str!("../../../migrations/assistant/0094_member_work_monitors.sql"),
+    },
+    Migration {
+        version: 95,
+        sql: include_str!("../../../migrations/assistant/0095_member_mail_work.sql"),
+    },
+    Migration {
+        version: 96,
+        sql: include_str!("../../../migrations/assistant/0096_member_calendar.sql"),
+    },
+    Migration {
+        version: 97,
+        sql: include_str!("../../../migrations/assistant/0097_member_research_outcomes.sql"),
+    },
+    Migration {
+        version: 98,
+        sql: include_str!("../../../migrations/assistant/0098_member_work_recovery.sql"),
+    },
+    Migration {
+        version: 99,
+        sql: include_str!("../../../migrations/assistant/0099_member_connected_brief.sql"),
+    },
+    Migration {
+        version: 100,
+        sql: include_str!("../../../migrations/assistant/0100_member_public_watches.sql"),
+    },
 ];
 
 pub(crate) const CURRENT_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;

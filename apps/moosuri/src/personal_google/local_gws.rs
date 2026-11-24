@@ -1,7 +1,9 @@
 //! Member-local Google reads. The OAuth connector owns code exchange and
 //! refresh. Only an access token goes into a short-lived gws process.
 pub(super) mod workspace;
-use super::{Failure, Inbox, Operation, Secret, StatusCode, decode, hex64};
+use super::{
+    Failure, IMPORTANT_SCOPE, ImportantInbox, Inbox, Operation, Secret, StatusCode, decode, hex64,
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::future::try_join_all;
 use moosuri_connectors::{
@@ -128,7 +130,22 @@ struct MessageRef {
 enum GmailRead<'a> {
     Profile,
     Inbox,
+    /// Provider-side selection by Google's `IMPORTANT` label, still restricted to `INBOX`.
+    ImportantInbox,
     Metadata(&'a str),
+}
+
+/// Whether a metadata reply carries every required label (never guessed from headers or text).
+fn has_labels(bytes: &[u8], required: &[&str]) -> bool {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Labels {
+        #[serde(default)]
+        label_ids: Vec<String>,
+    }
+    decode::<Labels>(bytes).is_ok_and(|l| {
+        l.label_ids.len() <= 256 && required.iter().all(|r| l.label_ids.iter().any(|v| v == r))
+    })
 }
 
 fn unavailable() -> Failure {
@@ -236,6 +253,8 @@ fn discovery(service: MemberGoogleService) -> Discovery {
             "v4",
             "6ceb5292c8c01e02006ceca2d708cc70d050cec6a6398c2eef7f5150d3684baa",
         ),
+        // OAuth-only adapter: no gws discovery document exists or is read.
+        MemberGoogleService::Calendar => ("v3", ""),
     };
     Discovery { version, digest }
 }
@@ -287,6 +306,16 @@ fn seed_discovery(
         .map_err(|_| invalid)?;
     file.write_all(bytes).map_err(|_| invalid)?;
     Ok(file)
+}
+
+/// Placeholder handle for services that never run gws (Calendar).
+fn tempfile_unused(directory: &Path) -> Result<File, &'static str> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(directory.join("calendar.unused"))
+        .map_err(|_| "member_gws_discovery_cache_unavailable")
 }
 
 fn now() -> Result<u64, Failure> {
@@ -343,8 +372,12 @@ impl LocalGws {
     ) -> Result<Self, &'static str> {
         let (revision, app, key) = registered_client(config_path)?;
         let directory = private_directory()?;
-        let discovery_cache =
-            seed_discovery(directory.path(), service, &discovery_bytes(service)?)?;
+        // Calendar never spawns gws, so it needs no static discovery file.
+        let discovery_cache = if service == MemberGoogleService::Calendar {
+            tempfile_unused(directory.path())?
+        } else {
+            seed_discovery(directory.path(), service, &discovery_bytes(service)?)?
+        };
         Ok(Self {
             service,
             revision,
@@ -446,8 +479,38 @@ impl LocalGws {
                     return Err(unavailable());
                 }
                 let identity = self.verify(owner, "access", access_binding, access_token.0)?;
-                let page = self.inbox(identity.mailbox, access_token.0).await?;
+                let page = self.inbox(identity.mailbox, access_token.0, false).await?;
                 self.reply(owner, id, page)
+            }
+            Operation::ImportantInboxPage {
+                access_token,
+                access_binding,
+            } => {
+                if self.service != MemberGoogleService::Gmail {
+                    return Err(unavailable());
+                }
+                let identity = self.verify(owner, "access", access_binding, access_token.0)?;
+                let page = self.inbox(identity.mailbox, access_token.0, true).await?;
+                self.reply(
+                    owner,
+                    id,
+                    ImportantInbox {
+                        mailbox: page.mailbox,
+                        messages: page.messages,
+                        has_more: page.has_more,
+                        scope: IMPORTANT_SCOPE.into(),
+                    },
+                )
+            }
+            Operation::VerifyAccess {
+                access_token,
+                access_binding,
+            } => {
+                if self.service != MemberGoogleService::Calendar {
+                    return Err(unavailable());
+                }
+                let identity = self.verify(owner, "access", access_binding, access_token.0)?;
+                self.reply(owner, id, json!({"mailbox": identity.mailbox}))
             }
             Operation::WorkspaceRead {
                 access_token,
@@ -468,6 +531,8 @@ impl LocalGws {
     fn read_operation(&self) -> &'static str {
         if self.service == MemberGoogleService::Gmail {
             "inbox_page"
+        } else if self.service == MemberGoogleService::Calendar {
+            "oauth_only"
         } else {
             "workspace_read"
         }
@@ -642,8 +707,22 @@ impl LocalGws {
         })
     }
 
-    async fn inbox(&self, mailbox: String, token: &SecretString) -> Result<Inbox, Failure> {
-        let bytes = self.read(GmailRead::Inbox, token).await?;
+    async fn inbox(
+        &self,
+        mailbox: String,
+        token: &SecretString,
+        important: bool,
+    ) -> Result<Inbox, Failure> {
+        let bytes = self
+            .read(
+                if important {
+                    GmailRead::ImportantInbox
+                } else {
+                    GmailRead::Inbox
+                },
+                token,
+            )
+            .await?;
         let page: Page = decode(&bytes).map_err(|_| unavailable())?;
         if page.messages.len() > PAGE_SIZE
             || page
@@ -663,17 +742,24 @@ impl LocalGws {
         }
         let mut messages = try_join_all(page.messages.iter().map(|item| async {
             let bytes = self.read(GmailRead::Metadata(&item.id), token).await?;
+            // A label removed between list and get drops the message instead of faking importance.
+            if important && !has_labels(&bytes, &["INBOX", "IMPORTANT"]) {
+                return Ok::<_, Failure>(None);
+            }
             let message =
                 InboxMetadata::from_gmail_json(&item.id, &bytes).map_err(|_| unavailable())?;
-            Ok::<_, Failure>(MemberGoogleInboxMessage {
+            Ok::<_, Failure>(Some(MemberGoogleInboxMessage {
                 id: message.id,
                 received_at_ms: message.received_at_ms,
                 subject: message.subject,
                 from: message.from,
                 date: message.date,
-            })
+            }))
         }))
-        .await?;
+        .await?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         messages.sort_by(|a, b| {
             b.received_at_ms
                 .cmp(&a.received_at_ms)
@@ -696,7 +782,10 @@ impl LocalGws {
         read: GmailRead<'_>,
         token: &SecretString,
     ) -> Result<Zeroizing<Vec<u8>>, Failure> {
-        if matches!(&read, GmailRead::Profile | GmailRead::Inbox) {
+        if matches!(
+            &read,
+            GmailRead::Profile | GmailRead::Inbox | GmailRead::ImportantInbox
+        ) {
             // gws 0.22.0 considers the cached schema stale after 24 hours.
             // Keep the image-verified file fresh before the first command of
             // a read so follow-up metadata calls use the same schema.
@@ -711,6 +800,13 @@ impl LocalGws {
                 &["gmail", "users", "messages", "list"],
                 json!({
                     "userId": "me", "labelIds": ["INBOX"], "includeSpamTrash": false,
+                    "maxResults": PAGE_SIZE, "fields": "messages(id),nextPageToken",
+                }),
+            ),
+            GmailRead::ImportantInbox => (
+                &["gmail", "users", "messages", "list"],
+                json!({
+                    "userId": "me", "labelIds": ["INBOX", "IMPORTANT"], "includeSpamTrash": false,
                     "maxResults": PAGE_SIZE, "fields": "messages(id),nextPageToken",
                 }),
             ),

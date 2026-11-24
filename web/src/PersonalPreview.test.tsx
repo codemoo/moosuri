@@ -684,7 +684,8 @@ it("enables the retained draft after an administrator resumes the engine and ret
   await user.type(await composer(), "Waiting for the engine");
   capEnabled = false;
   fireEvent.focus(window);
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "메시지" })).toBeDisabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled());
+  expect(await composer()).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "엔진 설정 열기" }));
   const settings = within(await screen.findByRole("form", { name: "설치 모델 설정" }));
   await user.click(settings.getByRole("checkbox", { name: "새 모델 요청 허용" }));
@@ -705,7 +706,8 @@ it("rechecks a paused engine when an existing member tab regains focus, includin
   await user.type(editor, "Member draft");
   capEnabled = false;
   fireEvent.focus(window);
-  await waitFor(() => expect(editor).toBeDisabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled());
+  expect(editor).toBeEnabled();
   capEnabled = true;
   fireEvent.focus(window);
   await waitFor(() => expect(editor).toBeEnabled());
@@ -718,7 +720,8 @@ it("ignores an older capability response after a newer focus check enables chat"
   capEnabled = false;
   mount();
   const editor = await composer();
-  await waitFor(() => expect(editor).toBeDisabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled());
+  expect(editor).toBeEnabled();
   const before = calls.filter(call => call.path === "/text-preview").length;
   let finish!: (response: Response) => void;
   pendingCapability = new Promise(resolve => { finish = resolve; });
@@ -1091,7 +1094,10 @@ it("keeps private history visible when chat is disabled and clears it after conf
   expect(
     screen.getByText("응답 확인 불가 · 자동 재시도 없음"),
   ).toBeInTheDocument();
-  expect(await composer()).toBeDisabled();
+  const draft = await composer();
+  await user.type(draft, "안녕하세요");
+  expect(draft).toHaveValue("안녕하세요");
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
   const drawer = await openDrawer(user);
   await user.click(drawer.getByRole("button", { name: "A private thread 삭제" }));
   await user.click(drawer.getByRole("button", { name: "대화 삭제" }));
@@ -1510,7 +1516,8 @@ it("opens a saved conversation while model discovery stalls and keeps it when di
   ];
   mount();
   await screen.findByText("Existing conversation");
-  expect(await composer()).toBeDisabled();
+  expect(await composer()).toBeEnabled();
+  expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
   await act(async () => {
     finish(Response.json({ code: "unavailable" }, { status: 503 }));
   });

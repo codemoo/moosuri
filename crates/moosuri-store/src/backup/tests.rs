@@ -270,6 +270,7 @@ async fn committed_wal_and_distinct_process_writer_lock_are_preserved() {
     if let Some(path) = std::env::var_os("MOOSURI_TEST_EXPORT_CHILD") {
         let data = PathBuf::from(path);
         let store = Store::open(&data).unwrap();
+        crate::tests::begin_wal_only_writes(&store).await;
         admin(&store).await;
         std::process::exit(0);
     }
@@ -286,11 +287,12 @@ async fn committed_wal_and_distinct_process_writer_lock_are_preserved() {
         .output()
         .unwrap();
     assert!(child.status.success());
+    // Copy just the base file so opening it cannot replay the live WAL. The schema was
+    // checkpointed before registration; the committed administrator row is still WAL-only.
     assert_eq!(
-        u32::from_be_bytes(
-            fs::read(data.path().join("assistant.sqlite")).unwrap()[60..64]
-                .try_into()
-                .unwrap()
+        crate::tests::base_file_account_count(
+            data.path(),
+            &exports.path().join("base-only.sqlite")
         ),
         0
     );

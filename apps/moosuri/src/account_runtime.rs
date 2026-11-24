@@ -3,6 +3,7 @@ mod browser;
 mod browser_model;
 mod browser_wire;
 mod gws_setup;
+mod public_watch;
 use clap::{Args, Subcommand};
 use moosuri_store::runtime_registry;
 use std::path::PathBuf;
@@ -147,6 +148,11 @@ enum PersonalOperation {
         /// Run Google OAuth and the installed gws command inside this member.
         #[arg(long, conflicts_with = "google_readonly")]
         local_gws: bool,
+        /// Test binaries only: use this same-UID private socket as the browser broker (acceptance fixture).
+        /// The option does not exist in a production build.
+        #[cfg(feature = "test-fixtures")]
+        #[arg(long, conflicts_with = "browser")]
+        browser_test_socket: Option<PathBuf>,
     },
 }
 pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
@@ -187,7 +193,18 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             browser,
             google_readonly,
             local_gws,
+            #[cfg(feature = "test-fixtures")]
+            browser_test_socket,
         } => {
+            // Deployed path: the fixed broker socket, owned by root. Test builds may name a private
+            // fixture socket owned by this same UID instead; it is unreachable otherwise.
+            let (browser_socket, browser_uid) =
+                (browser.then(|| PathBuf::from("/browser/browser.sock")), 0);
+            #[cfg(feature = "test-fixtures")]
+            let (browser_socket, browser_uid) = match browser_test_socket {
+                Some(path) => (Some(path.clone()), unsafe { libc::geteuid() }),
+                None => (browser_socket, browser_uid),
+            };
             let store = owner
                 .open_verified(&options.root)
                 .await
@@ -196,40 +213,65 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
                 .as_ref()
                 .map(|p| read_preview(p))
                 .transpose()?;
-            let extensions = if *local_gws {
+            let (extensions, brief_reads) = if *local_gws {
                 let directory = owner
                     .verified_member_directory(&options.root)
                     .map_err(|_| "invalid_member_volume")?;
                 let proxy = crate::gws_relay::start_member("/google/google.sock".into(), 0).await?;
                 gws_setup::sync_from_installation(directory.clone());
-                crate::personal_google::local_routes(
+                let (routes, reader) = crate::personal_google::local_routes_with_briefs(
                     store.clone(),
                     owner,
                     directory
                         .join(moosuri_store::personal_volume::GWS_DIRECTORY)
                         .join("gws-client.json"),
                     proxy,
-                )
+                );
+                (routes, Some(reader))
             } else if *google_readonly {
-                crate::personal_google::routes(
-                    store.clone(),
-                    owner,
-                    "/google/google.sock".into(),
-                    0,
+                (
+                    crate::personal_google::routes(
+                        store.clone(),
+                        owner,
+                        "/google/google.sock".into(),
+                        0,
+                    ),
+                    None,
                 )
             } else {
-                axum::Router::new()
+                (axum::Router::new(), None)
+            };
+            let extensions = if *local_gws {
+                extensions
+            } else {
+                extensions.merge(crate::personal_google::mail_work::routes(
+                    store.clone(),
+                    owner,
+                    None,
+                    None,
+                ))
             };
             let extensions =
                 extensions.merge(moosuri_server::personal_tasks::routes(store.clone(), owner));
+            let public_reads =
+                public_watch::reader(browser_socket.clone(), browser_uid, owner.generation);
             let extensions = extensions.merge(browser::routes(
                 store.clone(),
                 owner,
-                browser.then(|| PathBuf::from("/browser/browser.sock")),
-                0,
+                browser_socket,
+                browser_uid,
                 preview.clone(),
             ));
-            return serve_member(socket, store, owner, preview, extensions).await;
+            return serve_member(
+                socket,
+                store,
+                owner,
+                preview,
+                extensions,
+                brief_reads,
+                public_reads,
+            )
+            .await;
         }
         PersonalOperation::Initialize {
             name,
@@ -270,6 +312,8 @@ async fn serve_member(
     owner: moosuri_store::personal_volume::VolumeOwner,
     preview: Option<moosuri_server::personal_text::Options>,
     extensions: axum::Router,
+    brief_reads: Option<std::sync::Arc<dyn moosuri_server::personal_tasks::BriefReads>>,
+    public_reads: std::sync::Arc<dyn moosuri_server::personal_tasks::PublicReads>,
 ) -> Result<(), String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use tokio::net::UnixListener;
@@ -307,10 +351,12 @@ async fn serve_member(
     let gateway_uid = std::fs::metadata(parent.parent().ok_or("invalid_ipc_root")?)
         .map_err(|_| "invalid_ipc_root")?
         .uid();
-    let extensions = extensions.merge(moosuri_server::personal_tasks::timer_routes(
+    let extensions = extensions.merge(moosuri_server::personal_tasks::timer_routes_with_readers(
         store.clone(),
         owner,
         gateway_uid,
+        brief_reads,
+        Some(public_reads),
     ));
     let ready = axum::routing::get(move || async move {
         (

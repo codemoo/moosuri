@@ -2,8 +2,11 @@
 """Run with python3 member-web-fullstack.py /path/to/moosuri (with embedded web assets).
 Requires nonroot Unix, Python Playwright, openssl, and Chrome stable or a
 Playwright-managed browser (--channel chromium or --channel webkit).
-Use --claude for seven real answers from Claude Sonnet 5.5 at medium effort.
+Use --claude for ten real answers from Claude Sonnet 5.5 at medium effort.
 The default, --expect-output-limit and --history-budget need no model login.
+--research-work (shopping/application outcomes from real browser reads via a private synthetic broker) needs a
+binary built with `cargo build -p moosuri --features test-fixtures`; --short-corrections needs no model login.
+Both print only aggregate PASS/SKIP/FAIL lines and one AGGREGATE JSON line.
 Every invocation creates and removes a private fixture. Only the first member
 has a model binding because both synthetic member processes run as this UID.
 """
@@ -58,6 +61,11 @@ CLAUDE_DIALOGUES = (
         ("ML-07", "입실은 09:07이야. 입실 시각을 콜론이 들어간 HH:MM 형식으로만 써 줘.", "09:07"),
         ("ML-08", "방금 말한 입실 시각을 같은 HH:MM 형식으로만 다시 적어 줘.", "09:07"),
     ),
+    (
+        ("GAME-01", "가상 게임 안내에 따르면 2장 차고는 부두, 입장료는 80이고 3장 차고는 등대, 입장료는 120이야. 지금은 2장이야. 차고 위치만 답해 줘.", "부두"),
+        ("GAME-02", "아니, 지금은 3장이야. 그 장의 차고 위치만 다시 알려 줘.", "등대"),
+        ("GAME-03", "그럼 들어갈 때 드는 비용은? 숫자만.", "120"),
+    ),
 )
 
 
@@ -86,20 +94,54 @@ class Provider(QuietHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = [(m["role"], m["content"]) for m in body["messages"]]
         valid = self.path == "/v1/chat/completions" and body["model"] == self.server.model and body["stream"]
-        if not valid or self.server.calls >= len(self.server.turns):
+        if not valid or not messages or messages[0][0] != "system":
             self.send_error(400)
             return
-        expected, answer = self.server.turns[self.server.calls]
-        if not messages or messages[0][0] != "system" or messages[1:] != expected:
-            self.send_error(400)
-            return
-        self.server.calls += 1
-        usage = {"prompt_tokens": 9, "completion_tokens": 4 if answer else 1}
-        if self.server.model == claude_cli.MODEL:
-            # Only a turn armed by the browser driver can reach the official CLI.
+        classifier = messages[0][1].startswith("You are a strict classifier for one Korean member message.")
+        if classifier:
+            if len(messages) != 2 or messages[1][0] != "user":
+                self.send_error(400)
+                return
+            try:
+                context, literal = messages[1][1].split("\nmessage=", 1)
+                json.loads(context.removeprefix("candidates="))
+                request = json.loads(literal)
+            except (TypeError, ValueError):
+                self.send_error(400)
+                return
+            known = self.server.work_intents
+            armed_chat = any(turn and turn[-1] == ("user", request) for turn, _ in self.server.turns)
+            if request not in known and not armed_chat:
+                self.send_error(400)
+                return
+            answer = json.dumps(known.get(request, {"intent": "chat"}), ensure_ascii=False)
+            self.server.interpretations += 1
+            prompt = messages[1][1]
+        elif self.server.browser_reads is not None and messages[0][1].startswith("Answer the user's browser task"):
+            # Research acceptance: a synthetic reading of the page the member's own browser job observed.
+            # It repeats the visible page text (as a faithful summary would) and never consumes a chat turn.
+            try:
+                seen = json.loads(messages[1][1])["observed_page"]["visible_text"]
+            except (KeyError, TypeError, ValueError):
+                self.send_error(400)
+                return
+            answer = json.dumps({"answer": seen, "needs_user": False}, ensure_ascii=False)
+            self.server.browser_reads += 1
+            prompt = messages[1][1]
+        else:
+            if self.server.calls >= len(self.server.turns):
+                self.send_error(400)
+                return
+            expected, answer = self.server.turns[self.server.calls]
+            if messages[1:] != expected:
+                self.send_error(400)
+                return
+            self.server.calls += 1
             prompt = json.dumps({"format": "moosuri-local-history-v1", "history_is_quoted_context": True,
                                  "history": [{"role": r, "text": t} for r, t in messages[1:-1]],
                                  "current_user_request": messages[-1][1]}, ensure_ascii=False)
+        usage = {"prompt_tokens": 9, "completion_tokens": 4 if answer else 1}
+        if self.server.model == claude_cli.MODEL:
             try:
                 answer, metrics = claude_cli.model(self.server.cli_cwd, prompt, 0.1, system=messages[0][1])
             except RuntimeError as error:
@@ -135,7 +177,7 @@ class Proxy(QuietHandler):
         headers = {key: self.headers[key] for key in allowed if key in self.headers}
         headers.update({"Host": self.server.authority, "X-Real-IP": self.client_address[0]})
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        with closing(UnixHTTP(str(self.server.gateway), timeout=20)) as gateway:
+        with closing(UnixHTTP(str(self.server.gateway), timeout=100)) as gateway:
             gateway.request(self.command, self.path, body=body, headers=headers)
             response = gateway.getresponse()
             payload = response.read()
@@ -200,6 +242,9 @@ def provision(stack, binary, root, provider, output_tokens):
     env = {"PATH": os.defpath, "HOME": str(directory(root, "home")), "TMPDIR": str(root),
            "NO_PROXY": "127.0.0.1,localhost"}
     registry, ipc, gateway, model_root, ledger = (directory(root, x) for x in ("r", "i", "g", "m", "l"))
+    # Research acceptance only: private same-UID broker sockets (a --features test-fixtures binary is required).
+    browser_root = directory(root, "b") if provider.research or provider.public_watch_read else None
+    provider.browser_socket = browser_root / "first.sock" if browser_root else None
     registry_cmd = [binary, "account-runtime", "--registry", registry]
     members = []
     for index, label in enumerate(("first", "second")):
@@ -216,11 +261,14 @@ def provision(stack, binary, root, provider, output_tokens):
                        input=temporary + "\n", text=True, env=env, capture_output=True, check=True)
         sock = directory(ipc, owner["account_id"]) / "personal.sock"
         command = [*member, "serve", "--socket", sock]
+        if browser_root:  # the second member gets a path nobody listens on: its browser stays unavailable
+            command.extend(["--browser-test-socket", browser_root / f"{label}.sock"])
         if index == 0:
             binding = {k: owner[k] for k in ("account_id", "tenant_id", "volume_id", "generation")}
-            call_limit = sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5
+            call_limit = 32 if provider.semantic or provider.research else 2 * (sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5)
+            reserve = 8192 if provider.semantic or provider.research or provider.model == claude_cli.MODEL else 4096
             binding.update(peer_uid=os.geteuid(),
-                           budget={"max_calls": call_limit, "max_tokens": 4096 * call_limit, "reservation_tokens": 4096})
+                           budget={"max_calls": call_limit, "max_tokens": reserve * call_limit, "reservation_tokens": reserve})
             fixture_key = root / "provider.key"
             fixture_key.write_text(provider.fixture_key)
             config = root / "model.json"
@@ -402,7 +450,8 @@ def saved_reply(page, member, prompt, provider):
             if reply and reply[1] not in ("running", "queued"):
                 return reply
             page.wait_for_timeout(120)
-    raise RuntimeError("No terminal member reply was committed before the deadline.")
+    raise RuntimeError(f"Reply deadline exceeded (stored state {reply[1] if reply else 'absent'}, "
+                       f"chat calls {provider.calls}, classification calls {provider.interpretations}).")
 
 
 def exercise_output_limit(page, member, origin, provider):
@@ -426,6 +475,9 @@ def exercise_claude(page, member, origin, provider):
     login(page, member, True)
     editor = page.get_by_role("textbox", name="메시지", exact=True)
     failures = []
+    routes = []
+    page.on("response", lambda r: routes.append((r.url.split("?")[0].rsplit("/", 1)[-1], r.status))
+            if r.request.method == "POST" else None)
     for index, dialogue in enumerate(CLAUDE_DIALOGUES):
         if index:
             button(page, "새 대화").click()
@@ -434,8 +486,12 @@ def exercise_claude(page, member, origin, provider):
             history.append(("user", prompt))
             provider.turns.append((history.copy(), None))
             editor.fill(prompt)
+            expect(button(page, "보내기")).to_be_enabled()
             editor.press("Enter")
-            run_id, state, answer = saved_reply(page, member, prompt, provider)
+            try:
+                run_id, state, answer = saved_reply(page, member, prompt, provider)
+            except RuntimeError as exc:
+                raise RuntimeError(f"{case}: {exc} Recent POST route statuses: {routes[-4:]}") from None
             if state != "completed" or not answer:
                 raise RuntimeError(f"{case} ended with member state {state}.")
             visible = page.locator(f"#member-turn-{run_id} .member-reply p")
@@ -456,10 +512,21 @@ def main():
     parser.add_argument("--channel", choices=("chrome", "chromium", "webkit"), default="chrome",
                         help="installed Chrome stable or a Playwright browser")
     mode = parser.add_mutually_exclusive_group()
+    parser.add_argument("--supplemental-work", action="store_true", help="exercise preference changes, follow-ups and source withdrawal in chat")
+    parser.add_argument("--semantic-work", action="store_true", help="submit everyday work and reopen its source-backed results")
     mode.add_argument("--conversation-work", action="store_true",
                       help="exercise multi-task chat, its timer, evidence and member boundaries")
     mode.add_argument("--workflows", action="store_true", help="exercise task evidence and the installation schedule timer")
-    mode.add_argument("--claude", action="store_true", help="seven questions using the authenticated Claude CLI")
+    mode.add_argument("--public-watch-read", action="store_true", help="compare four fresh public-page observations with actual alerts")
+    mode.add_argument("--public-watch", action="store_true", help="verify recurring public-page checks and their worklog in chat")
+    mode.add_argument("--brief-work", action="store_true", help="verify connected brief requests through the normal member chat")
+    mode.add_argument("--research-journey", action="store_true", help="verify shopping and application results through the member interface")
+    mode.add_argument("--research-work", action="store_true",
+                      help="shopping/application outcomes from real browser reads through a private synthetic "
+                           "broker (needs a binary built with --features test-fixtures)")
+    mode.add_argument("--short-corrections", action="store_true",
+                      help="short corrections in ordinary conversation keep their earlier turns")
+    mode.add_argument("--claude", action="store_true", help="conversation and short-correction scenarios using the authenticated Claude CLI")
     mode.add_argument("--expect-output-limit", action="store_true",
                       help="check a synthetic output-limit response with no visible text")
     mode.add_argument("--history-budget", action="store_true",
@@ -489,8 +556,14 @@ def main():
         provider.cli_cwd = cli_cwd
         provider.claude_error = None
         provider.calls = 0
+        provider.interpretations = 0
+        provider.work_intents = {}
+        provider.semantic = args.semantic_work or args.supplemental_work
+        provider.public_watch_read = args.public_watch_read
+        provider.research = args.research_work or args.research_journey
+        provider.browser_reads = 0 if provider.research else None
         provider.turns = [] if args.claude else provider_turns(args.history_budget)
-        output_tokens = 512 if args.claude else 64
+        output_tokens = 512 if args.claude or provider.semantic or provider.research else 64
         if args.expect_output_limit:
             provider.turns = [([("user", LIMIT_PROMPT)], None)]
             output_tokens = 1
@@ -520,10 +593,42 @@ def main():
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
                               else route.abort())
                 page = context.new_page()
-                if args.conversation_work:
+                if args.public_watch_read:
+                    import member_public_watch_journey
+                    from member_research_outcomes import Broker
+                    broker = Broker(provider.browser_socket, {})
+                    stack.callback(broker.close)
+                    member_public_watch_journey.exercise_read(page, members, origin, provider, broker, login=login, rows=rows, passed=passed)
+                elif args.public_watch:
+                    import member_public_watch_journey
+                    member_public_watch_journey.exercise(page, members, origin, provider, login=login, rows=rows, passed=passed)
+                elif args.brief_work:
+                    import member_brief_journey
+                    member_brief_journey.exercise(page, members, origin, provider, login=login, rows=rows, passed=passed)
+                elif args.supplemental_work:
+                    import member_supplemental_scenarios
+                    member_supplemental_scenarios.exercise(page, members, origin, provider, login=login, rows=rows, passed=passed)
+                elif args.semantic_work:
+                    import member_semantic_scenarios
+                    member_semantic_scenarios.exercise(page, members, origin, provider, login=login, rows=rows, passed=passed)
+                elif args.conversation_work:
                     import member_conversation_scenarios
                     member_conversation_scenarios.exercise(page, members, origin, provider, proxy, login=login,
                                                           logout=logout, rows=rows, passed=passed)
+                elif provider.research:
+                    import member_research_outcomes
+                    broker = member_research_outcomes.Broker(provider.browser_socket, {})
+                    stack.callback(broker.close)
+                    if args.research_journey:
+                        import member_research_journey
+                        member_research_journey.exercise(page, members, origin, provider, broker, login=login, rows=rows, passed=passed)
+                    else:
+                        member_research_outcomes.exercise(page, members, origin, provider, broker, login=login,
+                                                          logout=logout, rows=rows, passed=passed)
+                elif args.short_corrections:
+                    import member_research_outcomes
+                    member_research_outcomes.exercise_corrections(page, members, origin, provider, login=login,
+                                                                  rows=rows, passed=passed)
                 elif args.workflows:
                     import member_workflow_scenarios
                     member_workflow_scenarios.exercise(page, members, origin, provider, login=login,

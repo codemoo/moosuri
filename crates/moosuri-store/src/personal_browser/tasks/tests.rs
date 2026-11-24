@@ -773,3 +773,71 @@ async fn workflow_registry_epoch_generation_and_restored_grants_fence_due_resear
     due(&store, key).await;
     assert_eq!(store.tick_member_workflows(o, 4).await.unwrap(), 0);
 }
+
+#[tokio::test]
+async fn schema_92_member_reopens_with_its_original_thread_and_empty_new_grants() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member { store, scope, root } = member().await;
+    drop(store);
+    let root = root.path().canonicalize().unwrap();
+    let directory = scope.owner.verified_member_directory(&root).unwrap();
+    let mut db = rusqlite::Connection::open(directory.join("assistant.sqlite")).unwrap();
+    // Volume identity is provisioned by the installer outside the shared assistant migrations.
+    let identity: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='personal_runtime_identity'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let pin: (String, i64) = db
+        .query_row(
+            "SELECT volume,generation FROM personal_runtime_identity WHERE singleton=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    crate::schema::tests::replace_with_predecessor(&mut db, 92);
+    db.execute_batch(&identity).unwrap();
+    db.execute(
+        "INSERT INTO personal_runtime_identity(singleton,volume,generation) VALUES(1,?1,?2)",
+        params![pin.0, pin.1],
+    )
+    .unwrap();
+    drop(db);
+    let store = scope.owner.open_verified(&root).await.unwrap();
+    let threads = store.list_threads(&scope.user).await.unwrap();
+    assert!(threads.iter().any(|t| t.id == scope.thread));
+    store
+        .call(|db| {
+            assert_eq!(
+                db.conn
+                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
+                100
+            );
+            assert_eq!(
+                db.conn
+                    .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+                        .get::<_, i64>(
+                        0
+                    ))?,
+                0
+            );
+            for table in [
+                "member_connected_briefs",
+                "member_public_watches",
+                "member_mail_work",
+                "member_calendar_actions",
+            ] {
+                assert_eq!(
+                    db.conn
+                        .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                            .get::<_, i64>(0))?,
+                    0
+                );
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}

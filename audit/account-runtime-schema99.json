@@ -1,0 +1,79 @@
+{
+  "format": 1,
+  "schema": 99,
+  "base_schema": 98,
+  "migrations": [
+    {
+      "name": "0099_member_connected_brief.sql",
+      "sha256": "88686113876b222f9cc2294bcaff682b2b9fecf6dad40d29737545f7923586ed"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_connected_brief_runs",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_connected_brief_runs",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "brief_id",
+        "due_at",
+        "state",
+        "freshness",
+        "guidance",
+        "skipped",
+        "gmail_count",
+        "calendar_count",
+        "cipher",
+        "notification_id",
+        "claimed_at",
+        "finished_at"
+      ],
+      "sql_sha256": "404329ef41ed5b269095cf1ae66d49ed7f43a816efaab45a57f6460af8756fd1"
+    },
+    {
+      "name": "member_connected_briefs",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_connected_briefs",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "host_epoch",
+        "thread_id",
+        "gmail_connection",
+        "gmail_epoch",
+        "gmail_app",
+        "calendar_connection",
+        "calendar_epoch",
+        "calendar_app",
+        "local_time",
+        "zone",
+        "interval_days",
+        "state",
+        "end_reason",
+        "revision",
+        "created_at",
+        "expires_at",
+        "next_due",
+        "ended_at",
+        "request_digest",
+        "stop_request_id",
+        "important_only"
+      ],
+      "sql_sha256": "feca7d4561f23b76df6bef56e25c4cef06261be3bcc10471a85083d77e1343f1"
+    }
+  ],
+  "schema_sha256": "f50c4e64c758455125dcebc14e4af11c0e221755ff5f2e775b7b310551699bc8"
+}

@@ -12,6 +12,23 @@ pub(super) fn directory() -> tempfile::TempDir {
         .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
         .unwrap()
 }
+/// Ensure the following committed writes exist only in WAL when a test child exits without drops.
+pub(super) async fn begin_wal_only_writes(store: &Store) {
+    store
+        .call(|db| {
+            db.conn
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA wal_autocheckpoint=0")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+pub(super) fn base_file_account_count(data: &Path, copy: &Path) -> i64 {
+    fs::copy(data.join("assistant.sqlite"), copy).unwrap();
+    let db = Connection::open(copy).unwrap();
+    db.query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+        .unwrap()
+}
 pub(super) async fn admin(store: &Store) -> LoginResult {
     store
         .bootstrap(

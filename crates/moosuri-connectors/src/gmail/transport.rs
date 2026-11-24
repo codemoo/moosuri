@@ -22,6 +22,9 @@ pub(crate) enum Body<'a> {
 #[derive(Clone)]
 pub(crate) struct Transport {
     token_proxy: Option<SocketAddr>,
+    gmail_via_proxy: bool,
+    /// Member-local CONNECT proxy restricted to the fixed Calendar v3 origin.
+    calendar_proxy: Option<SocketAddr>,
     #[cfg(any(test, feature = "test-fixtures"))]
     test_base: Option<String>,
     #[cfg(any(test, feature = "test-fixtures"))]
@@ -31,6 +34,8 @@ impl Transport {
     pub(crate) fn google() -> Self {
         Self {
             token_proxy: None,
+            gmail_via_proxy: false,
+            calendar_proxy: None,
             #[cfg(any(test, feature = "test-fixtures"))]
             test_base: None,
             #[cfg(any(test, feature = "test-fixtures"))]
@@ -45,10 +50,26 @@ impl Transport {
         transport.token_proxy = Some(address);
         Ok(transport)
     }
+    /// Calendar-only egress through the member's existing local Google proxy.
+    pub(crate) fn google_gmail_proxy(address: SocketAddr) -> Result<Self, GmailError> {
+        let mut transport = Self::google_oauth_proxy(address)?;
+        transport.gmail_via_proxy = true;
+        Ok(transport)
+    }
+    pub(crate) fn google_calendar_proxy(address: SocketAddr) -> Result<Self, GmailError> {
+        if !address.ip().is_loopback() || address.port() == 0 {
+            return Err(GmailError::DestinationDenied);
+        }
+        let mut transport = Self::google();
+        transport.calendar_proxy = Some(address);
+        Ok(transport)
+    }
     #[cfg(any(test, feature = "test-fixtures"))]
     pub(crate) fn fixture(base: String, limit: usize) -> Self {
         Self {
             token_proxy: None,
+            gmail_via_proxy: false,
+            calendar_proxy: None,
             test_base: Some(base),
             test_limit: Some(limit),
         }
@@ -108,7 +129,24 @@ impl Transport {
             .timeout(Duration::from_secs(25))
             .pool_max_idle_per_host(0);
         if let Some(address) = self.token_proxy {
-            if url.as_str() != "https://oauth2.googleapis.com/token" {
+            let gmail = self.gmail_via_proxy
+                && host == "gmail.googleapis.com"
+                && url.path().starts_with("/gmail/v1/users/me/");
+            if url.as_str() != "https://oauth2.googleapis.com/token" && !gmail {
+                return Err(GmailError::DestinationDenied);
+            }
+            let proxy = reqwest::Proxy::https(format!("http://{address}"))
+                .map_err(|_| GmailError::DestinationDenied)?;
+            return builder
+                .proxy(proxy)
+                .build()
+                .map_err(|_| GmailError::Transport);
+        }
+        if let Some(address) = self.calendar_proxy {
+            if !url
+                .as_str()
+                .starts_with("https://www.googleapis.com/calendar/v3/")
+            {
                 return Err(GmailError::DestinationDenied);
             }
             let proxy = reqwest::Proxy::https(format!("http://{address}"))

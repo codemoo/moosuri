@@ -41,7 +41,13 @@ struct Preview {
     options: Options,
     slots: Arc<tokio::sync::Semaphore>,
     admission: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes work interpretation per member so a repeat observes the first outcome.
+    interpret_gate: Arc<tokio::sync::Mutex<()>>,
 }
+mod interpret;
+#[cfg(test)]
+mod interpret_tests;
+mod preferences;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
@@ -67,8 +73,13 @@ pub(super) fn routes<S: Clone + Send + Sync + 'static>(
         options,
         slots: Arc::new(tokio::sync::Semaphore::new(2)),
         admission: Arc::new(tokio::sync::Mutex::new(())),
+        interpret_gate: Arc::new(tokio::sync::Mutex::new(())),
     };
     Router::new()
+        .route(
+            "/api/v1/threads/{id}/work-interpret",
+            post(interpret::submit).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .route("/api/v1/text-preview", get(info))
         .route(
             "/api/v1/threads/{id}/text-preview",
@@ -168,6 +179,7 @@ async fn info(State(state): State<Preview>, headers: HeaderMap) -> HttpResult {
     Ok(Json(serde_json::json!({
         "enabled":enabled,
         "capability":"text_only_preview",
+        "work_interpret":true,
         "tools":false,
         "automatic_retry":false
     }))

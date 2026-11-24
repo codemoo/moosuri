@@ -28,9 +28,24 @@ const CONVERSATION_TASKS: &str = "SELECT c.id,c.thread_id,c.title,c.created_at,c
  FROM member_conversation_tasks c JOIN threads t ON t.tenant_id=c.tenant_id AND t.id=c.thread_id AND t.account_id=c.account_id
  WHERE c.tenant_id=?1 AND c.account_id=?2 AND c.volume_id=?3 AND c.generation=?4 AND t.mission_internal=0";
 
+const BRIEF_TASKS: &str = "SELECT b.id,b.thread_id,'메일·일정 브리핑',b.created_at,b.state,r.admitted_order,
+ 'connected_brief',NULL,b.next_due,NULL FROM member_connected_briefs b
+ JOIN chat_runs r ON r.id=b.id AND r.tenant_id=b.tenant_id AND r.account_id=b.account_id AND r.thread_id=b.thread_id
+ WHERE b.tenant_id=?1 AND b.account_id=?2 AND b.volume_id=?3 AND b.generation=?4";
+
+const PUBLIC_WATCH_TASKS: &str = "SELECT w.id,w.thread_id,w.host || ' 변경 감시',w.created_at,w.state,r.admitted_order,
+ 'public_watch',NULL,w.next_due,NULL FROM member_public_watches w
+ JOIN chat_runs r ON r.request_id=w.id AND r.tenant_id=w.tenant_id AND r.account_id=w.account_id AND r.thread_id=w.thread_id
+ WHERE w.tenant_id=?1 AND w.account_id=?2 AND w.volume_id=?3 AND w.generation=?4";
+const MONITOR_TASKS: &str = "SELECT m.id,w.thread_id,w.title,m.created_at,m.state,r.admitted_order,
+ 'local_monitor',NULL,m.next_due,NULL FROM member_work_monitors m JOIN member_workflows w ON w.id=m.id
+ JOIN chat_runs r ON r.request_id=m.id AND r.tenant_id=m.tenant_id AND r.account_id=m.account_id AND r.thread_id=w.thread_id
+ WHERE m.tenant_id=?1 AND m.account_id=?2 AND m.volume_id=?3 AND m.generation=?4";
+
 fn all_tasks(work_filter: &str) -> String {
+    let linked = activity::ROWS;
     format!(
-        "{CHAT_TASKS} UNION ALL {WORK_TASKS} {work_filter} UNION ALL {INBOX_TASKS} UNION ALL {CONVERSATION_TASKS}"
+        "{CHAT_TASKS} UNION ALL {WORK_TASKS} {work_filter} UNION ALL {INBOX_TASKS} UNION ALL {CONVERSATION_TASKS} UNION ALL {linked} UNION ALL {BRIEF_TASKS} UNION ALL {PUBLIC_WATCH_TASKS} UNION ALL {MONITOR_TASKS}"
     )
 }
 
@@ -158,7 +173,7 @@ impl Store {
             let id = id.to_string();
             let task = tx
                 .query_row(
-                    &format!("SELECT * FROM ({}) WHERE id=?5", all_tasks("")),
+                    &format!("SELECT * FROM ({}) WHERE id=?5 OR id=(SELECT id FROM member_linked_work WHERE tenant_id=?1 AND account_id=?2 AND volume_id=?3 AND generation=?4 AND origin_turn_id=?5)", all_tasks("")),
                     params![
                         user.tenant.0,
                         user.account.id,
@@ -171,7 +186,9 @@ impl Store {
                 .optional()?
                 .ok_or(StoreError::NotFound)?;
             let detail = match task.kind.as_str() {
+                "connected_brief" | "public_watch" | "local_monitor" => recurring_detail(&tx, &user.tenant.0, task)?,
                 "research" => workflows::detail(&tx, owner, task)?,
+                "shopping" | "application" | "mail_draft" | "calendar" => activity::detail(&tx, &db.provider_key, owner, &user, task)?,
                 "gmail" => mail_detail(&tx, &user.tenant.0, task)?,
                 "conversation_work" => workflows::conversation_detail(&tx, owner, task)?,
                 _ => chat_detail(&tx, &user.tenant.0, task)?,
@@ -189,6 +206,46 @@ fn event(state: &str, at: Option<i64>, title: Option<&str>, detail: Option<Strin
         title: title.map(str::to_owned),
         detail,
     }
+}
+fn recurring_detail(c: &Connection, tenant: &str, task: TaskSummary) -> Result<TaskDetail> {
+    let (turn, request, thread_title): (String, String, String) = c.query_row(
+        "SELECT r.id,r.user_text,t.title FROM chat_runs r
+         JOIN threads t ON t.id=r.thread_id AND t.tenant_id=r.tenant_id AND t.account_id=r.account_id
+         WHERE r.tenant_id=?1 AND r.request_id=?2 AND r.thread_id=?3",
+        params![tenant, task.id, task.thread_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    let (query, started, step) = match task.kind.as_str() {
+        "public_watch" => ("SELECT state,coalesce(finished_at,due_at) FROM member_public_watch_checks
+            WHERE tenant_id=?1 AND watch_id=?2 ORDER BY due_at DESC LIMIT 30", "공개 페이지 감시 시작", "페이지 확인"),
+        "local_monitor" => ("SELECT c.outcome,c.checked_at FROM member_work_monitor_checks c JOIN member_work_monitors m ON m.id=c.monitor_id
+            WHERE m.tenant_id=?1 AND m.id=?2 ORDER BY c.due_at DESC LIMIT 30", "자료 점검 시작", "자료 확인"),
+        _ => ("SELECT state,coalesce(finished_at,due_at) FROM member_connected_brief_runs
+            WHERE tenant_id=?1 AND brief_id=?2 ORDER BY due_at DESC LIMIT 30", "브리핑 시작", "브리핑 회차"),
+    };
+    let mut statement = c.prepare(query)?;
+    let runs = statement
+        .query_map(params![tenant, task.id], |row| {
+            Ok(event(
+                &row.get::<_, String>(0)?,
+                Some(row.get(1)?),
+                Some(step),
+                None,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut history = vec![event("active", Some(task.created_at), Some(started), None)];
+    history.extend(runs.into_iter().rev());
+    Ok(TaskDetail {
+        origin_turn_id: Some(turn),
+        task,
+        request,
+        thread_title,
+        history,
+        report_id: None,
+        runs: vec![],
+        reason: None,
+        result: None,
+        observation: None,
+    })
 }
 fn chat_detail(c: &Connection, tenant: &str, task: TaskSummary) -> Result<TaskDetail> {
     let (request,thread_title,reason,result,observation):(String,String,Option<String>,Option<String>,Option<String>)=c.query_row(

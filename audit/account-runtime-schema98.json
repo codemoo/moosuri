@@ -1,0 +1,107 @@
+{
+  "format": 1,
+  "schema": 98,
+  "base_schema": 97,
+  "migrations": [
+    {
+      "name": "0098_member_work_recovery.sql",
+      "sha256": "b305d2921f111396ac3fd1af807ac8d5092fb44d00152124384fbe65b24e5d75"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_linked_work",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_linked_work",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "id",
+        "kind",
+        "operation_id",
+        "origin_turn_id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "auth_epoch",
+        "created_at",
+        "admitted_order"
+      ],
+      "sql_sha256": "f9c7d34cc23fd9a37169e9b510864fc89047ed1345f4a7704a9c813061a0e759"
+    },
+    {
+      "name": "member_linked_work_events",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,p.account_id,p.tenant_id FROM member_linked_work_events x JOIN member_linked_work p ON p.id=x.work_id",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "work_id",
+        "sequence",
+        "state",
+        "at"
+      ],
+      "sql_sha256": "156d6efbe2041d9db75efd519a580c504db85634c592592c9aee45bf37d81a42"
+    }
+  ],
+  "updated_tables": [
+    {
+      "name": "member_conversation_interpretations",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_conversation_interpretations",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "request_id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "host_epoch",
+        "auth_epoch",
+        "fingerprint",
+        "plan",
+        "outcome",
+        "lease",
+        "lease_until",
+        "attempt"
+      ],
+      "sql_sha256": "088455e2cb0951014498e8cad61a8f8b106628dde650b183272f257ab66bcf63"
+    },
+    {
+      "name": "personal_browser_jobs",
+      "kind": "table",
+      "sql_sha256": "ba7727e6081fa5b7cd6e03f37822adfbd913fd95369c483db83875bda933dc15",
+      "scope": "personal",
+      "owner_query": "SELECT b.rowid AS rid,r.account_id,b.tenant_id FROM personal_browser_jobs b JOIN chat_runs r ON r.tenant_id=b.tenant_id AND r.id=b.run_id AND r.thread_id=b.thread_id",
+      "key_transition": "Fence browser work and revoke live control on restore. Never reissue controller handles or replay an uncertain input.",
+      "verification": "Reconcile every row to its conversation and exact owning chat run. A retained view is not a live Chromium session.",
+      "on_failure": "Stop extraction and quarantine ambiguous browser ownership.",
+      "columns": [
+        "tenant_id",
+        "run_id",
+        "thread_id",
+        "volume_id",
+        "generation",
+        "view",
+        "human_touched",
+        "controller_digest",
+        "controller_session",
+        "controller_until",
+        "pending",
+        "remaining_reads",
+        "research_reading"
+      ]
+    }
+  ],
+  "schema_sha256": "2be7ac762e17a53880c6d082d3cc4a283a48e276bdd1e8d198f657a2f4f09c33"
+}

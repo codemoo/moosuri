@@ -10,7 +10,17 @@ export type ConversationTask = {
   state: ConversationTaskState; revision: number; question_id: string | null; run_id: string | null;
   runs: string[]; events: ConversationEvent[]; can_reuse?: boolean; source_count: number; summary: string | null; report_id: string | null;
 };
-export type ConversationWorkGroup = { id: string; thread_id: string; turn_id: string; message: string; tasks: ConversationTask[] };
+export type ConversationWorkGroup = {
+  id: string; thread_id: string; turn_id: string; message: string; tasks: ConversationTask[];
+  /** Combined report over every child; absent on old servers and until one is stored. */
+  group_report_id?: string | null;
+  previous_reports?: string[];
+  /** A combined report was asked for and is not stored yet. */
+  report_requested?: boolean;
+};
+/** A group still changing on the server: a live child or a combined report in progress. */
+export const groupInProgress = (g: ConversationWorkGroup) =>
+  g.tasks.some(t => t.state === "queued") || (!!g.report_requested && !g.group_report_id);
 export type ConversationWorkPage = { thread_id: string; groups: ConversationWorkGroup[] };
 export type ConversationWorkRequest = { request_id: string; message: string; items: WorkItemInput[] };
 export type ConversationActionName = "refine" | "answer" | "cancel" | "reuse" | "save_report";
@@ -18,7 +28,7 @@ export type ConversationWorkAction = {
   request_id: string; task_id: string; revision: number; action: ConversationActionName;
   text?: string; question_id?: string;
 };
-export type ConversationReport = { id: string; title: string; body: string; run_id: string };
+export type ConversationReport = { id: string; title: string; body: string; run_id: string; children?: { title: string; body: string }[] };
 
 export const WORK_RETRY_KEY = "moosuri-work-retry";
 export const WORK_PENDING_KEY = "moosuri-pending-research-v1";
@@ -63,7 +73,12 @@ export function parseGroup(v: unknown): ConversationWorkGroup | null {
   if (!obj(v) || !str(v.id) || !v.id || !str(v.thread_id) || !Array.isArray(v.tasks)) return null;
   const tasks = v.tasks.map(task);
   if (tasks.some(t => t === null)) return null;
-  return { id: v.id, thread_id: v.thread_id, turn_id: str(v.turn_id) ? v.turn_id : "", message: str(v.message) ? v.message : "", tasks: tasks as ConversationTask[] };
+  return {
+    id: v.id, thread_id: v.thread_id, turn_id: str(v.turn_id) ? v.turn_id : "", message: str(v.message) ? v.message : "", tasks: tasks as ConversationTask[],
+    ...(str(v.group_report_id) && v.group_report_id ? { group_report_id: v.group_report_id } : {}),
+    ...(Array.isArray(v.previous_reports) && v.previous_reports.every(str) ? { previous_reports: v.previous_reports } : {}),
+    ...(v.report_requested === true ? { report_requested: true } : {}),
+  };
 }
 export function parsePage(v: unknown): ConversationWorkPage | null {
   if (!obj(v) || !str(v.thread_id) || !Array.isArray(v.groups)) return null;
@@ -71,9 +86,16 @@ export function parsePage(v: unknown): ConversationWorkPage | null {
   return groups.some(g => g === null) ? null : { thread_id: v.thread_id, groups: groups as ConversationWorkGroup[] };
 }
 export function parseReport(v: unknown): ConversationReport | null {
-  return obj(v) && str(v.id) && str(v.title) && str(v.body) && str(v.run_id) ? { id: v.id, title: v.title, body: v.body, run_id: v.run_id } : null;
+  if (!obj(v) || !str(v.id) || !str(v.title) || !str(v.body)) return null;
+  // A single-child report carries its run; a combined report may instead list each child's evidence.
+  const children = Array.isArray(v.children)
+    ? v.children.flatMap(c => obj(c) && str(c.title) && str(c.body) ? [{ title: c.title, body: c.body }] : [])
+    : [];
+  if (!str(v.run_id) && !children.length) return null;
+  return { id: v.id, title: v.title, body: v.body, run_id: str(v.run_id) ? v.run_id : "", ...(children.length ? { children } : {}) };
 }
-/** A response never lowers a child's revision: late/stale pages cannot undo newer state. */
+/** A response never lowers a child's revision: late/stale pages cannot undo newer state.
+ * Group-level report fields always follow the server (a deleted report must not linger). */
 export function mergeGroup(old: ConversationWorkGroup | undefined, next: ConversationWorkGroup): ConversationWorkGroup {
   if (!old) return next;
   const before = new Map(old.tasks.map(t => [t.id, t]));
@@ -180,9 +202,19 @@ export function parseWorkControl(text: string): WorkControl | null {
   return null;
 }
 
-export type TaskRef = { group: ConversationWorkGroup; task: ConversationTask };
+const ORDINAL_WORDS: Record<string, number> = { 첫: 1, 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6 };
+/** 1-based position named by "두 번째 건" / "3번째"; null for anything else. */
+export function ordinalOf(subject: string): number | null {
+  const m = subject.trim().match(/^(?:(첫|한|두|세|네|다섯|여섯)|(\d{1,2}))\s*번째(?:\s*(?:건|검색|조사|것|작업))?$/u);
+  if (!m) return null;
+  const n = m[1] ? ORDINAL_WORDS[m[1]] : Number(m[2]);
+  return n >= 1 && n <= MAX_WORK_ITEMS ? n : null;
+}
+
+export type TaskRef ={ group: ConversationWorkGroup; task: ConversationTask };
 export type Resolution =
   | { kind: "pass" }                                       // no work context: ordinary chat
+  | { kind: "server" }                                     // positional reference: the server maps it
   | { kind: "status"; group: ConversationWorkGroup }
   | { kind: "act"; action: "cancel" | "refine" | "answer"; targets: TaskRef[]; text?: string }
   | { kind: "choose"; action: "cancel" | "refine" | "answer"; candidates: TaskRef[]; text?: string }
@@ -206,6 +238,16 @@ export function resolveControl(control: WorkControl, groups: ConversationWorkGro
       : { kind: "choose", action: "cancel", candidates: all };
   }
   if (queryTooLong(control.term)) return { kind: "clarify", message: `추가 조건은 ${MAX_QUERY_BYTES}바이트 이내로 줄여 주세요.` };
+  const nth = ordinalOf(control.subject);
+  if (nth !== null) {
+    // "두 번째 건" names a position, not a title. Resolve it only when exactly one visible group
+    // could be meant; otherwise the server maps it to its own candidate list.
+    const withTasks = groups.filter(g => g.tasks.length);
+    if (withTasks.length !== 1) return { kind: "server" };
+    const task = withTasks[0].tasks[nth - 1];
+    if (!task || !eligibleActions(task).includes("refine")) return { kind: "server" };
+    return { kind: "act", action: "refine", targets: [{ group: withTasks[0], task }], text: control.term };
+  }
   const subject = control.subject.toLowerCase();
   const found: TaskRef[] = [];
   for (const group of groups) for (const t of group.tasks)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiFailure, isAborted, RequestScope } from "./api";
 import {
-  WORK_RETRY_KEY, compactMessage, eligibleActions, isLive, MAX_QUERY_BYTES, MAX_WORK_ITEMS, mergeGroup, parseGroup, parsePage, parseReport,
+  WORK_RETRY_KEY, compactMessage, eligibleActions, groupInProgress, MAX_QUERY_BYTES, MAX_WORK_ITEMS, mergeGroup, parseGroup, parsePage, parseReport,
   queryTooLong, scopeName, taskStateLabel, workItem,
   type ConversationActionName, type ConversationReport, type ConversationTask, type ConversationWorkAction,
   type ConversationWorkGroup, type ConversationWorkRequest, type WorkItemInput, type WorkScope,
@@ -148,7 +148,7 @@ export function useConversationWork(opts: {
     return () => { live = false; };
   }, [enabled, thread, idsKey, kick, read]);
 
-  const anyLive = Object.values(groups).some(g => g.tasks.some(isLive));
+  const anyLive = Object.values(groups).some(groupInProgress);
   useEffect(() => {
     if (!enabled || !thread || !anyLive || stale) return;
     const timer = window.setInterval(() => {
@@ -160,7 +160,7 @@ export function useConversationWork(opts: {
         try {
           const recent = await read();
           const seen = new Set((recent ?? []).map(g => g.id));
-          const older = Object.values(groupsRef.current).filter(g => !seen.has(g.id) && g.tasks.some(isLive)).slice(0, OLDER_PER_POLL);
+          const older = Object.values(groupsRef.current).filter(g => !seen.has(g.id) && groupInProgress(g)).slice(0, OLDER_PER_POLL);
           for (const group of older) await read(`?request_id=${encodeURIComponent(group.id)}`);
         } finally { inflight.current = false; }
       })();
@@ -256,6 +256,27 @@ export function useConversationWork(opts: {
 const timeFormat = new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const at = (seconds: number) => timeFormat.format(seconds * 1000);
 
+/** Dates the server offered for a departure question ("선택 <날짜> · 출발 …" lines). Undated records
+ * are never offered. Choosing one is the ordinary refine action, so no record changes. */
+export function dateChoices(summary: string | null | undefined): string[] {
+  const out: string[] = [];
+  for (const line of (summary ?? "").split("\n")) {
+    const found = /^선택 (.+?) · /.exec(line);
+    if (found && found[1] !== "날짜 미상" && !queryTooLong(found[1]) && !out.includes(found[1])) out.push(found[1]);
+  }
+  return out;
+}
+export const summaryStyle = (summary: string) => (summary.includes("출발 시각") ? { whiteSpace: "pre-line" as const } : undefined);
+export function DateChoices({ group, task, work }: { group: ConversationWorkGroup; task: ConversationTask; work: WorkApi }) {
+  const dates = task.state === "completed" ? dateChoices(task.summary) : [];
+  if (!dates.length || !eligibleActions(task).includes("refine")) return null;
+  const pending = work.busy.has(task.id);
+  return <div className="work-actions" role="group" aria-label="출장 날짜 선택">
+    {dates.map(date => <button key={date} type="button" disabled={pending}
+      onClick={() => void work.act(group, task, "refine", { text: date })}>{date} 출장으로 보기</button>)}
+  </div>;
+}
+
 function TaskCard({ group, task, work, openRun }: {
   group: ConversationWorkGroup; task: ConversationTask; work: WorkApi; openRun: (runId: string) => void;
 }) {
@@ -299,8 +320,9 @@ function TaskCard({ group, task, work, openRun }: {
       {task.state === "completed" ? ` · 근거 ${task.source_count}건 (기록 당시)` : ""}
     </p>
     {task.state === "needs_input" && <p className="work-question" role="status">어떤 검색어로 찾을까요?</p>}
-    {task.state === "completed" && task.summary && <p className="work-summary">{task.summary}</p>}
+    {task.state === "completed" && task.summary && <p className="work-summary" style={summaryStyle(task.summary)}>{task.summary}</p>}
     {task.state === "completed" && !task.summary && <p className="work-meta">지금은 요약을 읽을 수 없습니다. 상세 기록에서 확인하세요.</p>}
+    <DateChoices group={group} task={task} work={work} />
     {work.notices[task.id] && <p role="alert" className="work-notice">{work.notices[task.id]}</p>}
     <div className="work-actions">
       <button type="button" aria-expanded={panel === "history"} onClick={() => toggle("history")}>진행 기록</button>
@@ -329,11 +351,57 @@ function TaskCard({ group, task, work, openRun }: {
   </li>;
 }
 
-function GroupBody({ group, work, openRun }: { group: ConversationWorkGroup | undefined; work: WorkApi; openRun: (runId: string) => void }) {
+/** Loads one stored report on demand from the live owner-scoped source. Nothing is cached here:
+ * a later open rereads it, so an edited or deleted source is never shown from old text. */
+export function ReportViewer({ id, work, label }: { id: string; work: WorkApi; label: string }) {
+  const [report, setReport] = useState<ConversationReport | null>(null);
+  const [issue, setIssue] = useState("");
+  useEffect(() => {
+    let live = true;
+    setReport(null); setIssue("");
+    work.report(id).then(value => { if (live) setReport(value); },
+      e => { if (live && !isAborted(e)) setIssue("보고서를 불러오지 못했습니다."); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+  if (issue) return <p role="alert" className="work-notice">{issue}</p>;
+  if (!report) return <p className="work-meta" role="status">보고서를 불러오는 중…</p>;
+  return <section className="work-report" aria-label={`${label}: ${report.title}`}>
+    <h4>{report.title}</h4>
+    <div className="work-report-body">{report.body}</div>
+    {report.children?.map((child, i) => <div key={i} className="work-report-child">
+      <h5>{child.title}</h5>
+      <div className="work-report-body">{child.body}</div>
+    </div>)}
+  </section>;
+}
+
+/** Combined report state of a group: stored (opens on demand) or still being prepared. */
+export function GroupReport({ group, work }: { group: ConversationWorkGroup; work: WorkApi }) {
+  const [open, setOpen] = useState(false);
+  if (group.group_report_id) return <div className="work-group-report">
+    <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "묶음 보고서 닫기" : "묶음 보고서 보기"}</button>
+    {open && <ReportViewer id={group.group_report_id} work={work} label="묶음 보고서" />}
+  </div>;
+  if (group.report_requested) return <p className="work-meta" role="status">묶음 보고서를 준비하는 중입니다.</p>;
+  return null;
+}
+
+function PastReport({ id, work, version }: { id: string; work: WorkApi; version: number }) {
+  const [open, setOpen] = useState(false);
+  return <div><button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{version}번째 보고서</button>
+    {open && <ReportViewer id={id} work={work} label="이전 보고서" />}</div>;
+}
+
+export function GroupBody({ group, work, openRun }: { group: ConversationWorkGroup | undefined; work: WorkApi; openRun: (runId: string) => void }) {
   if (!group) return <p className="work-meta" role="status">작업 기록을 불러오는 중…</p>;
   return <section className="work-group" aria-label="맡긴 검색">
     <ul>{group.tasks.map(task => <TaskCard key={task.id} group={group} task={task} work={work} openRun={openRun} />)}</ul>
-    {work.stale && group.tasks.some(isLive) && <p className="work-meta" role="status">자동 갱신을 멈췄습니다. <button type="button" onClick={work.refresh}>지금 확인</button></p>}
+    <GroupReport group={group} work={work} />
+    {!!group.previous_reports?.length && <details><summary>이전 보고서 {group.previous_reports.length}개</summary>
+      {group.previous_reports.map((id, index) => <PastReport key={id} id={id} work={work} version={group.previous_reports!.length - index} />)}
+    </details>}
+    {work.stale && groupInProgress(group) && <p className="work-meta" role="status">자동 갱신을 멈췄습니다. <button type="button" onClick={work.refresh}>지금 확인</button></p>}
   </section>;
 }
 export function MissingGroup({ id, work }: { id: string; work: WorkApi }) {

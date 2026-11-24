@@ -1,5 +1,10 @@
 //! Private member Google adapter. Browser DTOs never carry broker grants.
+mod briefs;
+mod calendar;
 mod local_gws;
+mod mail_delivery;
+pub(crate) mod mail_work;
+pub(crate) mod mail_write;
 mod workspace;
 use axum::{
     Json, Router,
@@ -55,6 +60,30 @@ struct Completed {
     continuation: Option<moosuri_store::MemberGoogleReadIntent>,
 }
 type Inbox = moosuri_store::MemberGoogleInbox;
+/// Scope label of a Gmail `IMPORTANT`+`INBOX` metadata page. `Inbox::valid` only accepts the ordinary
+/// scope, so a reply that is not explicitly this one can never be mistaken for an important page.
+pub(super) const IMPORTANT_SCOPE: &str = "one_important_inbox_page_metadata_only";
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ImportantInbox {
+    pub mailbox: String,
+    pub messages: Vec<moosuri_store::MemberGoogleInboxMessage>,
+    pub has_more: bool,
+    pub scope: String,
+}
+impl ImportantInbox {
+    /// Re-labels as an ordinary validated page only when the reply declared the important scope.
+    pub(super) fn into_inbox(self) -> Option<Inbox> {
+        (self.scope == IMPORTANT_SCOPE)
+            .then(|| Inbox {
+                mailbox: self.mailbox,
+                messages: self.messages,
+                has_more: self.has_more,
+                scope: "one_inbox_page_metadata_only".into(),
+            })
+            .filter(Inbox::valid)
+    }
+}
 fn hex64(s: &str) -> bool {
     s.len() == 64
         && s.bytes()
@@ -156,8 +185,18 @@ pub fn public_response(
     status: StatusCode,
     bytes: &[u8],
 ) -> Result<Vec<u8>, StatusCode> {
+    if let Some(response) = mail_write::public_response(path, method, status, bytes) {
+        return response;
+    }
+    if let Some(response) = mail_work::public_response(path, method, status, bytes) {
+        return response;
+    }
     let invalid = StatusCode::BAD_GATEWAY;
-    let scoped = workspace::action(path);
+    // Member Calendar status/prepare/apply have their own reconstructed DTOs.
+    if let Some(answer) = calendar::public_response(path, method, status, bytes) {
+        return answer;
+    }
+    let scoped = workspace::action(path).or_else(|| calendar_action(path));
     if method == Method::POST
         && (path == format!("{BASE}/disconnect") || matches!(scoped, Some((_, "disconnect"))))
         && status == StatusCode::NO_CONTENT
@@ -250,6 +289,13 @@ pub fn public_response(
         }
         _ => Err(invalid),
     }
+}
+
+/// Calendar OAuth lifecycle paths only. `read` is deliberately not accepted: the
+/// dedicated Calendar grant is never a Workspace/Drive read capability.
+fn calendar_action(path: &str) -> Option<(Service, &str)> {
+    let action = path.strip_prefix(BASE)?.strip_prefix("/calendar/")?;
+    matches!(action, "start" | "complete" | "disconnect").then_some((Service::Calendar, action))
 }
 
 struct Failure(StatusCode, &'static str);
@@ -393,6 +439,17 @@ enum Operation<'a> {
         access_token: Secret<'a>,
         access_binding: &'a str,
     },
+    /// Read-only metadata page of Gmail messages labelled both `INBOX` and `IMPORTANT` (Google's own
+    /// deterministic label). Local gws only: the closed broker protocol is never extended.
+    ImportantInboxPage {
+        access_token: Secret<'a>,
+        access_binding: &'a str,
+    },
+    /// Validate a signed access binding without any provider IO (Calendar dispatch).
+    VerifyAccess {
+        access_token: Secret<'a>,
+        access_binding: &'a str,
+    },
 }
 #[derive(Serialize)]
 struct BrokerRequest<'a> {
@@ -455,7 +512,10 @@ impl Google {
                 .map_err(configuration_failure)?;
                 local.raw(self.owner, id, revision, operation).await?
             }
-            Backend::Broker { .. } if self.service != Service::Gmail => {
+            Backend::Broker { .. }
+                if self.service != Service::Gmail
+                    || matches!(operation, Operation::ImportantInboxPage { .. }) =>
+            {
                 return Err(unavailable("unsupported"));
             }
             Backend::Broker { socket, uid } => {
@@ -496,6 +556,37 @@ impl Google {
         let bytes = self.raw(Uuid::new_v4(), revision, operation).await?;
         decode(&bytes).map_err(|_| Failure(StatusCode::SERVICE_UNAVAILABLE, "google_unavailable"))
     }
+    /// Calendar only. The reply must echo the exact verified mailbox.
+    async fn verify_access(
+        &self,
+        revision: Uuid,
+        binding: &moosuri_store::MemberGoogleBinding,
+    ) -> Result<(), Failure> {
+        if self.service != Service::Calendar {
+            return Err(StoreError::Forbidden.into());
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Verified {
+            mailbox: String,
+        }
+        let reply: BrokerReply<Verified> = self
+            .call(
+                Some(revision),
+                Operation::VerifyAccess {
+                    access_token: Secret(&binding.access_token),
+                    access_binding: &binding.access_binding,
+                },
+            )
+            .await?;
+        if !reply.result.mailbox.eq_ignore_ascii_case(&binding.mailbox) {
+            return Err(Failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "google_unavailable",
+            ));
+        }
+        Ok(())
+    }
     async fn describe(&self) -> Result<BrokerReply<Description>, Failure> {
         let reply: BrokerReply<Description> = self.call(None, Operation::Describe).await?;
         let app = &reply.result;
@@ -518,6 +609,9 @@ impl Google {
                     "refresh",
                     if self.service == Service::Gmail {
                         "inbox_page"
+                    } else if self.service == Service::Calendar {
+                        // OAuth-only adapter: Calendar IO is typed, never a broker read.
+                        "oauth_only"
                     } else {
                         "workspace_read"
                     },
@@ -586,13 +680,17 @@ pub fn routes(store: Store, owner: VolumeOwner, socket: PathBuf, broker_uid: u32
         serial: Default::default(),
     })
 }
-pub fn local_routes(
+pub fn local_routes_with_briefs(
     store: Store,
     owner: VolumeOwner,
     config: PathBuf,
     proxy: crate::gws_relay::MemberProxy,
-) -> Router {
-    router(Google {
+) -> (Router, Arc<dyn moosuri_server::personal_tasks::BriefReads>) {
+    let address = proxy.address();
+    let delivery = mail_delivery::routes(store.clone(), owner, config.clone(), address);
+    let consent = mail_write::routes(store.clone(), owner, &config, address)
+        .expect("member relay uses a bound loopback address");
+    let google = Google {
         service: Service::Gmail,
         store,
         owner,
@@ -601,7 +699,9 @@ pub fn local_routes(
             proxy: Arc::new(proxy),
         },
         serial: Default::default(),
-    })
+    };
+    let reads = briefs::reader(google.clone());
+    (router(google).merge(consent).merge(delivery), reads)
 }
 #[cfg(test)]
 pub(crate) fn routes_with_test_transport(
@@ -647,6 +747,21 @@ fn router(state: Google) -> Router {
                 .with_state(state),
         );
     }
+    // Dedicated Calendar lifecycle (never merged into WORKSPACE, no `read` route).
+    let cal = Google {
+        service: Service::Calendar,
+        ..state.clone()
+    };
+    routes = routes.merge(
+        Router::new()
+            .route(&cal.path("start"), post(start))
+            .route(&cal.path("complete"), post(complete))
+            .route(&cal.path("disconnect"), post(disconnect))
+            .route("/internal/google/calendar/capture", post(capture))
+            .with_state(cal),
+    );
+    let provider = calendar::provider_for(&state.backend);
+    routes = routes.merge(calendar::routes(state, provider));
     routes.layer(DefaultBodyLimit::max(8192))
 }
 fn browser<T: Serialize>(path: &str, value: &T) -> Result<Response, Failure> {
@@ -1108,8 +1223,9 @@ mod tests {
                 owner["peer_uid"] = json!(unsafe { libc::geteuid() });
                 let mailbox = mailbox.as_str();
                 let result = match op["kind"].as_str().unwrap() {
+                    "verify_access" => json!({"mailbox":mailbox}),
                     "describe" => {
-                        json!({"client_id":"synthetic-client","redirect_uri":redirect_uri,"scope":service.scope(),"operations":["authorization_url","exchange","refresh",if service == Service::Gmail {"inbox_page"} else {"workspace_read"}]})
+                        json!({"client_id":"synthetic-client","redirect_uri":redirect_uri,"scope":service.scope(),"operations":["authorization_url","exchange","refresh",if service == Service::Gmail {"inbox_page"} else if service == Service::Calendar {"oauth_only"} else {"workspace_read"}]})
                     }
                     "authorization_url" => {
                         let mut url = url::Url::parse(
@@ -1157,7 +1273,9 @@ mod tests {
                             Service::Sheets => {
                                 json!({"id":id,"title":"Sheet","sheets":[{"title":"first","index":0}]})
                             }
-                            Service::Gmail => panic!("unexpected Workspace read for Gmail"),
+                            Service::Gmail | Service::Calendar => {
+                                panic!("unexpected Workspace read for Gmail/Calendar")
+                            }
                         }
                     }
                     "inbox_page" => {
@@ -1351,7 +1469,7 @@ mod tests {
         let proxy = crate::gws_relay::start_member("/unused-fixture.sock".into(), 0)
             .await
             .unwrap();
-        let app = local_routes(store.clone(), owner, config, proxy);
+        let (app, _) = local_routes_with_briefs(store.clone(), owner, config, proxy);
         let user = store.authenticate(token.clone()).await.unwrap();
         assert!(
             store
@@ -1368,6 +1486,108 @@ mod tests {
                 .status(),
             StatusCode::UNAUTHORIZED
         );
+    }
+    #[tokio::test]
+    async fn cancelled_brief_read_settles_its_refresh_and_the_next_slot_reads_once() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        let (store, owner, token) = member(&temp.path().join("member")).await;
+        let user = store.authenticate(token.clone()).await.unwrap();
+        let thread = store.create_thread(&user, "Morning".into()).await.unwrap();
+        let fake = Arc::new(Fake::default());
+        let inner = transport(fake.clone(), Uuid::new_v4());
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let blocked: TestTransport = {
+            let (entered, release) = (entered.clone(), release.clone());
+            Arc::new(move |body| {
+                let (inner, entered, release) = (inner.clone(), entered.clone(), release.clone());
+                Box::pin(async move {
+                    let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    if request["operation"]["kind"] == "refresh" {
+                        entered.notify_one();
+                        release.notified().await;
+                    }
+                    inner(body).await
+                })
+            })
+        };
+        let google = Google {
+            service: Service::Gmail,
+            store: store.clone(),
+            owner,
+            backend: Backend::Fixture(blocked),
+            serial: Default::default(),
+        };
+        let connection = connect(&router(google.clone()), owner, &token).await;
+        let grant = store.create_member_brief(owner, user.clone(), 1, serde_json::from_value(json!({
+            "request_id":Uuid::new_v4(), "thread_id":thread.id, "consent":true,
+            "gmail":{"connection_id":connection["connection_id"],"epoch":connection["epoch"]},
+            "at":"08:00","timezone":"Asia/Seoul","interval_days":1,"days":7
+        })).unwrap()).await.unwrap();
+        let claim = store
+            .claim_due_member_briefs(owner, 1, grant.next_due.unwrap())
+            .await
+            .unwrap()
+            .remove(0);
+        let reads = briefs::reader(google);
+        let reading = {
+            let (reads, claim) = (reads.clone(), claim.clone());
+            tokio::spawn(async move { reads.read(&claim).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        assert!(
+            store
+                .member_google_status_local(&user, owner)
+                .await
+                .unwrap()
+                .refresh_pending
+        );
+        reading.abort();
+        assert!(reading.await.is_err_and(|e| e.is_cancelled()));
+        store
+            .settle_member_brief(
+                claim,
+                moosuri_store::MemberBriefOutcome::Unavailable("timeout"),
+            )
+            .await
+            .unwrap();
+        release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let status = store
+                    .member_google_status_local(&user, owner)
+                    .await
+                    .unwrap();
+                if !status.refresh_pending && status.connected && !status.needs_refresh {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let id = grant.id.parse().unwrap();
+        let history = store
+            .member_brief(owner, user.clone(), 1, id)
+            .await
+            .unwrap();
+        assert_eq!(history.runs[0].state, "unavailable");
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 0);
+        let next = store
+            .claim_due_member_briefs(owner, 1, history.next_due.unwrap())
+            .await
+            .unwrap()
+            .remove(0);
+        let outcome = reads.read(&next).await;
+        store.settle_member_brief(next, outcome).await.unwrap();
+        let history = store.member_brief(owner, user, 1, id).await.unwrap();
+        assert_eq!(history.runs[0].state, "completed");
+        assert_eq!(history.runs[0].gmail_count, Some(0));
+        assert_eq!(fake.refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(fake.reads.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn thread_read_is_encrypted_durable_idempotent_and_outside_model_history() {

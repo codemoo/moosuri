@@ -176,7 +176,7 @@ pub(in crate::personal_google) fn resource_is_valid(
     resource_id: Option<&str>,
 ) -> bool {
     match service {
-        MemberGoogleService::Gmail => false,
+        MemberGoogleService::Gmail | MemberGoogleService::Calendar => false,
         MemberGoogleService::Drive => resource_id.is_none(),
         _ => resource_id.is_some_and(valid_id),
     }
@@ -406,7 +406,7 @@ impl WorkspaceData {
             return Err(invalid());
         }
         let answer = match service {
-            MemberGoogleService::Gmail => return Err(invalid()),
+            MemberGoogleService::Gmail | MemberGoogleService::Calendar => return Err(invalid()),
             MemberGoogleService::Drive => serde_json::from_slice(bytes).map(Self::Drive),
             MemberGoogleService::Docs => serde_json::from_slice(bytes).map(Self::Docs),
             MemberGoogleService::Slides => serde_json::from_slice(bytes).map(Self::Slides),

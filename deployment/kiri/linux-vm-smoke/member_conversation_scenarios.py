@@ -16,8 +16,14 @@ def api(page, path, account, payload=None):
             headers["Content-Type"] = "application/json";
             init.body = JSON.stringify(payload);
         }
-        const response = await fetch(path, init);
-        return [response.status, await response.json().catch(() => null)];
+        const cancel = new AbortController();
+        const deadline = setTimeout(() => cancel.abort(), 90000);
+        try {
+            const response = await fetch(path, {...init, signal: cancel.signal});
+            return [response.status, await response.json().catch(() => null)];
+        } finally {
+            clearTimeout(deadline);
+        }
     }""", [path, account, payload])
 
 

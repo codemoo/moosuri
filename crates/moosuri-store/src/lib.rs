@@ -470,6 +470,7 @@ impl Store {
         automatic_memory::restart(&conn)?;
         source_connections::restart(&conn)?;
         browser::restart(&conn)?;
+        personal_browser::public_watch_restart(&conn)?;
         conn.execute("UPDATE mail_actions SET version=version+1,state='outcome_unknown',raw=NULL,content=NULL WHERE state='dispatch_committed'",[])?;
         conn.execute("UPDATE mail_actions SET version=version+1,raw=NULL,content=NULL WHERE state='outcome_unknown' AND (raw IS NOT NULL OR content IS NOT NULL)",[])?;
         let provider_key = providers::open_key(&conn, &dir)?;

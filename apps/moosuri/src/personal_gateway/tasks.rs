@@ -1,5 +1,9 @@
 use super::*;
+mod briefs;
 mod conversation;
+mod monitors;
+mod public_watches;
+mod research_outcomes;
 use moosuri_core::personal_browser::{
     TaskDetail, TaskPage, WorkAction, WorkReceipt, WorkRequest, task_cursor,
 };
@@ -8,6 +12,28 @@ const BASE: &str = "/api/v1/personal/tasks";
 const WORKFLOWS: &str = "/api/v1/personal/tasks/workflows";
 pub(super) fn routes() -> Router<Gateway> {
     Router::new()
+        .route(
+            "/api/v1/personal/tasks/research-outcomes/{thread}",
+            get(handler).post(handler),
+        )
+        .route(
+            "/api/v1/personal/tasks/research-outcomes/{thread}/control",
+            axum::routing::post(handler),
+        )
+        .route(public_watches::BASE, get(handler).post(handler))
+        .route(
+            "/api/v1/personal/tasks/public-watches/{id}/stop",
+            post(handler),
+        )
+        .route(briefs::BASE, get(handler).post(handler))
+        .route("/api/v1/personal/tasks/briefs/{id}", get(handler))
+        .route("/api/v1/personal/tasks/briefs/{id}/stop", post(handler))
+        .route(monitors::BASE, get(handler).post(handler))
+        .route("/api/v1/personal/tasks/monitors/{id}", get(handler))
+        .route(
+            "/api/v1/personal/tasks/monitors/{id}/stop",
+            axum::routing::post(handler),
+        )
         .route(BASE, get(handler))
         .route(
             "/api/v1/personal/tasks/conversations/{thread}",
@@ -47,6 +73,22 @@ async fn handle(
     body: &[u8],
 ) -> Result<Response, StatusCode> {
     g.headers(headers, &method)?;
+    if uri.path() == public_watches::BASE
+        || uri
+            .path()
+            .starts_with("/api/v1/personal/tasks/public-watches/")
+    {
+        return public_watches::forward(g, headers, method, &uri, body).await;
+    }
+    if uri.path() == briefs::BASE || uri.path().starts_with("/api/v1/personal/tasks/briefs/") {
+        return briefs::forward(g, headers, method, &uri, body).await;
+    }
+    if uri.path() == monitors::BASE || uri.path().starts_with("/api/v1/personal/tasks/monitors/") {
+        return monitors::forward(g, headers, method, &uri, body).await;
+    }
+    if uri.path().starts_with(research_outcomes::PREFIX) {
+        return research_outcomes::forward(g, headers, method, &uri, body).await;
+    }
     if uri.path().starts_with(conversation::PREFIX) {
         return conversation::forward(g, headers, method, &uri, body).await;
     }
@@ -94,7 +136,12 @@ async fn handle(
     let invalid = |_| StatusCode::SERVICE_UNAVAILABLE;
     let value = if let Some(id) = id {
         let detail: TaskDetail = serde_json::from_slice(&bytes).map_err(invalid)?;
-        if detail.task.id != id.to_string() {
+        let requested = id.to_string();
+        let linked_turn = matches!(
+            detail.task.kind.as_str(),
+            "shopping" | "application" | "mail_draft" | "calendar"
+        ) && detail.origin_turn_id.as_deref() == Some(requested.as_str());
+        if detail.task.id != requested && !linked_turn {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         serde_json::to_vec(&detail)

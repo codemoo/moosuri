@@ -6,7 +6,7 @@ import { browserStateLabel, type PersonalBrowserState } from "./personal-browser
 
 type TaskState = PersonalBrowserState | "queued" | "running" | "failed" | "cancelled" | "incomplete" | "refused" | "awaiting_consent" | "dispatched" | "withdrawn" | "unknown" | "needs_input";
 export type TaskSummary = {
-  id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail" | "conversation_work"; preview?: string | null;
+  id: string; thread_id: string; title: string; state: TaskState; kind?: "text" | "browser" | "research" | "gmail" | "conversation_work" | "shopping" | "application" | "calendar" | "mail_draft" | "connected_brief" | "public_watch" | "local_monitor"; preview?: string | null;
   next_actor: "assistant" | "member" | "none"; created_at: number; scheduled_at?: number | null;
   schedule_id?: string | null;
 };
@@ -40,8 +40,21 @@ const nextStep: Record<PersonalBrowserState, string> = {
 };
 const states:Record<string,string> = { needs_input:"답변 필요", starting:"시작됨", queued:"접수됨", running:"답변 작성 중", completed:"완료됨", failed:"실패", cancelled:"취소됨", incomplete:"일부 완료", refused:"응답 거절", outcome_unknown:"결과 확인 필요", awaiting_consent:"Google 연결 대기", ready:"조회 준비됨", dispatched:"조회 요청 전달", unknown:"조회 결과 확인 필요", withdrawn:"조회 권한 철회", prepared:"대화 문맥 준비", searched:"검색 완료", source_read:"자료 확인" };
 function stateLabel(task:TaskSummary,state:string=task.state) {
+  if (task.kind === "connected_brief" || task.kind === "public_watch" || task.kind === "local_monitor") {
+    const briefStates: Record<string,string> = { baseline: "첫 확인", changed: "변경 확인", unchanged: "변화 없음", briefed: "브리핑 완료", active: "예약 중", stopped: "중지됨", expired: "기간 종료", revoked: "권한 철회",
+      claimed: "읽는 중", partial: "일부만 확인", unavailable: "조회할 수 없음", needs_connection: "연결 필요", missed: "회차 건너뜀" };
+    if (briefStates[state]) return briefStates[state];
+  }
   if ((!task.kind || task.kind==="browser") && state in browserStateLabel) return browserStateLabel[state as PersonalBrowserState];
-  return states[state] ?? state;
+  const workStates: Record<string, string> = {
+    preview: "최종 내용 확인", applied: "일정 반영 확인", conflict: "일정 변경 확인 필요",
+    dispatch_committed: "요청 전달 중", failed_definite: "처리 실패", local_draft: "초안 작성됨",
+    draft_saved: "Gmail에 초안 저장됨", revised: "초안 수정됨", sent: "Gmail 발송 접수",
+    approved: "최종 내용 승인됨", ranked: "구매 조건 비교 완료", draft_ready: "신청 초안 준비됨",
+    no_match: "조건에 맞는 결과 없음", needs_sources: "자료 필요", refine: "조건 변경", refresh: "근거 다시 확인",
+    draft: "초안 작성", withdraw: "철회됨", close: "종료됨",
+  };
+  return workStates[state] ?? states[state] ?? state;
 }
 function taskMarker(state: string, recorded = false) {
   if (["failed", "incomplete", "refused", "outcome_unknown", "unknown"].includes(state)) return "!";
@@ -73,6 +86,13 @@ const reasons: Record<string, string> = {
 const actorLabel = { assistant: "어시스턴트 진행", member: "내 확인 필요", none: "" };
 function taskOrigin(task: TaskSummary) {
   switch (task.kind) {
+    case "public_watch": return "공개 페이지 감시";
+    case "local_monitor": return "자료 점검";
+    case "connected_brief": return "메일·일정 브리핑";
+    case "shopping": return "구매 비교";
+    case "application": return "지원 준비";
+    case "calendar": return "개인 일정";
+    case "mail_draft": return "Gmail 초안";
     case "conversation_work": return "대화에서 맡긴 조사";
     case "research":
       if (task.scheduled_at != null) return "예약 실행";

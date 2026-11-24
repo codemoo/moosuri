@@ -214,6 +214,25 @@ pub(crate) fn quarantine_for_restore(conn: &Connection) -> Result<()> {
          WHERE state IN ('queued','needs_input')",
         [],
     )?;
+    // Restore migrates to the current schema in this transaction before retiring grants.
+    // Keep the member's history, withdraw unverified/in-flight reads, and silence old notices.
+    conn.execute_batch(
+        "UPDATE member_work_monitors SET state='revoked',next_due=NULL,ended_at=unixepoch(),
+             revision=revision+1,fingerprint=NULL WHERE state='active';
+         UPDATE member_connected_briefs SET state='revoked',end_reason='restore_quarantine',
+             next_due=NULL,ended_at=unixepoch(),revision=revision+1 WHERE state='active';
+         UPDATE member_connected_brief_runs SET state='withdrawn',cipher=NULL,freshness=NULL,
+             finished_at=coalesce(finished_at,unixepoch()) WHERE state='claimed' OR cipher IS NOT NULL;
+         UPDATE member_public_watches SET state='revoked',end_reason='restore_quarantine',
+             next_due=NULL,ended_at=unixepoch(),revision=revision+1,fingerprint=NULL WHERE state='active';
+         UPDATE member_public_watch_checks SET state='withdrawn',cipher=NULL,fingerprint=NULL,
+             reason='restore_quarantine',finished_at=coalesce(finished_at,unixepoch())
+             WHERE state='claimed' OR cipher IS NOT NULL;
+         UPDATE local_notifications AS n SET dismissed=1,push_suppressed=1
+             WHERE EXISTS(SELECT 1 FROM member_work_monitors m WHERE m.tenant_id=n.tenant_id AND m.id=n.schedule_id)
+                OR EXISTS(SELECT 1 FROM member_connected_briefs b WHERE b.tenant_id=n.tenant_id AND b.id=n.schedule_id)
+                OR EXISTS(SELECT 1 FROM member_public_watches w WHERE w.tenant_id=n.tenant_id AND w.id=n.schedule_id);"
+    )?;
     conn.execute("UPDATE schedule_chat_drafts SET pending=0", [])?;
     conn.execute("UPDATE reminder_occurrences SET state='skipped',reason='restore_quarantine',nonce=NULL,deadline=NULL WHERE state IN('queued','claimed')",[])?;
     conn.execute("UPDATE reminder_schedules SET state='paused',reason='restore_quarantine',revision=revision+1 WHERE state IN('active','paused')",[])?;
@@ -822,6 +841,15 @@ pub(crate) fn direct_notice(
 
 /// Shared live-authority check for inbox, push dispatch and passive display.
 pub(crate) fn notice_current(c: &Connection, t: &str, id: &str) -> Result<bool> {
+    if let Some(current) = crate::mail::member_briefs::notice_current(c, t, id)? {
+        return Ok(current);
+    }
+    if let Some(current) = crate::personal_browser::public_watch_notice_current(c, t, id)? {
+        return Ok(current);
+    }
+    if let Some(current) = crate::personal_browser::monitor_notice_current(c, t, id)? {
+        return Ok(current);
+    }
     if let Some(current) = crate::mail::reply_watches::notice_current(c, t, id)? {
         return Ok(current);
     }

@@ -1,0 +1,83 @@
+{
+  "format": 1,
+  "schema": 97,
+  "base_schema": 96,
+  "migrations": [
+    {
+      "name": "0097_member_research_outcomes.sql",
+      "sha256": "c1b6174ce7bb72d247e7eac241f5bd5940542da04308cdb5cd76bd0c21cbb75d"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_research_outcome_actions",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,p.account_id,p.tenant_id FROM member_research_outcome_actions x JOIN member_research_outcomes p ON p.id=x.outcome_id",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "outcome_id",
+        "from_revision",
+        "action",
+        "arg"
+      ],
+      "sql_sha256": "ef7436a1f47dd5b00f3a1620a886552874b99226bcfd7c88094f01a7b753525b"
+    },
+    {
+      "name": "member_research_outcome_sources",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,p.account_id,p.tenant_id FROM member_research_outcome_sources x JOIN member_research_outcomes p ON p.id=x.outcome_id",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "outcome_id",
+        "position",
+        "kind",
+        "ref_id",
+        "host",
+        "digest",
+        "pinned_at"
+      ],
+      "sql_sha256": "d278b2a8e416442341718fc055aed0f746c71f4fea4e5cff42c849d65aeca621"
+    },
+    {
+      "name": "member_research_outcomes",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_research_outcomes",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "thread_id",
+        "kind",
+        "title",
+        "message",
+        "criteria",
+        "request_digest",
+        "auth_epoch",
+        "host_epoch",
+        "revision",
+        "auto_sources",
+        "draft_requested",
+        "question_id",
+        "pending_url",
+        "withdrawn",
+        "created_at",
+        "updated_at",
+        "admitted_order"
+      ],
+      "sql_sha256": "cc0116619637770b0adb78147113c397fbe6dc85808e3840c7cfd056c78c2741"
+    }
+  ],
+  "schema_sha256": "f78c9c0fbbc65c96e8a0a28a7bb20389584d0c5fd538388dbbfb8f2f2721c8af"
+}

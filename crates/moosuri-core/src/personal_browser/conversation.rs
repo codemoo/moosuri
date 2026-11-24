@@ -25,6 +25,7 @@ pub struct ConversationWorkRequest {
 #[serde(rename_all = "snake_case")]
 pub enum ConversationActionKind {
     Refine,
+    Exclude,
     Answer,
     Cancel,
     Reuse,
@@ -77,6 +78,20 @@ pub struct ConversationWorkGroup {
     pub turn_id: String,
     pub message: String,
     pub tasks: Vec<ConversationTask>,
+    /// Combined report over this group's completed children. Present only once the report was
+    /// built from stored receipts; absent while pending, unavailable, or never requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_report_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previous_reports: Vec<String>,
+    /// A combined report was requested and is pending or ready. Absent (false) otherwise, so
+    /// older clients and older stored projections are unchanged.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub report_requested: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

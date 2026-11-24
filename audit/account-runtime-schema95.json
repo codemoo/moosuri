@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "schema": 95,
+  "base_schema": 94,
+  "migrations": [
+    {
+      "name": "0095_member_mail_work.sql",
+      "sha256": "04d8949b1f9ea50654e4536c11d5d95577478b2a40b331ec6644901394fa8953"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_mail_work",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_mail_work",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "thread_id",
+        "read_request_id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "source_connection_id",
+        "source_epoch",
+        "app_revision",
+        "source_mailbox",
+        "source_message_id",
+        "revision",
+        "digest",
+        "phase",
+        "cipher",
+        "action_id",
+        "action_revision",
+        "action_digest",
+        "action_work_revision",
+        "mail_connection_id",
+        "mail_connection_epoch",
+        "provider_attempt",
+        "provider_draft_id",
+        "provider_draft_message_id",
+        "provider_draft_digest",
+        "created_at",
+        "updated_at"
+      ],
+      "sql_sha256": "b7fb9ea0e8e4259891311dfe485ba7e02083927b0d1210419d491ba02a631b53"
+    }
+  ],
+  "schema_sha256": "2951f0f63956cb03ed8ef283236c32576729aef050d971c6661813f93c6c9386"
+}

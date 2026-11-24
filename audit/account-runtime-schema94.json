@@ -1,0 +1,71 @@
+{
+  "format": 1,
+  "schema": 94,
+  "base_schema": 93,
+  "migrations": [
+    {
+      "name": "0094_member_work_monitors.sql",
+      "sha256": "fd4833d04dee1fb2d7f9de95b7d96c51c0a3c0a0ee579a1097e216d9de328c33"
+    }
+  ],
+  "tables": [
+    {
+      "name": "member_work_monitor_checks",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT x.rowid AS rid,p.account_id,p.tenant_id FROM member_work_monitor_checks x JOIN member_work_monitors p ON p.id=x.monitor_id",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "monitor_id",
+        "due_at",
+        "checked_at",
+        "outcome",
+        "source_count",
+        "skipped",
+        "run_id",
+        "notification_id"
+      ],
+      "sql_sha256": "337e09cb68987126c59a45eec5cc348be367c2f76f7f8c491db55c95fee853f3"
+    },
+    {
+      "name": "member_work_monitors",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_work_monitors",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "id",
+        "tenant_id",
+        "account_id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "host_epoch",
+        "kind",
+        "every_seconds",
+        "local_time",
+        "zone",
+        "days",
+        "state",
+        "revision",
+        "created_at",
+        "expires_at",
+        "next_due",
+        "ended_at",
+        "stop_request_id",
+        "fingerprint",
+        "source_count",
+        "last_checked_at",
+        "last_changed_at",
+        "last_run_id",
+        "alerts"
+      ],
+      "sql_sha256": "35e1000b542e5ac4fe45a88efe941a14e560f216dfbff2d6245ee900ca455e18"
+    }
+  ],
+  "schema_sha256": "c5e198c9968da9a203336b555366b6a5ed885bd7cae132e10bffd67935b1c1d8"
+}

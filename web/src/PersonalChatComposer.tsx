@@ -2,11 +2,12 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 
 export function PersonalChatComposer({
-  draft, disabled, busy, waiting, mode, onDraft, onSend, browserMode, followUp, editor,
+  draft, disabled, sendUnavailable, busy, waiting, mode, onDraft, onSend, browserMode, followUp, editor,
 }: {
   draft: string;
   editor: RefObject<HTMLTextAreaElement | null>;
   disabled: boolean;
+  sendUnavailable?: boolean;
   busy: boolean;
   waiting: string;
   mode: "chat" | "start" | "guide";
@@ -17,7 +18,7 @@ export function PersonalChatComposer({
 }) {
   const composing = useRef(false);
   const tooLong = new TextEncoder().encode(draft).length > (mode === "guide" ? 2000 : 8192);
-  const canSend = !disabled && !busy && !tooLong && !!draft.trim();
+  const canSend = !disabled && !sendUnavailable && !busy && !tooLong && !!draft.trim();
   const placeholder = disabled ? "답변을 받을 수 없습니다."
     : busy ? waiting
     : mode === "start" ? "웹 주소와 할 일을 입력하세요"

@@ -210,6 +210,13 @@ impl GmailClient {
             transport: transport::Transport::google_oauth_proxy(address)?,
         })
     }
+    /// Member-private writes: OAuth token and fixed typed Gmail v1 requests
+    /// (drafts/send/readback) via the loopback relay. Calendar is denied.
+    pub fn google_gmail_proxy(address: std::net::SocketAddr) -> Result<Self, GmailError> {
+        Ok(Self {
+            transport: transport::Transport::google_gmail_proxy(address)?,
+        })
+    }
     /// Synthetic cross-crate acceptance only. Not part of the default build.
     #[cfg(feature = "test-fixtures")]
     #[doc(hidden)]

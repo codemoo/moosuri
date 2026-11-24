@@ -22,6 +22,14 @@ mod model_context;
 mod projection;
 mod reconcile;
 mod reply_watches;
+pub type FenceFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>>;
+pub trait DispatchFence: Send + Sync {
+    fn permit<'a>(
+        &'a self,
+        dispatch: &'a MailDispatch,
+        binding: &'a MailBinding,
+    ) -> FenceFuture<'a>;
+}
 type MailLocks = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 #[derive(Clone)]
 pub struct MailService {
@@ -54,6 +62,18 @@ impl MailService {
             locks: Arc::new(Mutex::new(HashMap::new())),
             signals,
         }
+    }
+    pub fn for_member_relay(store: Store, oauth: Arc<OAuthClient>, client: GmailClient) -> Self {
+        let (changes, _) = tokio::sync::watch::channel(0);
+        let signals = crate::Signals {
+            stop: CancellationToken::new(),
+            wake: Default::default(),
+            changes,
+            delivery: Default::default(),
+        };
+        let mut service = Self::new(store, Some(oauth), signals);
+        service.client = client;
+        service
     }
     pub(crate) fn with_gws_inbox(
         mut self,
@@ -381,6 +401,12 @@ impl MailService {
         }
     }
     pub(crate) async fn worker(self, stop: CancellationToken) {
+        self.delivery_loop(stop, None).await;
+    }
+    pub async fn member_worker(self, fence: Arc<dyn DispatchFence>, stop: CancellationToken) {
+        self.delivery_loop(stop, Some(fence)).await;
+    }
+    async fn delivery_loop(self, stop: CancellationToken, fence: Option<Arc<dyn DispatchFence>>) {
         let mut tick = tokio::time::interval(Duration::from_millis(300));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -389,14 +415,19 @@ impl MailService {
                 continue;
             }
             if let Ok(Some(dispatch)) = self.store.next_mail_dispatch().await {
-                self.dispatch(dispatch, &stop).await;
+                self.dispatch(dispatch, &stop, fence.as_deref()).await;
             }
             if let Ok(Some(permit)) = self.store.next_mail_reconciliation().await {
                 self.reconcile(permit, &stop).await;
             }
         }
     }
-    async fn dispatch(&self, dispatch: MailDispatch, stop: &CancellationToken) {
+    async fn dispatch(
+        &self,
+        dispatch: MailDispatch,
+        stop: &CancellationToken,
+        fence: Option<&dyn DispatchFence>,
+    ) {
         let lock = self.lock(&dispatch.connection_id).await;
         let _guard = lock.lock().await;
         let b = match self.store.mail_dispatch_binding(&dispatch).await {
@@ -418,6 +449,12 @@ impl MailService {
         if self.store.mail_dispatch_binding(&dispatch).await.is_err() {
             let _ = self.store.finish_mail_dispatch(&dispatch, None, true).await;
             return;
+        }
+        if let Some(fence) = fence {
+            if !fence.permit(&dispatch, &b).await {
+                let _ = self.store.finish_mail_dispatch(&dispatch, None, true).await;
+                return;
+            }
         }
         let result = self
             .client

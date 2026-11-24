@@ -553,6 +553,7 @@ async fn preflight_includes_committed_wal_after_process_exit_without_database_dr
     if let Some(root) = std::env::var_os("MOOSURI_TEST_RECOVERY_PREFLIGHT_ROOT") {
         let root = PathBuf::from(root);
         let store = Store::open(&root.join("data")).unwrap();
+        crate::tests::begin_wal_only_writes(&store).await;
         let user = admin(&store).await;
         gap(&store, &user.user.account.id).await;
         std::fs::write(root.join("synthetic-account-id"), user.user.account.id).unwrap();
@@ -567,11 +568,9 @@ async fn preflight_includes_committed_wal_after_process_exit_without_database_dr
         .output().unwrap();
     assert!(output.status.success(), "synthetic preflight child failed");
     let data = root.path().join("data");
-    let header = std::fs::read(data.join("assistant.sqlite")).unwrap();
     assert_eq!(
-        u32::from_be_bytes(header[60..64].try_into().unwrap()),
-        0,
-        "fixture must keep initialization in WAL, so immutable mode would be wrong"
+        crate::tests::base_file_account_count(&data, &root.path().join("base-only.sqlite")),
+        0
     );
     assert!(
         std::fs::metadata(data.join("assistant.sqlite-wal"))

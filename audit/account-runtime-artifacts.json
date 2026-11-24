@@ -254,6 +254,68 @@
       "aad_source": "mail/member_google/reads.rs::aad; full owner, volume, generation, app, thread, request, connection and epoch",
       "transition": "Private browser-only read history; exclude from manual-knowledge archives. Require verified original volume and key; withdraw on disconnect or reconnect.",
       "on_unprovable": "Purge affected observation payload and retain a non-replayable request marker."
+    },
+    {
+      "table": "member_mail_work",
+      "columns": [
+        "cipher"
+      ],
+      "since_schema": 95,
+      "aad_source": "mail/member_mail_work.rs",
+      "transition": "Keep the owner, originating request and grant identity. Check source authority before reopening.",
+      "on_unprovable": "Quarantine the affected record and preserve the previous receipt."
+    },
+    {
+      "table": "member_calendar_actions",
+      "columns": [
+        "payload",
+        "event"
+      ],
+      "since_schema": 96,
+      "aad_source": "mail/member_google/calendar.rs",
+      "transition": "Keep the owner, originating request and grant identity. Check source authority before reopening.",
+      "on_unprovable": "Quarantine the affected record and preserve the previous receipt."
+    },
+    {
+      "table": "member_conversation_interpretations",
+      "columns": [
+        "plan"
+      ],
+      "since_schema": 93,
+      "aad_source": "personal_browser/interpretation.rs",
+      "transition": "Keep the owner, originating request and grant identity. Check source authority before reopening.",
+      "on_unprovable": "Quarantine the affected record and preserve the previous receipt."
+    },
+    {
+      "table": "personal_browser_jobs",
+      "columns": [
+        "research_reading"
+      ],
+      "since_schema": 98,
+      "new_columns": true,
+      "aad_source": "personal_browser/research_outcomes.rs::reading_aad",
+      "transition": "Verify the original member, volume, generation, authorization epoch, thread and run before decrypting the observed page.",
+      "on_unprovable": "Withhold facts and receipts until the member reads the source again."
+    },
+    {
+      "table": "member_connected_brief_runs",
+      "columns": [
+        "cipher"
+      ],
+      "since_schema": 99,
+      "aad_source": "mail/member_briefs.rs::aad",
+      "transition": "Verify the member, volume, generation, exact grant and due time before reading a briefing.",
+      "on_unprovable": "Withhold the affected briefing and read again under a current member grant."
+    },
+    {
+      "table": "member_public_watch_checks",
+      "columns": [
+        "cipher"
+      ],
+      "since_schema": 100,
+      "aad_source": "personal_browser/public_watches.rs::aad",
+      "transition": "Verify the member, volume, generation, watch, pinned host and due time before reading the observation.",
+      "on_unprovable": "Withhold the observation and require a new authorized reading."
     }
   ]
 }

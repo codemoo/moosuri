@@ -72,7 +72,8 @@ impl Pty {
         }
     }
     fn until(&mut self, needle: &str) {
-        let end = Instant::now() + Duration::from_secs(20);
+        // First-time member migrations run between two installer prompts.
+        let end = Instant::now() + Duration::from_secs(60);
         loop {
             if let Some(i) = self.transcript[self.at..].find(needle) {
                 self.at += i + needle.len();

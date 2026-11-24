@@ -8,7 +8,10 @@ use moosuri_core::{KnowledgeKind, KnowledgeQuery};
 use serde::{Deserialize, Serialize};
 
 mod conversation;
+pub(super) mod monitors;
 pub(super) use conversation::detail as conversation_detail;
+pub(super) use conversation::group_report;
+pub(crate) use conversation::member_work_turn;
 
 const MAX_HITS: usize = 8;
 /// Memory filters page the ordinary search and keep only records that contain every literal.
@@ -109,6 +112,13 @@ fn has_all(filters: &[String], parts: &[&str]) -> bool {
         .all(|f| haystack.contains(&f.to_ascii_lowercase()))
 }
 
+fn exclusions(c: &Connection, id: &str) -> Result<Vec<String>> {
+    Ok(c.prepare(
+        "SELECT word FROM member_conversation_exclusions WHERE task_id=?1 ORDER BY rowid",
+    )?
+    .query_map([id], |r| r.get(0))?
+    .collect::<rusqlite::Result<_>>()?)
+}
 fn search(
     connection: &Connection,
     owner: VolumeOwner,
@@ -116,7 +126,8 @@ fn search(
     filters: &[String],
 ) -> Result<(Vec<SourceRef>, bool)> {
     let tenant = owner.tenant.to_string();
-    if schedule.scope == WorkScope::Memory && !filters.is_empty() {
+    let omitted = exclusions(connection, &schedule.id)?;
+    if schedule.scope == WorkScope::Memory && (!filters.is_empty() || !omitted.is_empty()) {
         // Every additional literal is applied to current source text before the hit limit.
         let mut found = Vec::new();
         let mut cursor = None;
@@ -136,6 +147,9 @@ fn search(
                 if let Some((title, body)) =
                     read_source(connection, owner, &WorkScope::Memory, &source)?
                     && has_all(filters, &[title.as_str(), body.as_str()])
+                    && omitted.iter().all(|word| {
+                        !has_all(std::slice::from_ref(word), &[title.as_str(), body.as_str()])
+                    })
                 {
                     found.push(source);
                     if found.len() > MAX_HITS {
@@ -176,14 +190,10 @@ fn search(
     }
     // Cap original turns before inspecting bodies. The extra row records the scan boundary.
     // Additional literals narrow the same bounded scan before rows are limited to MAX_HITS.
-    let narrowing: String = (0..filters.len())
-        .map(|i| {
-            format!(
-                " AND instr(lower(r.user_text||coalesce(char(10)||a.text,'')),lower(?{}))>0",
-                6 + i
-            )
-        })
-        .collect();
+    let narrowing: String = filters.iter().map(|_| ">0").chain(omitted.iter().map(|_| "=0"))
+        .enumerate().map(|(i, comparison)| format!(
+            " AND instr(lower(r.user_text||coalesce(char(10)||a.text,'')),lower(?{})){comparison}", 6+i
+        )).collect();
     let sql=format!("WITH recent AS MATERIALIZED (
         SELECT r.id,r.version,r.user_text,r.admitted_order FROM chat_runs r
         JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id
@@ -201,7 +211,13 @@ fn search(
         (owner.generation as i64).into(),
         schedule.query.clone().into(),
     ];
-    values.extend(filters.iter().cloned().map(rusqlite::types::Value::from));
+    values.extend(
+        filters
+            .iter()
+            .chain(&omitted)
+            .cloned()
+            .map(rusqlite::types::Value::from),
+    );
     let rows = connection
         .prepare(&sql)?
         .query_map(rusqlite::params_from_iter(values), |r| {
@@ -265,6 +281,63 @@ fn execute(
 }
 
 impl Store {
+    /// Only inferred search terms may try synonyms. Explicit member queries keep their exact semantics.
+    /// Persist the chosen term in the normal task/run so it remains inspectable.
+    pub async fn resolve_interpreted_queries(
+        &self,
+        scope: Scope,
+        mut items: Vec<moosuri_core::personal_browser::WorkItemInput>,
+        alternatives: Vec<Vec<String>>,
+    ) -> Result<Vec<moosuri_core::personal_browser::WorkItemInput>> {
+        self.call(move |db| {
+            let tx = db.conn.transaction()?;
+            scope.authorize(&tx)?;
+            for (item, candidates) in items.iter_mut().zip(alternatives) {
+                if item.query.is_empty() {
+                    continue;
+                }
+                let original = item.query.clone();
+                let mut terms = vec![original.clone()];
+                for term in candidates.into_iter().take(3).chain(
+                    original
+                        .split_whitespace()
+                        .filter(|t| t.chars().count() >= 2)
+                        .take(3)
+                        .map(str::to_owned),
+                ) {
+                    if text_valid(&term, 128) && !terms.contains(&term) {
+                        terms.push(term);
+                    }
+                }
+                if terms.len() == 1 {
+                    continue;
+                }
+                for term in terms {
+                    let schedule = WorkSchedule {
+                        id: String::new(),
+                        title: item.title.clone(),
+                        scope: item.scope.clone(),
+                        query: term,
+                        period: 0,
+                        next_due: None,
+                        enabled: true,
+                        revision: 1,
+                    };
+                    if !search(&tx, scope.owner, &schedule, &item.filters)?
+                        .0
+                        .is_empty()
+                    {
+                        item.query = schedule.query;
+                        break;
+                    }
+                }
+            }
+            tx.commit()?;
+            Ok(items)
+        })
+        .await
+    }
+
     pub async fn create_member_workflow(
         &self,
         owner: VolumeOwner,
@@ -404,7 +477,11 @@ impl Store {
                 tx.execute("UPDATE member_workflows SET next_due=?2 WHERE id=?1", params![schedule.id, at + schedule.period])?;
             }
             tx.commit()?;
-            Ok(due.len() + conversation)
+            let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            owner.check_identity(&tx,None)?;
+            let watched = monitors::dispatch(&tx, owner, host_epoch, now()?)?;
+            tx.commit()?;
+            Ok(due.len() + conversation + watched)
         }).await
     }
 }

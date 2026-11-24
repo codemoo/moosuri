@@ -7,12 +7,17 @@ use moosuri_connectors::gmail::{FrozenMail, MailContent, ReplyContext, SecretStr
 use moosuri_core::*;
 
 mod connection_help;
+pub(crate) mod member_briefs;
 mod member_google;
+pub use member_briefs::*;
+mod member_mail_work;
+pub use member_google::calendar::*;
 pub use member_google::reads::*;
 pub use member_google::{
     MemberGoogleBinding, MemberGoogleGrant, MemberGoogleRefresh, MemberGoogleService,
     MemberGoogleStatus,
 };
+pub use member_mail_work::*;
 mod external;
 pub(crate) mod gws;
 pub use connection_help::MailConnectionHelpIntent;
@@ -474,7 +479,7 @@ impl Store {
         state: String,
         code: SecretString,
     ) -> Result<(String, bool)> {
-        self.capture_oauth_result(state, Some(code), None)
+        self.capture_oauth_result(state, Some(code), None, false)
             .await
             .and_then(|(handle, setup)| Ok((handle.ok_or(StoreError::Corrupt)?, setup)))
     }
@@ -484,7 +489,16 @@ impl Store {
         state: String,
         code: Option<SecretString>,
     ) -> Result<Option<String>> {
-        self.capture_oauth_result(state, code, Some(service))
+        self.capture_oauth_result(state, code, Some(service), false)
+            .await
+            .map(|(handle, _)| handle)
+    }
+    pub async fn capture_member_compose_result(
+        &self,
+        state: String,
+        code: Option<SecretString>,
+    ) -> Result<Option<String>> {
+        self.capture_oauth_result(state, code, None, true)
             .await
             .map(|(handle, _)| handle)
     }
@@ -493,6 +507,7 @@ impl Store {
         state: String,
         code: Option<SecretString>,
         service: Option<MemberGoogleService>,
+        compose_only: bool,
     ) -> Result<(Option<String>, bool)> {
         if state.len() != 64 {
             return Err(StoreError::InvalidInput);
@@ -502,6 +517,10 @@ impl Store {
             let tx=db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             if let Some(service)=service {
                 let bound: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM member_google_oauth WHERE state_hash=?1 AND service=?2)", params![digest,service.as_str()],|r|r.get(0))?;
+                if !bound {return Err(StoreError::Conflict);}
+            } else if compose_only {
+                let bound:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions s WHERE s.state_hash=?1 AND s.compose=1
+                    AND NOT EXISTS(SELECT 1 FROM member_google_oauth m WHERE m.state_hash=s.state_hash))",[&digest],|r|r.get(0))?;
                 if !bound {return Err(StoreError::Conflict);}
             }
             let Some(code)=code else {

@@ -6,11 +6,28 @@ use moosuri_core::{
 };
 use personal_volume::VolumeOwner;
 
+pub(crate) mod activity;
+pub mod interpretation;
 pub mod progress;
 mod reports;
 
+mod public_watches;
+pub use public_watches::{
+    PublicPage, PublicRead, PublicReadOutcome, PublicWatchCheck, PublicWatchLease, PublicWatchPage,
+    PublicWatchRequest, PublicWatchStop, PublicWatchView,
+};
+pub(crate) use public_watches::{
+    notice_current as public_watch_notice_current, restart as public_watch_restart,
+};
+mod research_outcomes;
 mod tasks;
 mod workflows;
+pub(crate) use workflows::member_work_turn;
+pub(crate) use workflows::monitors::notice_current as monitor_notice_current;
+pub use workflows::monitors::{
+    MonitorCheck, MonitorEvidence, MonitorKind, MonitorPage, MonitorRequest, MonitorSourceRef,
+    MonitorStop, MonitorView,
+};
 
 #[derive(Clone)]
 pub struct Scope {
@@ -390,6 +407,17 @@ impl Store {
         request: Uuid,
         output: Option<Output>,
     ) -> Result<Workspace> {
+        self.personal_browser_finish_reading(scope, view, request, output, None)
+            .await
+    }
+    pub async fn personal_browser_finish_reading(
+        &self,
+        scope: Scope,
+        view: Workspace,
+        request: Uuid,
+        output: Option<Output>,
+        observed: Option<String>,
+    ) -> Result<Workspace> {
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let current = current(&tx, &scope)?.ok_or(StoreError::NotFound)?;
@@ -463,6 +491,14 @@ impl Store {
                     rest = &rest[end..];
                 }
                 tx.execute("UPDATE run_instructions SET state='applied' WHERE tenant_id=?1 AND run_id=?2 AND sequence<=?3", params![tenant, run.id, applied as i64])?;
+            }
+            if let Some(text) = observed {
+                let reading = (view.url.as_str(), view.title.as_str(), text.chars().take(8192).collect::<String>());
+                let bytes = serde_json::to_vec(&reading).map_err(|_| StoreError::Corrupt)?;
+                let aad = research_outcomes::reading_aad(scope.owner, &scope.user, &scope.thread, &view.run_id);
+                let cipher = providers::encrypt(&db.provider_key, &bytes, &aad)?;
+                tx.execute("UPDATE personal_browser_jobs SET research_reading=?3 WHERE tenant_id=?1 AND run_id=?2",
+                           params![tenant, view.run_id, cipher])?;
             }
             if view.state == "closed" {
                 tx.execute("DELETE FROM personal_browser_workers WHERE workspace_id=?1", [&view.id])?;

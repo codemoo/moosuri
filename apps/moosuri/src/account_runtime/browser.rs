@@ -45,6 +45,7 @@ pub(super) fn routes(
     uid: u32,
     model: Option<moosuri_server::personal_text::Options>,
 ) -> Router {
+    let broker_slot = wire::slot_for(socket.as_deref());
     let state = Arc::new(Service {
         store,
         owner,
@@ -52,7 +53,7 @@ pub(super) fn routes(
         uid,
         model,
         frames: Arc::new(tokio::sync::Semaphore::new(1)),
-        broker_slot: Default::default(),
+        broker_slot,
         dispatch: Default::default(),
     });
     if state.socket.is_some() {
@@ -669,7 +670,7 @@ async fn observed(
     let _guard = workspace.lock().await;
     let view = s
         .store
-        .personal_browser_finish(scope, j.view, request, Some(output))
+        .personal_browser_finish_reading(scope, j.view, request, Some(output), Some(p.text))
         .await?;
     Ok(status_view(s, Some(view)))
 }

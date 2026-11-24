@@ -5,6 +5,8 @@ use super::*;
 use crate::personal_volume::VolumeOwner;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
+pub(in crate::mail) mod briefs;
+pub(super) mod calendar;
 pub(super) mod reads;
 #[cfg(test)]
 const READ: &str = moosuri_connectors::gmail::READ_SCOPE;
@@ -16,6 +18,9 @@ pub enum MemberGoogleService {
     Docs,
     Slides,
     Sheets,
+    /// Dedicated primary-calendar write grant. Never part of `WORKSPACE`, never a
+    /// Drive/read-service capability.
+    Calendar,
 }
 
 impl MemberGoogleService {
@@ -27,10 +32,16 @@ impl MemberGoogleService {
             Self::Docs => "docs",
             Self::Slides => "slides",
             Self::Sheets => "sheets",
+            Self::Calendar => "calendar",
         }
+    }
+    /// True only for the dedicated write-capable grant.
+    pub fn writes(self) -> bool {
+        self == Self::Calendar
     }
     pub fn scope(self) -> &'static str {
         match self {
+            Self::Calendar => "https://www.googleapis.com/auth/calendar.events.owned",
             Self::Gmail => moosuri_connectors::gmail::READ_SCOPE,
             Self::Drive => "https://www.googleapis.com/auth/drive.metadata.readonly",
             Self::Docs => "https://www.googleapis.com/auth/documents.readonly",
@@ -110,7 +121,11 @@ fn parse_id(s: String) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&s).map_err(|_| rusqlite::Error::InvalidQuery)
 }
 fn row(c: &Connection, u: &UserContext, service: Service) -> Result<Option<Row>> {
-    c.query_row("SELECT volume_id,generation,app_revision,app_version,connection_id,epoch,credential_version,auth_epoch,consent_digest,mailbox,status,cipher,expires_at,refresh_nonce,refresh_request_id,refresh_phase FROM member_google_grants WHERE tenant_id=?1 AND account_id=?2 AND service=?3",params![u.tenant.0,u.account.id,service.as_str()],|r|Ok(Row{service,owner:VolumeOwner{account:parse_id(u.account.id.clone())?,tenant:parse_id(u.tenant.0.clone())?,volume:parse_id(r.get(0)?)?,generation:r.get::<_,i64>(1)? as u64},app:parse_id(r.get(2)?)?,app_version:r.get(3)?,id:r.get::<_,Option<String>>(4)?.map(parse_id).transpose()?,epoch:r.get(5)?,version:r.get(6)?,auth_epoch:r.get(7)?,digest:r.get(8)?,mailbox:r.get(9)?,status:r.get(10)?,cipher:r.get(11)?,expires:r.get(12)?,nonce:r.get(13)?,refresh_id:r.get::<_,Option<String>>(14)?.map(parse_id).transpose()?,phase:r.get(15)?})).optional().map_err(Into::into)
+    row_ids(c, &u.tenant.0, &u.account.id, service)
+}
+/// Same lookup keyed by ids only. Used by the purpose-limited background reader, which has no session.
+fn row_ids(c: &Connection, tenant: &str, account: &str, service: Service) -> Result<Option<Row>> {
+    c.query_row("SELECT volume_id,generation,app_revision,app_version,connection_id,epoch,credential_version,auth_epoch,consent_digest,mailbox,status,cipher,expires_at,refresh_nonce,refresh_request_id,refresh_phase FROM member_google_grants WHERE tenant_id=?1 AND account_id=?2 AND service=?3",params![tenant,account,service.as_str()],|r|Ok(Row{service,owner:VolumeOwner{account:parse_id(account.to_owned())?,tenant:parse_id(tenant.to_owned())?,volume:parse_id(r.get(0)?)?,generation:r.get::<_,i64>(1)? as u64},app:parse_id(r.get(2)?)?,app_version:r.get(3)?,id:r.get::<_,Option<String>>(4)?.map(parse_id).transpose()?,epoch:r.get(5)?,version:r.get(6)?,auth_epoch:r.get(7)?,digest:r.get(8)?,mailbox:r.get(9)?,status:r.get(10)?,cipher:r.get(11)?,expires:r.get(12)?,nonce:r.get(13)?,refresh_id:r.get::<_,Option<String>>(14)?.map(parse_id).transpose()?,phase:r.get(15)?})).optional().map_err(Into::into)
 }
 fn authority(c: &Connection, u: &UserContext, o: VolumeOwner) -> Result<UserContext> {
     o.check_identity(c, None)?;
@@ -148,6 +163,8 @@ fn status(r: Option<&Row>, expected: Option<Uuid>, u: &UserContext) -> MemberGoo
         refresh_pending: r.is_some_and(|r| r.phase == "dispatched"),
         expires_at: r.and_then(|r| r.expires),
         needs_refresh: r.is_some_and(|r| !changed && r.status == "active" && needs_refresh(r)),
+        // Public DTO invariant shared by every service: no mail send/Drive write. The
+        // Calendar write capability is gated by `Service::writes` plus the ledger.
         read_only: true,
         send_enabled: false,
     }
@@ -156,9 +173,44 @@ fn needs_refresh(r: &Row) -> bool {
     r.expires
         .is_none_or(|e| e <= now().unwrap_or(i64::MAX).saturating_add(60))
 }
+/// Single enforcement point for losing a member Google source (disconnect, app
+/// replacement, refused/interrupted refresh, access loss found at restart). Purges
+/// only that member's work scoped to that service; the other service, other
+/// members and already-dispatched mail history are untouched.
+pub(super) fn source_lost(
+    c: &Connection,
+    tenant: &str,
+    account: &str,
+    service: &str,
+) -> Result<()> {
+    if let Some(s) = [Service::Gmail, Service::Calendar]
+        .into_iter()
+        .find(|s| s.as_str() == service)
+    {
+        super::member_briefs::withdraw(c, tenant, account, Some(s))?;
+    }
+    match service {
+        "gmail" => {
+            reads::withdraw(c, tenant, account)?;
+            super::member_mail_work::withdraw_account(c, tenant, account)?;
+        }
+        "calendar" => calendar::withdraw(c, tenant, account)?,
+        _ => {}
+    }
+    Ok(())
+}
 pub(super) fn restart(c: &Connection) -> Result<()> {
+    let lost: Vec<(String, String, String)> = c
+        .prepare("SELECT tenant_id,account_id,service FROM member_google_grants WHERE refresh_phase='dispatched' OR status IN('needs_reauth','disconnected')")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (t, a, s) in &lost {
+        source_lost(c, t, a, s)?;
+    }
     c.execute("UPDATE member_google_thread_reads SET phase='unknown',cipher=NULL,updated_at=unixepoch() WHERE phase='dispatched'",[])?;
     c.execute("UPDATE member_google_grants SET status='needs_reauth',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='unknown' WHERE refresh_phase='dispatched'", [])?;
+    calendar::restart(c)?;
+    super::member_briefs::restart(c)?;
     Ok(())
 }
 fn clear_flows(c: &Connection, u: &UserContext, service: Service) -> Result<()> {
@@ -192,7 +244,8 @@ fn sync_app(
             if previous.is_some() {
                 c.execute("UPDATE member_google_grants SET app_revision=?3,app_version=?4,epoch=epoch+1,credential_version=credential_version+1,status='needs_reauth',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='idle' WHERE tenant_id=?1 AND account_id=?2",params![u.tenant.0,u.account.id,app_id,next])?;
                 c.execute("DELETE FROM mail_oauth_sessions WHERE state_hash IN(SELECT state_hash FROM member_google_oauth WHERE tenant_id=?1 AND account_id=?2)",params![u.tenant.0,u.account.id])?;
-                reads::withdraw(c, u)?;
+                source_lost(c, &u.tenant.0, &u.account.id, "gmail")?;
+                source_lost(c, &u.tenant.0, &u.account.id, "calendar")?;
             }
             next
         }
@@ -425,7 +478,13 @@ fn aad(r: &Row) -> Result<Vec<u8>> {
     let domain = if r.service == Service::Gmail {
         "moosuri/member-google/readonly/v1".to_owned()
     } else {
-        format!("moosuri/member-google/{}/readonly/v1", r.service.as_str())
+        // Distinct AAD domain: a write-scope ciphertext can never decrypt as a read grant.
+        let kind = if r.service.writes() {
+            "write"
+        } else {
+            "readonly"
+        };
+        format!("moosuri/member-google/{}/{kind}/v1", r.service.as_str())
     };
     serde_json::to_vec(&(
         domain,
@@ -813,7 +872,10 @@ impl Store {
                 }
                 (user, _) => {
                     // A dispatched refresh may have rotated externally. No old token retry.
-                    tx.execute("UPDATE member_google_grants SET status='needs_reauth',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='unknown' WHERE tenant_id=?1 AND account_id=?2 AND epoch=?3 AND credential_version=?4 AND service=?5",params![lease.user.tenant.0,lease.user.account.id,lease.epoch,lease.version,service.as_str()])?;
+                    let lost = tx.execute("UPDATE member_google_grants SET status='needs_reauth',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='unknown' WHERE tenant_id=?1 AND account_id=?2 AND epoch=?3 AND credential_version=?4 AND service=?5",params![lease.user.tenant.0,lease.user.account.id,lease.epoch,lease.version,service.as_str()])?;
+                    if lost == 1 {
+                        source_lost(&tx, &lease.user.tenant.0, &lease.user.account.id, service.as_str())?;
+                    }
                     if let Err(err) = user { tx.commit()?; return Err(err); }
                     status(row(&tx, &lease.user, service)?.as_ref(), Some(lease.app), &lease.user)
                 }
@@ -851,7 +913,7 @@ impl Store {
             }
             let changed = tx.execute("UPDATE member_google_grants SET epoch=epoch+1,credential_version=credential_version+1,status='disconnected',cipher=NULL,expires_at=NULL,refresh_nonce=NULL,refresh_request_id=NULL,refresh_phase='idle' WHERE tenant_id=?1 AND account_id=?2 AND connection_id=?3 AND epoch=?4 AND service=?5",params![u.tenant.0,u.account.id,expected_id.to_string(),expected_epoch,service.as_str()])?;
             if changed != 1 { return Err(StoreError::Conflict); }
-            if service==Service::Gmail {reads::withdraw(&tx,&u)?;}
+            source_lost(&tx, &u.tenant.0, &u.account.id, service.as_str())?;
             clear_flows(&tx, &u, service)?;
             let result = status(row(&tx, &u, service)?.as_ref(), None, &u);
             tx.commit()?;

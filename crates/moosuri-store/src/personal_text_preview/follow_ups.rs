@@ -40,13 +40,16 @@ pub(super) fn add_context(
     user: &UserContext,
     source: &str,
     messages: &mut Vec<Message>,
+    allow_memory: bool,
 ) -> Result<()> {
     let run = chat::load_run(tx, &user.tenant.0, source)?;
     messages.push(Message {
         role: "user",
         text: run.text,
     });
-    if run.state == RunState::Completed {
+    if run.state == RunState::Completed
+        && recall::can_use_history(tx, &run.tenant, source, allow_memory)?
+    {
         let answer: String = tx.query_row(
             "SELECT text FROM chat_output WHERE tenant_id=?1 AND run_id=?2 AND item='personal-text-preview-answer'",
             params![run.tenant,source], |row| row.get(0),

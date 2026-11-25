@@ -10,7 +10,7 @@
 //!    serializable [`Plan`] pinned to owner/tenant/volume/generation, session epoch, object and
 //!    revision. Nothing is written.
 //! 2. [`apply`] re-checks the pins against a freshly authenticated member and calls the regular
-//!    `create_memory` / `correct_memory` / `forget_memory` domain methods with a request UUID
+//!    memory writer or forget method with a request UUID
 //!    derived from the authenticated interpreter request, so a retry is the store's own
 //!    idempotent receipt, never a second write.
 //! 3. [`project`] turns the stored [`Outcome`] (ids, revisions, operation only) into a live view,
@@ -40,6 +40,8 @@ pub(crate) enum Lasting {
     #[default]
     Persistent,
     OneTime,
+    /// A direct statement about the member's usual preference, without a save command.
+    Stated,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MemoryRef {
@@ -58,6 +60,8 @@ pub(crate) struct Decision {
     pub subject: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
+    #[serde(default)]
+    pub topic: Option<String>,
     #[serde(skip)]
     pub memory: Option<MemoryRef>,
 }
@@ -119,6 +123,8 @@ pub(crate) struct Pin {
 pub(crate) struct Fields {
     subject: String,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    topic: Option<String>,
     speaker: Option<String>,
     valid_from: Option<i64>,
     valid_until: Option<i64>,
@@ -299,6 +305,104 @@ fn literal(value: &Option<String>, text: &str, max: usize) -> Option<String> {
         && folded(text).contains(&folded(value));
     valid.then(|| value.to_owned())
 }
+
+/// A model may identify the topic, but a casual remark can only create a
+/// memory from a single, unquoted preference statement in the member's words.
+fn stated_preference(text: &str, subject: &str) -> bool {
+    let statement = text.trim().trim_end_matches(['.', '!', '~', '…']);
+    if statement.chars().count() > MAX_VALUE
+        || outside_quotes(statement) != statement
+        || statement.contains(['?', '？', '.', '!', ';', ':', '\n', '\r'])
+    {
+        return false;
+    }
+    let words = folded(statement);
+    if has(&words, ONE_TIME)
+        || has(&words, NEGATION)
+        || has(&words, REPORTED)
+        || has(&words, INFORMATIONAL)
+        || has(
+            &words,
+            &[
+                "이번",
+                "오늘",
+                "어제",
+                "예전",
+                "요즘",
+                "최근",
+                "지금은",
+                "내일",
+                "올해",
+                "당장",
+                "다더라",
+                "다고",
+                "라면",
+                "가령",
+            ],
+        )
+    {
+        return false;
+    }
+    let mut phrase = statement;
+    let mut first_person = false;
+    while let Some((head, rest)) = phrase.split_once(char::is_whitespace) {
+        match head {
+            "나는" | "난" | "저는" | "전" => first_person = true,
+            "평소에" | "평소" | "보통" | "개인적으로" | "이제" | "이제부터" | "앞으로"
+            | "앞으로는" | "지금부터" => {}
+            _ => break,
+        }
+        phrase = rest.trim_start();
+    }
+    let Some(after_topic) = phrase.strip_prefix(subject) else {
+        return false;
+    };
+    let Some((particle, rest)) = after_topic.split_once(char::is_whitespace) else {
+        return false;
+    };
+    // Without a first-person head, an object/setting marks what the speaker
+    // prefers. A bare topic can name somebody else, so admit only common impersonal topics.
+    let topic = match particle {
+        "을" | "를" | "에서" | "에서는" | "에선" => true,
+        "은" | "는" | "이" | "가" => {
+            first_person
+                || matches!(
+                    subject,
+                    "기차"
+                        | "열차"
+                        | "좌석"
+                        | "교통"
+                        | "식사"
+                        | "음식"
+                        | "커피"
+                        | "숙소"
+                        | "회의"
+                        | "답변"
+                        | "운동"
+                )
+        }
+        _ => false,
+    };
+    topic
+        && !subject.is_empty()
+        && !rest.trim().is_empty()
+        && [
+            "편해",
+            "편해요",
+            "편합니다",
+            "편하다",
+            "선호해",
+            "선호해요",
+            "선호합니다",
+            "선호한다",
+            "좋아해",
+            "좋아해요",
+            "좋아합니다",
+            "좋아한다",
+        ]
+        .iter()
+        .any(|ending| words.ends_with(ending))
+}
 /// Deterministic checks that run after the model's proposal and before any lookup or write.
 fn gate(
     text: &str,
@@ -468,12 +572,36 @@ pub(crate) async fn resolve(
         return Ok(Plan::NoChange(NoChange::NotARequest));
     };
     let subject = literal(&decision.subject, text, MAX_SUBJECT);
-    let value = literal(&decision.value, text, MAX_VALUE);
+    let topic = decision
+        .topic
+        .as_deref()
+        .filter(|name| {
+            decision.lasting == Lasting::Stated
+                && name.chars().count() <= 32
+                && !name.chars().any(char::is_control)
+        })
+        .map(str::to_owned);
+    let value = if decision.lasting == Lasting::Stated {
+        if operation == Operation::Forget
+            || (operation == Operation::Edit
+                && !has(&folded(text), &["이제", "앞으로", "지금부터"]))
+            || !subject
+                .as_deref()
+                .is_some_and(|topic| stated_preference(text, topic))
+        {
+            return Ok(Plan::NoChange(NoChange::NotARequest));
+        }
+        Some(text.trim().to_owned())
+    } else {
+        literal(&decision.value, text, MAX_VALUE)
+    };
     let used: Vec<&str> = [subject.as_deref(), value.as_deref()]
         .into_iter()
         .flatten()
         .collect();
-    if let Some(reason) = gate(text, decision, operation, &used) {
+    if decision.lasting != Lasting::Stated
+        && let Some(reason) = gate(text, decision, operation, &used)
+    {
         return Ok(Plan::NoChange(reason));
     }
     let pin = Pin {
@@ -505,6 +633,7 @@ pub(crate) async fn resolve(
                 fields: Fields {
                     subject,
                     text: value,
+                    topic,
                     speaker: None,
                     valid_from: None,
                     valid_until: None,
@@ -519,6 +648,13 @@ pub(crate) async fn resolve(
                 Found::One(doc) => doc,
                 Found::Not(reason) => return none(reason),
             };
+            if decision.lasting == Lasting::Stated
+                && (doc.draft.speaker.is_some()
+                    || !doc.draft.evidence.is_empty()
+                    || !stated_preference(&doc.draft.text, &doc.draft.subject))
+            {
+                return none(NoChange::NotARequest);
+            }
             if folded(&doc.draft.text) == folded(&value) {
                 return none(NoChange::Unchanged {
                     memory: reference(&doc),
@@ -530,6 +666,7 @@ pub(crate) async fn resolve(
                 fields: Fields {
                     subject: doc.draft.subject.clone(),
                     text: value,
+                    topic,
                     speaker: doc.draft.speaker.clone(),
                     valid_from: doc.draft.valid_from,
                     valid_until: doc.draft.valid_until,
@@ -580,35 +717,25 @@ pub(crate) async fn apply(
     };
     match plan {
         Plan::NoChange(_) => unreachable!("returned above"),
-        Plan::Create { pin, fields } => {
+        Plan::Create { fields, .. } | Plan::Edit { fields, .. } => {
+            let (operation, previous) = if let Plan::Edit { memory, .. } = plan {
+                (Operation::Edit, Some((memory.id.clone(), memory.revision)))
+            } else {
+                (Operation::Create, None)
+            };
             match store
-                .create_memory(user, pin.request.to_string(), fields.draft())
-                .await
-            {
-                Ok(doc) => Ok(Outcome::Applied {
-                    operation: Operation::Create,
-                    memory: reference(&doc),
-                }),
-                Err(error) => stale(error),
-            }
-        }
-        Plan::Edit {
-            pin,
-            memory,
-            fields,
-        } => {
-            match store
-                .correct_memory(
+                .write_member_preference(
                     user,
-                    memory.id.clone(),
-                    memory.revision,
+                    owner,
+                    previous,
                     pin.request.to_string(),
                     fields.draft(),
+                    fields.topic.clone(),
                 )
                 .await
             {
                 Ok(doc) => Ok(Outcome::Applied {
-                    operation: Operation::Edit,
+                    operation,
                     memory: reference(&doc),
                 }),
                 Err(error) => stale(error),

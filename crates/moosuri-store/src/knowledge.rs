@@ -64,10 +64,10 @@ pub(crate) fn bump(conn: &Connection, tenant: &str) -> Result<i64> {
     conn.execute("INSERT INTO knowledge_state(tenant_id,generation) VALUES (?1,1) ON CONFLICT(tenant_id) DO UPDATE SET generation=generation+1",[tenant])?;
     generation(conn, tenant)
 }
-fn tenant_key(tenant: &str) -> String {
+pub(super) fn tenant_key(tenant: &str) -> String {
     format!("t{}", tenant.replace('-', ""))
 }
-fn normalize(text: &str) -> String {
+pub(super) fn normalize(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_whitespace())
         .flat_map(char::to_lowercase)
@@ -75,7 +75,8 @@ fn normalize(text: &str) -> String {
 }
 fn remove_index(conn: &Connection, tenant: &str, kind: &str, object: &str) -> Result<()> {
     conn.execute(
-        "DELETE FROM knowledge_fts WHERE tenant_key=?1 AND kind=?2 AND object_id=?3",
+        "DELETE FROM knowledge_fts WHERE tenant_key=?1 AND object_id=?3
+         AND (kind=?2 OR (?2='memory' AND kind='preference-topic'))",
         params![tenant_key(tenant), kind, object],
     )?;
     Ok(())

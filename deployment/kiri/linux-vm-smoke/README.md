@@ -115,6 +115,7 @@ Build the member web assets first, then build the Linux binary with `cargo build
 | --- | --- |
 | `--semantic-work` or `--semantic-work --claude` | Everyday research, combined report, quoted evidence, local watches and briefs |
 | `--supplemental-work` or `--conversation-work` | Preferences, separate tasks and their follow-ups, recovery and source withdrawal |
+| `--preference-recall` or `--preference-recall --claude` | Stated preferences, same-thread and cross-thread advice, one-time choices, corrections, forgetting and account isolation. Both modes drive the member composer. |
 | `--research-work` or `--research-journey` | Shopping, applications, actual source reads, mobile navigation and manual browser handoff with a synthetic broker |
 | `--brief-work`, `--public-watch` or `--public-watch-read` | Recurring requests from chat, connection requirements, check history and stop |
 | `--claude` or `--short-corrections` | Ten real Claude turns including three game follow-ups, or three synthetic correction turns |

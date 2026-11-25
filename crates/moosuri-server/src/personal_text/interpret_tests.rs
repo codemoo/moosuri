@@ -58,12 +58,22 @@ async fn post(
     thread: &str,
     body: Value,
 ) -> (StatusCode, Value) {
+    post_to(app, owner, token, thread, "work-interpret", body).await
+}
+async fn post_to(
+    app: &Router,
+    owner: VolumeOwner,
+    token: &str,
+    thread: &str,
+    route: &str,
+    body: Value,
+) -> (StatusCode, Value) {
     let response = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/threads/{thread}/work-interpret"))
+                .uri(format!("/api/v1/threads/{thread}/{route}"))
                 .header("host", "personal.internal")
                 .header("origin", "https://personal.internal")
                 .header("x-moosuri-account", owner.account.to_string())
@@ -81,6 +91,87 @@ async fn post(
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
+}
+
+#[tokio::test]
+async fn recall_is_bound_to_the_original_text_and_an_explicit_opt_out_wins() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let broker = Broker::start(&root);
+    let (store, owner, token, thread) = member(&root.join("a"), "a@example.test").await;
+    let app = personal_text_preview_router(store.clone(), owner, broker.options.clone());
+    let user = store.authenticate(token.clone()).await.unwrap();
+    let saved = "회의는 오전을 선호합니다";
+    let memory = store
+        .create_memory(
+            &user,
+            uuid::Uuid::new_v4().to_string(),
+            moosuri_core::MemoryDraft {
+                subject: "회의".into(),
+                text: saved.into(),
+                speaker: None,
+                valid_from: None,
+                valid_until: None,
+                evidence: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    for (question, expected) in [
+        ("회의 시간 하나 추천해줘", true),
+        ("내 선호는 쓰지 말고 일반적인 회의 시간을 알려줘", false),
+    ] {
+        broker.say(json!({"intent":"chat","recall":["회의"]}));
+        let mut input = body(question);
+        assert_eq!(
+            post(&app, owner, &token, &thread, input.clone()).await.1,
+            json!({"kind":"chat"})
+        );
+        input["capability"] = json!("text_only_preview");
+        if expected {
+            let mut changed = input.clone();
+            changed["text"] = json!("다른 내용");
+            assert_eq!(
+                post_to(&app, owner, &token, &thread, "text-preview", changed)
+                    .await
+                    .0,
+                StatusCode::CONFLICT
+            );
+        }
+        broker.say(json!(if expected { saved } else { "답변" }));
+        assert_eq!(
+            post_to(&app, owner, &token, &thread, "text-preview", input.clone())
+                .await
+                .0,
+            StatusCode::CREATED
+        );
+        let prompt: Value =
+            serde_json::from_str(broker.prompts.lock().unwrap().last().unwrap()).unwrap();
+        let current = prompt.as_array().unwrap().last().unwrap()["text"]
+            .as_str()
+            .unwrap();
+        assert_eq!(current.contains(saved), expected);
+        if !expected {
+            assert!(
+                !prompt
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|message| message["text"].as_str().unwrap().contains(saved))
+            );
+        }
+        assert!(!current.contains(&memory.id));
+        let calls = broker.calls();
+        assert_eq!(
+            post_to(&app, owner, &token, &thread, "text-preview", input)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        assert_eq!(broker.calls(), calls);
+    }
+    assert!(groups(&store, owner, &token, &thread).await.is_empty());
+    broker.task.abort();
 }
 fn body(text: &str) -> Value {
     json!({"request_id": uuid::Uuid::new_v4(), "text": text})

@@ -6,6 +6,8 @@ Use --claude for ten real answers from Claude Sonnet 5.5 at medium effort.
 The default, --expect-output-limit and --history-budget need no model login.
 --research-work (shopping/application outcomes from real browser reads via a private synthetic broker) needs a
 binary built with `cargo build -p moosuri --features test-fixtures`; --short-corrections needs no model login.
+--preference-recall checks automatic recall of a stated standing preference (no model login; add --claude for the
+pinned model on the critical path, scored on its visible answer). Counts only are reported.
 Both print only aggregate PASS/SKIP/FAIL lines and one AGGREGATE JSON line.
 Every invocation creates and removes a private fixture. Only the first member
 has a model binding because both synthetic member processes run as this UID.
@@ -97,6 +99,7 @@ class Provider(QuietHandler):
         if not valid or not messages or messages[0][0] != "system":
             self.send_error(400)
             return
+        canned = False
         classifier = messages[0][1].startswith("You are a strict classifier for one Korean member message.")
         if classifier:
             if len(messages) != 2 or messages[1][0] != "user":
@@ -111,6 +114,8 @@ class Provider(QuietHandler):
                 return
             known = self.server.work_intents
             armed_chat = any(turn and turn[-1] == ("user", request) for turn, _ in self.server.turns)
+            # --preference-recall only: the scenario module names the member messages it will send.
+            armed_chat = armed_chat or (self.server.recall is not None and self.server.recall.knows(request))
             if request not in known and not armed_chat:
                 self.send_error(400)
                 return
@@ -128,6 +133,17 @@ class Provider(QuietHandler):
             answer = json.dumps({"answer": seen, "needs_user": False}, ensure_ascii=False)
             self.server.browser_reads += 1
             prompt = messages[1][1]
+        elif self.server.recall is not None:
+            # Mode-scoped wire expectations live in member_preference_recall.py; answer None means "ask the model".
+            answer = self.server.recall.chat(messages)
+            if answer is False:
+                self.send_error(400)
+                return
+            canned = answer is not None
+            self.server.calls += 1
+            prompt = json.dumps({"format": "moosuri-local-history-v1", "history_is_quoted_context": True,
+                                 "history": [{"role": r, "text": t} for r, t in messages[1:-1]],
+                                 "current_user_request": messages[-1][1]}, ensure_ascii=False)
         else:
             if self.server.calls >= len(self.server.turns):
                 self.send_error(400)
@@ -141,7 +157,7 @@ class Provider(QuietHandler):
                                  "history": [{"role": r, "text": t} for r, t in messages[1:-1]],
                                  "current_user_request": messages[-1][1]}, ensure_ascii=False)
         usage = {"prompt_tokens": 9, "completion_tokens": 4 if answer else 1}
-        if self.server.model == claude_cli.MODEL:
+        if self.server.model == claude_cli.MODEL and not canned:
             try:
                 answer, metrics = claude_cli.model(self.server.cli_cwd, prompt, 0.1, system=messages[0][1])
             except RuntimeError as error:
@@ -265,8 +281,8 @@ def provision(stack, binary, root, provider, output_tokens):
             command.extend(["--browser-test-socket", browser_root / f"{label}.sock"])
         if index == 0:
             binding = {k: owner[k] for k in ("account_id", "tenant_id", "volume_id", "generation")}
-            call_limit = 32 if provider.semantic or provider.research else 2 * (sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5)
-            reserve = 8192 if provider.semantic or provider.research or provider.model == claude_cli.MODEL else 4096
+            call_limit = 40 if provider.recall is not None else 32 if provider.semantic or provider.research else 2 * (sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5)
+            reserve = 8192 if provider.recall is not None or provider.semantic or provider.research or provider.model == claude_cli.MODEL else 4096
             binding.update(peer_uid=os.geteuid(),
                            budget={"max_calls": call_limit, "max_tokens": reserve * call_limit, "reservation_tokens": reserve})
             fixture_key = root / "provider.key"
@@ -514,6 +530,9 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     parser.add_argument("--supplemental-work", action="store_true", help="exercise preference changes, follow-ups and source withdrawal in chat")
     parser.add_argument("--semantic-work", action="store_true", help="submit everyday work and reopen its source-backed results")
+    parser.add_argument("--preference-recall", action="store_true",
+                        help="automatic recall of a stated standing preference through the ordinary composer "
+                             "(synthetic classifier; with --claude the pinned model decides and answers the critical path)")
     mode.add_argument("--conversation-work", action="store_true",
                       help="exercise multi-task chat, its timer, evidence and member boundaries")
     mode.add_argument("--workflows", action="store_true", help="exercise task evidence and the installation schedule timer")
@@ -532,6 +551,11 @@ def main():
     mode.add_argument("--history-budget", action="store_true",
                       help="exercise the real broker reservation with a synthetic deterministic provider")
     args = parser.parse_args()
+    if args.preference_recall and (args.supplemental_work or args.semantic_work or args.conversation_work
+                                   or args.workflows or args.public_watch_read or args.public_watch
+                                   or args.brief_work or args.research_journey or args.research_work
+                                   or args.short_corrections or args.expect_output_limit or args.history_budget):
+        parser.error("--preference-recall combines only with --claude")
     if os.geteuid() == 0:
         parser.error("run as an ordinary user")
     os.umask(0o077)
@@ -562,8 +586,12 @@ def main():
         provider.public_watch_read = args.public_watch_read
         provider.research = args.research_work or args.research_journey
         provider.browser_reads = 0 if provider.research else None
-        provider.turns = [] if args.claude else provider_turns(args.history_budget)
-        output_tokens = 512 if args.claude or provider.semantic or provider.research else 64
+        provider.turns = [] if args.claude or args.preference_recall else provider_turns(args.history_budget)
+        provider.recall = None
+        if args.preference_recall:
+            import member_preference_recall
+            provider.recall = member_preference_recall.Recall(real=args.claude)
+        output_tokens = 512 if args.claude or args.preference_recall or provider.semantic or provider.research else 64
         if args.expect_output_limit:
             provider.turns = [([("user", LIMIT_PROMPT)], None)]
             output_tokens = 1
@@ -593,7 +621,10 @@ def main():
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
                               else route.abort())
                 page = context.new_page()
-                if args.public_watch_read:
+                if args.preference_recall:
+                    member_preference_recall.exercise(page, members, origin, provider, login=login, logout=logout,
+                                                      rows=rows, passed=passed)
+                elif args.public_watch_read:
                     import member_public_watch_journey
                     from member_research_outcomes import Broker
                     broker = Broker(provider.browser_socket, {})

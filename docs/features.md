@@ -2,6 +2,8 @@
 
 Kiri 회원 대화의 복수 업무, 조건 변경, 질문 재개, 회차별 결과, 브라우저 반복 중단과 검색 재사용은 [회원 업무 안내](member-tasks.md)와 [기능별 수락 시나리오](reviews/2026-11-25-conversation-work.md)에 기록한다.
 
+회원이 밝힌 선호를 같은 대화와 새 대화의 일반 답변에 적용하는 기준은 [회원 선호 회상 명세](../openspec/changes/recall-member-preferences/specs/member-conversational-work/spec.md)에서 관리한다.
+
 2026-11-25의 [기능별 실행 대장](../audit/feature-journeys.tsv)은 아래 기능과 같은 ID를 사용한다. 각 시나리오의 조작·기대 결과·실행 상태와 확인한 소스를 한 줄에서 볼 수 있다. [결과 집계와 미확인 조건](../audit/standard-journey-checks.md)
 
 이 표는 전체 기능의 요구 계약이다. 실제 구현·검증 완료 범위는 [현재 상태](status.md)를 따른다. `기본`은 v1 필수, `선택`은 사용자가 해당 연결/부가 패키지의 설치·사용을 고르는 지원 계약이며 자동으로 출시 연기를 뜻하지 않는다. 볼트 F44~F51/F63와 credential F69는 v1에서 제공해야 하는 선택 설치 패키지다. 외부 연결의 실제 지원 범위는 provider별 gate로 표시한다. `후속`만 v1 제공 약속 밖의 별도 가능성 검증 범위다. 소스 좌표는 이전 저장소 기준이며 원문을 공개 코드로 복사하라는 뜻이 아니다. 실제 파일별 판정은 `audit/source-inventory.tsv`와 연결한다.

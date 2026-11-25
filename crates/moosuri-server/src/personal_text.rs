@@ -269,16 +269,30 @@ async fn submit(
         };
         let _delivery = state.auth.delivery.read().await;
         let user = owner(&state, &headers).await?;
+        let memories = if input.follow_up_run_id.is_none() {
+            interpret::recall_for_text(
+                &state,
+                &user,
+                epoch,
+                &thread,
+                &input.request_id,
+                &input.text,
+            )
+            .await?
+        } else {
+            vec![]
+        };
         let result = state
             .auth
             .store
-            .begin_text_preview(
+            .begin_text_preview_with_recall(
                 &user,
                 state.owner,
                 thread,
                 input.request_id,
                 input.text,
                 pin,
+                memories,
             )
             .await;
         if matches!(result, Err(StoreError::BudgetExhausted)) {

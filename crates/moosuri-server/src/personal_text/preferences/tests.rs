@@ -114,6 +114,61 @@ fn journaled(plan: &Plan) -> Plan {
 }
 
 #[tokio::test]
+async fn a_stated_preference_uses_the_members_complete_words_and_normal_memory_controls() {
+    let temp = tempfile::tempdir().unwrap();
+    let a = Member::new(
+        &temp.path().canonicalize().unwrap().join("a"),
+        "a@example.test",
+    )
+    .await;
+    let mut decision = say(Operation::Create, Some("기차"), Some("invented value"));
+    decision.lasting = Lasting::Stated;
+    let statement = "기차는 통로 쪽이 편해";
+    let plan = a.plan(statement, &decision).await;
+    let first = run(&a, &plan).await;
+    assert_eq!(run(&a, &journaled(&plan)).await, first);
+    let memories = a.all().await;
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].draft.text, statement);
+    for text in [
+        "이번엔 기차는 창가 쪽이 편해",
+        "기차는 통로가 편해?",
+        "친구는 기차 통로가 편해",
+        "기차는 ‘통로가 편해’라고 했어",
+        "만약 기차는 통로가 편해",
+        "기차는 통로가 편해. 저장하지 마",
+    ] {
+        assert!(
+            matches!(a.plan(text, &decision).await, Plan::NoChange(_)),
+            "{text}"
+        );
+    }
+    assert!(stated_preference(
+        "저는 보통 회의는 오전을 선호합니다.",
+        "회의"
+    ));
+    assert!(stated_preference(
+        "저는 이제 기차는 창가 쪽이 편해요",
+        "기차"
+    ));
+    for (words, topic) in [
+        ("엄마는 통로석이 편해", "엄마"),
+        ("남편은 창가 쪽이 편해", "남편"),
+        ("아이는 매운 음식을 좋아해", "아이"),
+        ("요즘은 기차 통로 쪽이 편해", "요즘"),
+        ("기차는 내일만 통로가 편해", "기차"),
+    ] {
+        assert!(!stated_preference(words, topic), "{words}");
+    }
+    decision.operation = Some(Operation::Forget);
+    assert!(matches!(
+        a.plan(statement, &decision).await,
+        Plan::NoChange(_)
+    ));
+    assert_eq!(a.all().await.len(), 1);
+}
+
+#[tokio::test]
 async fn create_retry_and_correction_use_one_memory_and_show_only_current_text() {
     let temp = tempfile::tempdir().unwrap();
     let a = Member::new(

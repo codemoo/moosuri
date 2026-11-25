@@ -1,6 +1,8 @@
 import type { InstructionMemory, InstructionTarget } from "./run-instructions";
 /** Tab-session plaintext recovery, never an authentication capability or send queue.
  * Storage is touched only after server authentication. No localStorage/cache/media bodies. */
+import type { MemberRoute } from "./member-work-intent";
+import type { MonitorCommand } from "./member-monitor-command";
 import type { SessionView } from "../shared/api-types";
 import type { ChatMemory, PendingSend, PendingThreadCreation } from "./ChatPanel";
 import { browserLocation } from "./browser-frame";
@@ -49,24 +51,65 @@ function creation(v: unknown): PendingThreadCreation | null {
         ? { request_id: v.request_id, title: v.title, status: "uncertain" } : null;
 }
 /** An ordinary shopping / application request from the composer; `request_id` of the carrier is the outcome id. */
-export type MemberPendingRequest = { kind: "research"; outcome: "shopping" | "application"; criteria: { deadline?: string; budget_minor?: number; currency?: string; terms?: string[] } };
-/** PendingSend plus the member request (ChatPanel.tsx's type may later absorb `member_request` directly). */
-export type MemberPendingSend = PendingSend & { member_request?: MemberPendingRequest };
+export type MemberPendingRequest = Extract<MemberRoute, { kind: "research" }>;
+/** Preserve the submitted route and its arguments across a member-tab reload. */
+export type MemberPendingSend = PendingSend & {
+    member_request?: MemberPendingRequest;
+    text_route?: "plain" | "interpret";
+    monitor?: MonitorCommand;
+};
+
+function storedMonitor(v: unknown, id: string): MonitorCommand | null {
+    if (!object(v)) return null;
+    if (v.kind === "list" && exact(v, ["kind"])) return { kind: "list" };
+    if (v.kind === "stop" && exact(v, ["kind", "target", "resolved"]) && text(v.target)) {
+        if (v.resolved === undefined) return { kind: "stop", target: v.target };
+        return target(v.resolved) ? { kind: "stop", target: v.target, resolved: { id: v.resolved.id, revision: v.resolved.revision } } : null;
+    }
+    const b = v.body;
+    if (v.kind !== "create" || !exact(v, ["kind", "body"]) || !object(b) || b.request_id !== id ||
+        !text(b.title) || !b.title.trim() || !text(b.query) || !b.query.trim() ||
+        (b.scope !== "memory" && b.scope !== "conversation") || !revision(b.days) || b.days > 90) return null;
+    const keys = ["kind", "request_id", "title", "query", "scope", "days"];
+    const base = { request_id: id, title: b.title, query: b.query, scope: b.scope as "memory" | "conversation", days: b.days };
+    if (b.kind === "watch" && exact(b, [...keys, "every_seconds"]) &&
+        (b.every_seconds === 1800 || b.every_seconds === 3600 || b.every_seconds === 86400))
+        return { kind: "create", body: { ...base, kind: "watch", every_seconds: b.every_seconds } };
+    if (b.kind === "brief" && exact(b, [...keys, "at", "timezone"]) && typeof b.at === "string" &&
+        /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(b.at) && monitorZone(b.timezone))
+        return { kind: "create", body: { ...base, kind: "brief", at: b.at, timezone: b.timezone } };
+    return null;
+}
+
+function monitorZone(value: unknown): value is string {
+    return typeof value === "string" && (zone(value) || /^[+-](?:0[0-9]|1[0-4]):[0-5][0-9]$/.test(value));
+}
 /** Rebuild a closed carrier. Persisted bytes never authorize an automatic POST. */
 function pending(v: unknown): MemberPendingSend | null {
-    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "work_request", "member_request", "follow_up_run_id", "interpret_group", "monitor_zone", "status"]) ||
+    if (!object(v) || !exact(v, ["request_id", "text", "attachments", "artifact_target", "schedule_context", "mission_context", "browser_request", "research_request", "work_request", "member_request", "follow_up_run_id", "interpret_group", "monitor_zone", "monitor", "text_route", "status"]) ||
         !uuid(v.request_id) || !text(v.text) || !v.text.trim() || !["sending", "accepted", "uncertain", "rejected", "inbox"].includes(String(v.status)))
         return null;
     if (v.status === "inbox")
         return exact(v, ["request_id", "text", "status"]) ? { request_id: v.request_id, text: v.text, status: "inbox" } : null;
     const out: MemberPendingSend = { request_id: v.request_id, text: v.text, status: v.status === "rejected" ? "rejected" : "uncertain" };
+    if (v.monitor !== undefined) {
+        if (!exact(v, ["request_id", "text", "status", "monitor"])) return null;
+        const command = storedMonitor(v.monitor, v.request_id);
+        if (!command) return null;
+        out.monitor = command;
+    }
+    if (v.text_route !== undefined) {
+        if ((v.text_route !== "plain" && v.text_route !== "interpret") ||
+            !exact(v, ["request_id", "text", "status", "text_route", ...(v.text_route === "interpret" ? ["interpret_group"] : [])])) return null;
+        out.text_route = v.text_route;
+    }
     if (v.monitor_zone !== undefined) {
-        if (typeof v.monitor_zone !== "string" || !(zone(v.monitor_zone) || /^[+-](?:0[0-9]|1[0-4]):[0-5][0-9]$/.test(v.monitor_zone)) ||
+        if (!monitorZone(v.monitor_zone) ||
             !exact(v, ["request_id", "text", "status", "monitor_zone"])) return null;
         out.monitor_zone = v.monitor_zone;
     }
     if (v.interpret_group !== undefined) {
-        if (!uuid(v.interpret_group) || !exact(v, ["request_id", "text", "status", "interpret_group"])) return null;
+        if (!uuid(v.interpret_group) || !exact(v, ["request_id", "text", "status", "interpret_group", "text_route"])) return null;
         out.interpret_group = v.interpret_group;
     }
     if (v.follow_up_run_id !== undefined) {

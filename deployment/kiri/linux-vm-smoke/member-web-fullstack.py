@@ -191,6 +191,9 @@ class UnixHTTP(http.client.HTTPConnection):
 
 class Proxy(QuietHandler):
     def relay(self):
+        if self.server.history_unavailable and self.command == "GET" and self.path.split("?")[0].endswith("/messages"):
+            self.send_error(503)
+            return
         allowed = ("content-type", "cookie", "origin", "sec-fetch-site", "accept", "x-moosuri-account")
         headers = {key: self.headers[key] for key in allowed if key in self.headers}
         headers.update({"Host": self.server.authority, "X-Real-IP": self.client_address[0]})
@@ -199,7 +202,9 @@ class Proxy(QuietHandler):
             gateway.request(self.command, self.path, body=body, headers=headers)
             response = gateway.getresponse()
             payload = response.read()
-            if self.command == "POST" and self.path == self.server.drop_ack_path and response.status == 200:
+            if self.server.live and self.command == "POST" and self.path.endswith("/work-interpret"):
+                self.server.live.interpretation(body, response.status, payload)
+            if self.command == "POST" and self.path == self.server.drop_ack_path and 200 <= response.status < 300:
                 # The gateway has committed. Close this test connection before sending a single response byte.
                 self.close_connection = True
                 return
@@ -208,8 +213,9 @@ class Proxy(QuietHandler):
                 if key.lower() not in ("connection", "transfer-encoding", "content-length", "date", "server"):
                     self.send_header(key, value)
             self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
+            # A navigation may close the browser socket before the first byte is flushed.
             with suppress(BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+                self.end_headers()
                 self.wfile.write(payload)
 
     do_GET = do_POST = do_PUT = do_DELETE = relay
@@ -543,12 +549,13 @@ def exercise_claude(page, member, origin, provider):
 
 
 def main():
+    import member_live_journeys
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("--channel", choices=("chrome", "chromium", "webkit"), default="chrome",
                         help="installed Chrome stable or a Playwright browser")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--live-journey", choices=("daily", "continuity", "privacy", "library", "work", "boundaries"),
+    mode.add_argument("--live-journey", choices=member_live_journeys.SUITES,
                       help="run an end-to-end member journey with real Claude for every classifier and chat call")
     parser.add_argument("--supplemental-work", action="store_true", help="exercise preference changes, follow-ups and source withdrawal in chat")
     parser.add_argument("--semantic-work", action="store_true", help="submit everyday work and reopen its source-backed results")
@@ -616,7 +623,6 @@ def main():
         provider.recall = None
         provider.live = None
         if args.live_journey:
-            import member_live_journeys
             provider.live = member_live_journeys.Receipts()
         if args.preference_recall:
             import member_preference_recall
@@ -628,6 +634,8 @@ def main():
         binary = args.binary.resolve(strict=True)
         registry, ipc, gateway, members, env = provision(stack, binary, root, provider, output_tokens)
         proxy = serve(stack, Proxy, tls)
+        proxy.history_unavailable = False
+        proxy.live = provider.live
         proxy.drop_ack_path = None
         proxy.authority = f"127.0.0.1:{proxy.server_port}"
         proxy.gateway = gateway / "gateway.sock"
@@ -648,11 +656,10 @@ def main():
                 context = browser.new_context(service_workers="block", ignore_https_errors=args.channel == "webkit",
                                               viewport={"width": 1200, "height": 840})
                 # Browser traffic for the application flows unmodified to the gateway.
-                context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
-                              else route.abort())
+                context.route(lambda url: not url.startswith(origin + "/"), lambda route: route.abort())
                 page = context.new_page()
                 if args.live_journey:
-                    member_live_journeys.exercise(args.live_journey, page, members, origin, provider,
+                    member_live_journeys.exercise(args.live_journey, page, members, origin, provider, proxy,
                                                   login=login, logout=logout, rows=rows)
                 elif args.preference_recall:
                     member_preference_recall.exercise(page, members, origin, provider, login=login, logout=logout,

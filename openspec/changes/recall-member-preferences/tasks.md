@@ -20,6 +20,8 @@
 
 일반 입력창을 통해 보낸 뒤 회원 화면의 답변, 해당 회원의 SQLite, 모델에 전달한 기억을 대조한다. [Linux 실행 방법](../../../deployment/kiri/linux-vm-smoke/README.md#chat-work) · [시나리오 실행기](../../../deployment/kiri/linux-vm-smoke/member_preference_recall.py)
 
+이번 주문을 정한 뒤 평소 취향을 묻는 경우, 취향을 써 달라는 경우와 빼 달라는 경우의 답변 및 모델 입력도 대조했다. [추가 회상 시나리오](../../../docs/reviews/2026-11-25-composer-routing-and-recovery.md#장기기억과-기존-흐름)
+
 ## 2026-11-25 Linux 실행 결과
 
 격리 회원 두 명의 Chromium에서 REC-01~09가 합성 모드와 Claude Sonnet 5.5(`medium`) 모드에서 각각 9/9 통과했다. 실제 모델 모드에서 해석 11회와 답변 9회는 지정 Claude의 사용 영수증을 확인했다. 최근 문맥을 채우는 인사 9회는 고정 응답을 썼다. 회원에게 표시된 답변은 SQLite 원문과 같았고, 모델로 간 일반 답변 요청 18개 중 4개에 관련 기억이 들어갔다.

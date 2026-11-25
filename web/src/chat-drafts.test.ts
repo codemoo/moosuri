@@ -2,10 +2,47 @@ import { describe, it, expect } from "vitest";
 import { CHAT_DRAFT_KEY, CHAT_DRAFT_MAX_BYTES, CHAT_DRAFT_MAX_SLOTS, CHAT_DRAFT_TTL, ChatDraftRecovery, type DraftStorage } from "./chat-drafts";
 import type { SessionView } from "../shared/api-types";
 import type { ChatMemory, PendingSend } from "./ChatPanel";
+import type { MemberPendingSend } from "./chat-drafts";
 const session = (id = "alice", scope = "a".repeat(64)): SessionView => ({ user: { id, name: id, email: `${id}@example.test`, role: "member", must_change_password: false }, password_change_required: false, chat_draft_scope: scope });
 const id = "00000000-0000-4000-8000-000000000001", attachment = "00000000-0000-4000-8000-000000000002", target = "00000000-0000-4000-8000-000000000003";
 const memory = (): ChatMemory => ({ drafts: { thread: "next draft" }, pending: { thread: { request_id: id, text: "original pending", attachments: [{ id: attachment, revision: 4 }], attachment_selections: ["local-only"], schedule_context: { timezone: "Asia/Seoul", target: { id: target, revision: 8 } }, status: "sending" } } });
 function store() { const map = new Map<string, string>(); const s: DraftStorage = { getItem: k => map.get(k) ?? null, setItem: (k, v) => { map.set(k, v); }, removeItem: k => { map.delete(k); } }; return { map, s }; }
+
+it("restores the submitted text route and monitor arguments beside an independent draft", () => {
+    const { s } = store();
+    const lease = new ChatDraftRecovery(() => s).confirm(session())!;
+    const base = { request_id: id, text: "원래 요청", status: "sending" as const };
+    const commands: MemberPendingSend[] = [
+        base, { ...base, monitor_zone: "Asia/Seoul" }, // earlier snapshot formats
+        { ...base, text_route: "plain" }, { ...base, text_route: "interpret", interpret_group: target },
+        { ...base, monitor: { kind: "stop", target: "원래 감시", resolved: { id: target, revision: 2 } } },
+        { ...base, monitor: { kind: "create", body: { request_id: id, kind: "brief", title: "아침",
+            scope: "memory", query: "준비물", days: 3, at: "08:30", timezone: "Asia/Seoul" } } },
+    ];
+    for (const original of commands) {
+        lease.save({ drafts: { thread: "다음 글" }, pending: { thread: original } }, "thread", ["thread"]);
+        expect(lease.load(["thread"]).memory).toEqual({
+            drafts: { thread: "다음 글" }, pending: { thread: { ...original, status: "uncertain" } },
+        });
+    }
+});
+
+it("drops mixed routes and malformed monitor identities while retaining the typed draft", () => {
+    const { map, s } = store();
+    const lease = new ChatDraftRecovery(() => s).confirm(session())!;
+    lease.save({ drafts: { thread: "다음 글" }, pending: {} }, "thread", ["thread"]);
+    const envelope = JSON.parse(map.get(CHAT_DRAFT_KEY)!);
+    for (const invalid of [
+        { text_route: "plain", interpret_group: target }, { text_route: "plain", monitor: { kind: "list" } },
+        { monitor: { kind: "stop", target: "", resolved: { id: target, revision: 0 } } },
+        { monitor: { kind: "create", body: { kind: "watch", request_id: target, scope: "memory",
+            query: "준비물", title: "준비물", days: 7, every_seconds: 3600 } } },
+    ]) {
+        envelope.slots[0].pending = { request_id: id, text: "원래 요청", status: "uncertain", ...invalid };
+        map.set(CHAT_DRAFT_KEY, JSON.stringify(envelope));
+        expect(lease.load(["thread"]).memory).toEqual({ drafts: { thread: "다음 글" }, pending: {} });
+    }
+});
 describe("authenticated tab-only draft recovery", () => {
     it("recovers original immutable pending identities only as uncertain beside the next draft", () => { const { map, s } = store(); let time = 1000; const recovery = new ChatDraftRecovery(() => s, () => time); recovery.confirm(session())!.save(memory(), "thread", ["thread"]); expect(map.get(CHAT_DRAFT_KEY)).not.toContain("local-only"); time++; const result = new ChatDraftRecovery(() => s, () => time).confirm(session())!.load(["thread"]); expect(result.memory.drafts.thread).toBe("next draft"); expect(result.selected).toBe("thread"); expect(result.memory.pending.thread).toEqual({ request_id: id, text: "original pending", attachments: [{ id: attachment, revision: 4 }], schedule_context: { timezone: "Asia/Seoul", target: { id: target, revision: 8 } }, status: "uncertain" }); });
     it.each([session("bob"), session("alice", "b".repeat(64)), { ...session(), password_change_required: true }, { ...session(), chat_draft_scope: undefined }])("never loads into a different/restricted/legacy session", next => { const { s, map } = store(); new ChatDraftRecovery(() => s).confirm(session())!.save(memory(), "thread", ["thread"]); const owner = new ChatDraftRecovery(() => s).confirm(next); expect(owner?.load(["thread"]).restored ?? false).toBe(false); expect(map.has(CHAT_DRAFT_KEY)).toBe(false); });

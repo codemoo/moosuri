@@ -31,7 +31,7 @@ import { useMemberRoute } from "./member-route";
 import { PersonalConnections } from "./PersonalConnections";
 import PersonalAdmin from "./PersonalAdmin";
 import { clearAdminRecovery } from "./PersonalAdminRecovery";
-import { personalResearchIntent, type WorkReceipt } from "./PersonalWorkflows";
+import type { WorkReceipt } from "./PersonalWorkflows";
 import { PersonalTasks } from "./PersonalTasks";
 import { PersonalEngineSettings } from "./PersonalEngineSettings";
 import { PersonalMemories } from "./PersonalMemories";
@@ -45,18 +45,18 @@ import { InstructionReceipts } from "./RunInstructions";
 import { PersonalTextFollowUp, clearSavedFollowUp, isTextFollowUp } from "./PersonalTextFollowUp";
 import { sameInstruction } from "./run-instructions";
 import {
-  compactMessage, parseWorkControl, parseWorkItems, resolveControl, WORK_PROVIDER_ID,
+  compactMessage, parseWorkControl, resolveControl, WORK_PROVIDER_ID,
   type WorkControl, type WorkItemInput,
 } from "./conversation-work";
 import { clearWorkRecovery } from "./conversation-work";
 import { useWorkCompletions } from "./useWorkCompletions";
 import { GroupForTurn, WorkCompletionMenu, useConversationWork, WorkComposer, WorkStatusNotice } from "./ConversationWork";
 import { WorkFocus, type WorkFocusState } from "./WorkFocus";
-import { MemberWorkMonitors, isMonitor, isMonitorPage } from "./MemberWorkMonitors";
+import { MemberWorkMonitors } from "./MemberWorkMonitors";
 import { PublicWatchLog, PublicWatchStart, parsePublicWatchChat } from "./MemberPublicWatch";
 import { startMemberPublicSearch } from "./member-research-source";
 import { ConnectedBriefCard, ConnectedBriefLog } from "./MemberConnectedBrief";
-import { browserTimezone, parseConnectedBriefChat, parseMonitorChat, resolveStopTarget, toMonitorRequest } from "./MemberWorkMonitorsChat";
+import { browserTimezone, parseConnectedBriefChat, parseMonitorChat } from "./MemberWorkMonitorsChat";
 import { interpretUnsupported, parseInterpretation, type WorkInterpretation } from "./work-interpret";
 import "./conversation-work.css";
 import { MemberMailWork } from "./MemberMailWork";
@@ -67,103 +67,18 @@ import {
 import {
   MemberCalendarConsent, calendarReturnThread, clearCalendarConsent, type CalendarConnection,
 } from "./MemberCalendarConsent";
-import { MemberCalendarWork, parseKoreanCalendarRequest, type CalendarParse } from "./MemberCalendarWork";
+import { MemberCalendarWork } from "./MemberCalendarWork";
 import { MemberMemoryReceipt, type MemberMemoryReceiptView } from "./MemberMemoryReceipt";
 import {
-  MemberResearchOutcomes, suggestOutcome, useResearchOutcomes, type Criteria, type Handoff, type OutcomeKind,
+  MemberResearchOutcomes, useResearchOutcomes, type Handoff,
 } from "./MemberResearchOutcomes";
 import { browserLocation } from "./browser-frame";
 import type { MemberPendingRequest, MemberPendingSend } from "./chat-drafts";
 
-/* ---- everyday member requests typed into the ordinary composer ----------------------------------
- * Deterministic gates, not a router: each recognises only an explicit, unnegated, unquoted request and
- * otherwise leaves the text to ordinary chat / the earlier work paths. */
-export type MemberRoute =
-  | { kind: "calendar"; parsed: CalendarParse }
-  | { kind: "mail"; to: string; body: string }
-  | { kind: "research"; outcome: OutcomeKind; criteria: Criteria };
-const NEGATED = /(지\s*(?:마(?![가-힣])|말|않)|지는\s*마|말아\s*(?:줘|주세요)|말고|마세요|마라(?![가-힣])|안\s*해도|않아도|필요\s*없|\bdo\s*not\b|\bdon'?t\b|\bnever\b)/i;
-const QUOTED = /"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’|「[^」\n]*」|'[^'\n]*'/g;
-// quoted text | sentence end (a dot only before whitespace, so addresses and URLs stay whole) | anything else
-const TOKEN = /("[^"\n]*"|“[^”]*”|‘[^’]*’|「[^」]*」|'[^'\n]*')|((?:[!?。！？\n]|\.(?=\s|$))+)|([^!?。！？\n"“‘「'.]+|["“‘「'.])/gu;
-/** Sentences, never split inside a quotation: a quoted body such as “…드릴게요.” stays in its clause. */
-function clauses(text: string): string[] {
-  const out: string[] = [];
-  let current = "";
-  for (const token of text.matchAll(TOKEN)) {
-    if (token[2]) { if (current.trim()) out.push(current.trim()); current = ""; }
-    else current += token[1] ?? token[3];
-  }
-  if (current.trim()) out.push(current.trim());
-  return out;
-}
-const unquoted = (text: string) => text.replace(QUOTED, " ");
-const STRONG_VERB = /(잡아|옮겨|옮기|미뤄|미루|당겨|당기)/;
-const WEAK_VERB = /(추가|만들|등록|넣어|생성|변경|바꿔|바꾸|수정|이동|예약해)/;
-const CAL_NOUN = /(일정|캘린더|달력|스케줄|회의(?!록|실)|미팅|약속|예약)/;
-const TIME_HINT = /(\d\s*시|오전|오후|저녁|아침|새벽|\d{1,2}:\d{2}|오늘|내일|모레|글피|요일|\d{1,2}월\s*\d{1,2}일|\d{4}-\d{2}-\d{2})/;
-/** An actual request to create or move a calendar event: a calendar verb outside quotes, not negated. */
-export function explicitCalendarRequest(text: string): boolean {
-  let explicit = false;
-  for (const clause of clauses(text)) {
-    const open = unquoted(clause);
-    const strong = STRONG_VERB.test(open), weak = WEAK_VERB.test(open);
-    if (!strong && !weak) continue;
-    if (NEGATED.test(open)) return false; // "달력 등록은 하지 마" cancels the whole message
-    if (CAL_NOUN.test(clause) || (strong && TIME_HINT.test(clause))) explicit = true;
-  }
-  return explicit;
-}
-const MAIL_NOUN = /(메일|이메일|e-?mail|지메일|gmail)/i;
-const REPLY = /(답장|회신|답신|\breply\b)/i;
-const DRAFT = /(초안|\bdraft\b)/i;
-const WRITE = /(써|쓰|작성|만들|준비|보내|해\s*줘|해줘|해\s*주세요)/;
-/** An explicit request for a reply/draft of a mail. Sending is never part of its effect. */
-export function explicitMailRequest(text: string): boolean {
-  let explicit = false;
-  for (const clause of clauses(text)) {
-    const open = unquoted(clause);
-    if (!MAIL_NOUN.test(clause) || !((REPLY.test(open) || DRAFT.test(open)) && WRITE.test(open))) continue;
-    if (NEGATED.test(open)) return false;
-    explicit = true;
-  }
-  return explicit;
-}
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
-/** The recipient and body the member gave: a quoted text (or "내용은 …") is the exact body; addresses outside it are recipients. */
-export function parseMailDetails(text: string): { to: string; body: string } {
-  const quotes = [...text.matchAll(/"([^"\n]{2,})"|“([^”]{2,})”|‘([^’]{2,})’|「([^」]{2,})」/g)].map(m => (m[1] ?? m[2] ?? m[3] ?? m[4]).trim());
-  let body = quotes.filter(q => !new RegExp(`^${EMAIL.source}$`).test(q)).sort((a, b) => b.length - a.length)[0] ?? "";
-  if (!body) {
-    const m = text.match(/(?:내용|본문)\s*(?:은|는|:|：)\s*([\s\S]+)$/u);
-    if (m) body = m[1].replace(/\s*(?:라고|이라고)?\s*(?:써|적어|보내|작성|답장)\S*(?:\s*(?:줘|주세요|줄래))?[.!?]*\s*$/u, "").trim();
-  }
-  const outside = body ? text.replace(body, " ") : text;
-  return { to: [...new Set(outside.match(EMAIL) ?? [])].join(", "), body };
-}
-function localZone(): string {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
-}
-/** The member's own words decide; null means ordinary chat. `now`/`zone` only feed the calendar parser. */
-export function memberRoute(text: string, now: Date = new Date(), zone: string = localZone()): MemberRoute | null {
-  const t = text.trim();
-  if (!t) return null;
-  if (explicitCalendarRequest(t)) {
-    const parsed = parseKoreanCalendarRequest(t, now, zone);
-    if (parsed) return { kind: "calendar", parsed };
-  }
-  const parts = clauses(t).map(unquoted);
-  const excluded = parts.filter(c => NEGATED.test(c));
-  const outcome = suggestOutcome(parts.filter(c => !NEGATED.test(c)).join(" "));
-  // Shopping never consumes mail. A separate instruction to leave the inbox alone is
-  // compatible with a price comparison; a prohibition on the requested work still wins.
-  const leaveMailAlone = /^(?:내\s*)?(?:이?메일|지메일|받은편지함)(?:은|는|을|를)?\s*(?:읽|보|쓰|사용하|열|참고하)지\s*(?:마|말아\s*줘|마세요|말아\s*주세요)$/;
-  if (outcome && (!excluded.length || outcome.kind === "shopping" && excluded.every(c => leaveMailAlone.test(c.trim())))) {
-    return { kind: "research", outcome: outcome.kind, criteria: outcome.criteria };
-  }
-  if (explicitMailRequest(t)) return { kind: "mail", ...parseMailDetails(t) };
-  return null;
-}
+import { composerWork, localZone, type MemberRoute } from "./member-work-intent";
+import { monitorCommand, submitMonitor } from "./member-monitor-command";
+export { memberRoute, explicitCalendarRequest, explicitMailRequest, parseMailDetails } from "./member-work-intent";
+export type { MemberRoute } from "./member-work-intent";
 
 /* Tab-session recovery for what is not a chat pending send: only what the member typed plus opaque ids.
  * No Gmail subjects/senders/bodies, calendar events, memory text or outcome contents: those are re-read. */
@@ -670,10 +585,19 @@ const active = (turn: ChatTurn) =>
   ["queued", "running"].includes(turn.run.state);
 function moveNewDraft(memory: ChatMemory, thread: string): ChatMemory {
   const drafts = { ...memory.drafts };
-  if (drafts.new && !drafts[thread]) drafts[thread] = drafts.new;
-  delete drafts.new;
+  if (!drafts[thread] || drafts[thread] === drafts.new) {
+    if (drafts.new) drafts[thread] = drafts.new;
+    delete drafts.new;
+  }
   return { ...memory, drafts, threadCreation: undefined };
 }
+function consumeDraft(memory: ChatMemory, thread: string, submitted: string): ChatMemory {
+  if (memory.drafts[thread] !== submitted) return memory;
+  const drafts = { ...memory.drafts };
+  delete drafts[thread];
+  return { ...memory, drafts };
+}
+
 function Workspace({
   session,
   recovery,
@@ -775,8 +699,6 @@ function Workspace({
   const [briefRevision, setBriefRevision] = useState(0);
   const [monitorList, setMonitorList] = useState<{ thread: string; key: string } | null>(null);
   const [workNotice, setWorkNotice] = useState<WorkNotice | null>(null);
-  const workBypass = useRef<string | null>(null);
-  const plainRequests = useRef(new Set<string>()); // requests the member chose to send as plain chat
   const [workFocus, setWorkFocus] = useState<WorkFocusState | null>(null);
   useEffect(() => { setWorkNotice(null); }, [selected, session.user.id]);
   useEffect(() => { setWorkFocus(null); }, [session.user.id]);
@@ -830,7 +752,7 @@ function Workspace({
     const value: PendingSend = { request_id: crypto.randomUUID(), text, status: "sending",
       browser_request: { kind: "start", url, wait_for_user: false } };
     change(m => ({ ...m, pending: { ...m.pending, [thread]: value } }));
-    void send(undefined, true);
+    void send({ replay: true });
   }
   useEffect(() => {
     if (!autoOpen || selected !== autoOpen.thread || view !== "chat" || mutating || loading) return;
@@ -1068,6 +990,15 @@ function Workspace({
       return { ...m, pending, drafts };
     });
   }
+  function reviewMonitor(thread: string, value: MemberPendingSend, message: string) {
+    const nextDraft = memoryRef.current.drafts[thread];
+    clearSend(thread, value);
+    if (!nextDraft) change(m => ({ ...m, drafts: { ...m.drafts, [thread]: value.text } }));
+    if (selectedRef.current === thread) {
+      setMonitorList({ thread, key: value.request_id });
+      setError(nextDraft && nextDraft !== value.text ? `${message} 원래 요청은 “${value.text}”입니다.` : message);
+    }
+  }
   async function history(thread: string, before?: number) {
     const version = ++historyVersion.current;
     setReading(true);
@@ -1205,9 +1136,14 @@ function Workspace({
     const timer = window.setInterval(() => void history(selected), 2000);
     return () => window.clearInterval(timer);
   }, [selected, page?.turns.some(active), pending?.status, pending?.browser_request, view, reading, scope]);
-  async function createThread(proposedTitle: string) {
+  async function createThread(proposedTitle: string, confirmPrevious = false) {
     setError("");
-    const value: PendingThreadCreation = memoryRef.current.threadCreation ?? {
+    const previous = memoryRef.current.threadCreation;
+    if (previous && !confirmPrevious) {
+      setError("먼저 이전 대화의 생성 결과를 확인해 주세요. 지금 작성한 내용은 보관했습니다.");
+      return null;
+    }
+    const value: PendingThreadCreation = previous ?? {
       request_id: crypto.randomUUID(),
       title: proposedTitle.trim() || "새 대화",
       status: "sending",
@@ -1231,10 +1167,8 @@ function Workspace({
       return created.id;
     } catch (e) {
       if (!isAborted(e)) {
-        change((m) => ({
-          ...m,
-          threadCreation: { ...value, status: "uncertain" },
-        }));
+        const refused = e instanceof ApiFailure && [400, 401, 403, 404, 413, 422, 429].includes(e.status);
+        change(m => ({ ...m, threadCreation: refused ? undefined : { ...value, status: "uncertain" } }));
         fail(e);
       }
       return null;
@@ -1246,7 +1180,7 @@ function Workspace({
     mutation.current = true;
     setMutating(true);
     try {
-      await createThread(previous.title);
+      await createThread(previous.title, true);
     } finally {
       mutation.current = false;
       setMutating(false);
@@ -1265,11 +1199,7 @@ function Workspace({
     const extra = Object.values(work.groups).filter(g => !receiptIds.includes(g.id));
     const resolution = resolveControl(control, [...shown, ...extra]);
     if (resolution.kind === "server") return false; // positional reference: the server maps it
-    const consume = () => change(m => {
-      const drafts = { ...m.drafts };
-      if (drafts[thread] === text) delete drafts[thread];
-      return { ...m, drafts };
-    });
+    const consume = () => change(m => consumeDraft(m, thread, text));
     switch (resolution.kind) {
       case "pass":
         if (!receiptIds.length) return false;
@@ -1385,11 +1315,7 @@ function Workspace({
       patchWork(destination, w => route.kind === "calendar"
         ? { ...w, calendar: { request_id: id, text, at: Date.now(), zone: localZone() } }
         : { ...w, mail: { request_id: id, text, ...(route.to ? { to: route.to } : {}), ...(route.body ? { body: route.body } : {}) } });
-      change(m => {
-        const drafts = { ...m.drafts };
-        if (drafts[destination] === text) delete drafts[destination];
-        return { ...m, drafts };
-      });
+      change(m => consumeDraft(m, destination, text));
       if (route.kind === "mail" && !googleReads.some(r => r.state === "completed" && r.thread_id === destination)) {
         if (await readInbox(destination, text) === "unavailable") {
           patchWork(destination, w => ({ ...w, mail: undefined }));
@@ -1436,8 +1362,9 @@ function Workspace({
     const thread = selected, target = Object.values(outcomes.outcomes).find(o => o.next.kind === "read_mail");
     void locked(() => readInbox(thread, (target?.message || target?.title || "메일 확인").slice(0, 2000)));
   }
-  async function send(event?: FormEvent, replay = false, followUp?: RunInstructionReceipt, batch?: WorkItemInput[]) {
-    event?.preventDefault();
+  async function send({ replay = false, followUp, batch, plain = false }: {
+    replay?: boolean; followUp?: RunInstructionReceipt; batch?: WorkItemInput[]; plain?: boolean;
+  } = {}) {
     if (mutation.current || loading || (inventoryError && !initialized.current)) return;
     let thread = selected;
     const old = (thread ? memoryRef.current.pending[thread] : undefined) as MemberPendingSend | undefined;
@@ -1446,63 +1373,50 @@ function Workspace({
     if (old && !replay) return;
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
-    const bypass = workBypass.current === text;
-    workBypass.current = null;
-    if (!old && !followUp && !batch && !bypass && thread && browserMode === "chat") {
+    const routeWork = !old && !followUp && !batch && !plain && browserMode === "chat";
+    if (routeWork && thread) {
       const control = parseWorkControl(text);
       if (control && runControl(control, text, thread)) return;
     }
-    const publicWatch = !old && !followUp && !batch && !bypass && browserMode === "chat" ? parsePublicWatchChat(text) : null;
-    if (publicWatch) {
-      if (!publicWatch.ok) { setError(publicWatch.message); return; }
+    const direct = routeWork ? composerWork(text) : null;
+    if (direct?.kind === "invalid") { setError(direct.message); return; }
+    if (direct?.kind === "publicWatch" || direct?.kind === "connectedBrief") {
       await locked(async () => {
         const destination = thread ?? await createThread(Array.from(text.trim()).slice(0, 40).join(""));
         if (!destination) return;
-        const pendingWatch = memberWorkRef.current[destination]?.publicWatch;
-        if (pendingWatch && pendingWatch.text !== text) {
-          setError("이 대화에 접수 중인 감시가 있어요. 먼저 그 결과를 확인해 주세요.");
-          return;
-        }
-        setError("");
-        const request = pendingWatch ?? { request_id: crypto.randomUUID(), text };
-        patchWork(destination, w => ({ ...w, publicWatch: request }));
-        change(m => ({ ...m, drafts: { ...m.drafts, [destination]: "" } }));
-      });
-      return;
-    }
-    const brief = !old && !followUp && !batch && !bypass && browserMode === "chat" && !NEGATED.test(unquoted(text))
-      ? parseConnectedBriefChat(text) : null;
-    if (brief) {
-      if (!brief.ok) { setError(brief.message); return; }
-      await locked(async () => {
-        const destination = thread ?? await createThread(Array.from(text.trim()).slice(0, 40).join(""));
-        if (!destination) return;
-        const request = memberWorkRef.current[destination]?.brief;
+        const current = memberWorkRef.current[destination];
+        const isWatch = direct.kind === "publicWatch";
+        const request = isWatch ? current?.publicWatch : current?.brief;
         if (request && request.text !== text) {
-          setError("이 대화에 확인 중인 브리핑이 있어요. 먼저 시작하거나 닫아 주세요.");
+          setError(isWatch ? "이 대화에 접수 중인 감시가 있어요. 먼저 그 결과를 확인해 주세요."
+            : "이 대화에 확인 중인 브리핑이 있어요. 먼저 시작하거나 닫아 주세요.");
           return;
         }
         setError("");
-        patchWork(destination, w => ({ ...w, brief: request ?? { request_id: crypto.randomUUID(), text, zone: localZone() } }));
-        change(m => ({ ...m, drafts: { ...m.drafts, [destination]: "" } }));
+        patchWork(destination, w => isWatch
+          ? { ...w, publicWatch: w.publicWatch ?? { request_id: crypto.randomUUID(), text } }
+          : { ...w, brief: w.brief ?? { request_id: crypto.randomUUID(), text, zone: localZone() } });
+        change(m => consumeDraft(m, destination, text));
       });
       return;
     }
-    const monitor = !followUp && !batch && !bypass && browserMode === "chat" && !old?.member_request
-      ? parseMonitorChat(old?.text ?? text) : null;
-    if (monitor && !monitor.ok && monitor.reason !== "not_monitor") {
-      setError(monitor.message);
-      return;
+    if (direct?.kind === "calendar" || direct?.kind === "mail") { await startMemberWork(direct, text); return; }
+    const memberRequest: MemberPendingRequest | undefined = old?.member_request ?? (direct?.kind === "research"
+      ? { kind: "research", outcome: direct.outcome, criteria: direct.criteria } : undefined);
+    const id = old?.request_id ?? followUp?.request_id ?? crypto.randomUUID();
+    let monitor = old?.monitor;
+    if (old?.monitor_zone && thread) {
+      // Previous snapshots only recorded the zone. A stop with no stored target must never pick a new one.
+      const legacy = parseMonitorChat(old.text);
+      if (!legacy.ok || legacy.intent.kind === "stop") {
+        reviewMonitor(thread, old, "이전 감시 요청의 대상을 확인해 주세요. 현재 목록에서 감시를 선택할 수 있어요.");
+        return;
+      }
+      monitor = monitorCommand(legacy.intent, id, old.monitor_zone);
+    } else if (direct?.kind === "monitor") {
+      monitor = monitorCommand(direct.intent, id, browserTimezone());
     }
-    const monitorIntent = monitor?.ok ? monitor.intent : null;
-    // Explicit shopping/application, mail-reply or calendar requests come before a generic browser link,
-    // so a URL with research intent is read for the outcome first. Earlier work paths keep priority.
-    const memberIntent = !old && !followUp && !batch && !bypass && !monitorIntent && browserMode === "chat" &&
-      !parseWorkItems(text) && !personalResearchIntent(text) ? memberRoute(text) : null;
-    if (memberIntent && memberIntent.kind !== "research") { await startMemberWork(memberIntent, text); return; }
-    const memberRequest: MemberPendingRequest | undefined = old ? old.member_request
-      : memberIntent?.kind === "research" ? { kind: "research", outcome: memberIntent.outcome, criteria: memberIntent.criteria } : undefined;
-    const intent = monitorIntent || old || followUp || memberRequest || browserMode === "guide" || preferredMode === "chat"
+    const intent = monitor || old || followUp || plain || memberRequest || browserMode === "guide" || preferredMode === "chat"
       ? null : browserIntent(text, browserMode === "start");
     if (intent && !intent.url) {
       setError("브라우저로 열 http 또는 https 주소를 메시지에 넣어 주세요.");
@@ -1521,24 +1435,23 @@ function Workspace({
       setError("추가 지시가 너무 깁니다. 내용을 줄여 주세요.");
       return;
     }
-    const parsedWork = monitorIntent || old || followUp || memberRequest || browserRequest || browserMode !== "chat" ? null
-      : batch ? { kind: "items" as const, items: batch } : parseWorkItems(text);
-    if (parsedWork?.kind === "invalid") { setError(parsedWork.message); return; }
-    const workRequest = old ? old.work_request : parsedWork ? { items: parsedWork.items } : undefined;
-    const research = old ? old.research_request : (!monitorIntent && !followUp && !memberRequest && !browserRequest && !workRequest && browserMode==="chat" ? personalResearchIntent(text) : null);
-    if (research && new TextEncoder().encode(research.query).length>128){setError("검색어를 128바이트 이내로 줄여 주세요.");return;}
-    // The member runtime owns semantic routing. Keep the same request and visible group on retry.
-    const interpretible = !monitorIntent && browserMode === "chat" && !browserRequest && !research && !workRequest && !followUp && !memberRequest &&
-      !(old && (old.browser_request || old.research_request || old.work_request || old.follow_up_run_id)) &&
-      !bypass && !(old && plainRequests.current.has(old.request_id)) &&
-      cap?.work_interpret === true;
-    if (!monitorIntent && !browserRequest && !research && !workRequest && !memberRequest && !ready && !interpretible) return;
+    const items = batch ?? (direct?.kind === "items" ? direct.items : undefined);
+    const workRequest = old?.work_request ?? (!browserRequest && items ? { items } : undefined);
+    const research = old?.research_request ?? (!browserRequest && direct?.kind === "search" ? direct.search : undefined);
+    if (research && new TextEncoder().encode(research.query).length > 128) { setError("검색어를 128바이트 이내로 줄여 주세요."); return; }
+    const textOnly = !monitor && !browserRequest && !research && !workRequest && !memberRequest && !followUp && !old?.follow_up_run_id;
+    const interpretible = textOnly && (old
+      ? old.text_route === "interpret" || (!old.text_route && (!!old.interpret_group || cap?.work_interpret === true))
+      : !plain && browserMode === "chat" && cap?.work_interpret === true);
+    if (!monitor && !browserRequest && !research && !workRequest && !memberRequest && !ready && !interpretible) {
+      if (old) setError("답변을 받을 수 없습니다. 잠시 후 같은 요청으로 다시 확인해 주세요.");
+      return;
+    }
     if (!old && !workRequest && !memberRequest && currentPage?.turns.some((turn) => active(turn) && turn.run.id !== browserWork?.run_id)) return;
-    const value: MemberPendingSend = old ?? {
-      request_id: followUp?.request_id ?? crypto.randomUUID(),
-      text,
-      status: "sending",
-      ...(monitorIntent ? { monitor_zone: browserTimezone() } : {}),
+    let value: MemberPendingSend = old ?? {
+      request_id: id, text, status: "sending",
+      ...(textOnly ? { text_route: interpretible ? "interpret" : "plain" } : {}),
+      ...(monitor ? { monitor } : {}),
       ...(interpretible && workFocus?.thread === thread && workFocus ? { interpret_group: workFocus.groupId } : {}),
       ...(followUp ? { follow_up_run_id: followUp.run_id } : {}),
       ...(research ? { research_request: research } : {}),
@@ -1546,7 +1459,6 @@ function Workspace({
       ...(memberRequest ? { member_request: memberRequest } : {}),
       ...(browserRequest ? { browser_request: browserRequest } : {}),
     };
-    if (bypass) plainRequests.current.add(value.request_id);
     followTail.current = true;
     mutation.current = true;
     setMutating(true);
@@ -1562,31 +1474,20 @@ function Workspace({
     }
     const destination = thread;
     setError("");
-    change((m) => {
-      const drafts = { ...m.drafts };
-      if (!followUp && !old && drafts[destination] === value.text) delete drafts[destination];
-      return { ...m, drafts, pending: { ...m.pending, [destination]: { ...value, status: "sending" } } };
-    });
+    function rememberSend() {
+      change(m => ({ ...m, pending: { ...m.pending, [destination]: { ...value, status: "sending" } } }));
+      // Record the original route/target before dispatch, including a thread created on this submit.
+      recovery?.save(memoryRef.current, selectedRef.current ?? destination, [...new Set([...threads.map(t => t.id), destination])]);
+    }
+    if (!followUp && !old) change(m => consumeDraft(m, destination, value.text));
+    rememberSend();
     try {
-      if (monitorIntent) {
-        const path = "/personal/tasks/monitors";
-        if (monitorIntent.kind === "stop") {
-          const monitors = await scope.request<unknown>(path);
-          if (!isMonitorPage(monitors)) throw new ApiFailure(502, "monitor_invalid");
-          const target = resolveStopTarget(monitorIntent.target, monitors.items);
-          if (target.found === "one") {
-            const stopped = await scope.request<unknown>(path + "/" + encodeURIComponent(target.id) + "/stop", "POST",
-              { request_id: value.request_id, revision: target.revision });
-            if (!isMonitor(stopped) || stopped.state !== "stopped") throw new ApiFailure(502, "monitor_invalid");
-          } else {
-            setError(target.found === "many" ? "어느 감시를 멈출까요? 아래 목록에서 선택해 주세요." : "진행 중인 해당 감시를 찾지 못했습니다.");
-          }
-        } else if (monitorIntent.kind !== "list") {
-          const body = toMonitorRequest(monitorIntent, value.request_id, value.monitor_zone ?? browserTimezone());
-          if (!body) throw new ApiFailure(400, "monitor_invalid");
-          const created = await scope.request<unknown>(path, "POST", { ...body, thread_id: destination, message: value.text });
-          if (!isMonitor(created) || created.id !== value.request_id) throw new ApiFailure(502, "monitor_invalid");
-        }
+      if (monitor) {
+        const notice = await submitMonitor(scope, monitor, destination, value.request_id, value.text, command => {
+          value = { ...value, monitor: command };
+          rememberSend();
+        });
+        if (notice && selectedRef.current === destination) setError(notice);
         clearSend(destination, value);
         if (selectedRef.current === destination) {
           setMonitorList({ thread: destination, key: value.request_id });
@@ -1680,7 +1581,8 @@ function Workspace({
         try {
           decision = parseInterpretation(await scope.request<unknown>(
             `/threads/${encodeURIComponent(destination)}/work-interpret`, "POST",
-            { request_id: value.request_id, text: value.text, ...(value.interpret_group ? { group_id: value.interpret_group } : {}) }, undefined, { timeoutMs: 90000 }), destination);
+            { request_id: value.request_id, text: value.text, ...(value.interpret_group ? { group_id: value.interpret_group } : {}),
+              ...(old && !old.text_route && !old.interpret_group ? { read_only: true } : {}) }, undefined, { timeoutMs: 90000 }), destination);
           if (!decision) failed = "요청을 업무로 해석한 결과를 확인할 수 없습니다.";
         } catch (e) {
           if (isAborted(e)) throw e;
@@ -1731,6 +1633,11 @@ function Workspace({
           return;
         }
       }
+      if (interpretible) {
+        const { interpret_group: _, ...original } = value;
+        value = { ...original, text_route: "plain" };
+        rememberSend();
+      }
       const turn = await scope.request<ChatTurn>(
         `/threads/${encodeURIComponent(thread)}/text-preview`,
         "POST",
@@ -1768,6 +1675,10 @@ function Workspace({
       void inventory().catch(fail);
     } catch (e) {
       if (!isAborted(e)) {
+        if (monitor && e instanceof ApiFailure && e.status === 409) {
+          reviewMonitor(destination, value, "감시 상태가 바뀌었어요. 최신 목록에서 확인해 주세요.");
+          return;
+        }
         if (value.browser_request && e instanceof ApiFailure &&
             [400, 401, 403, 404, 409, 422, 429].includes(e.status)) {
           clearSend(destination, value, true);
@@ -1783,7 +1694,7 @@ function Workspace({
         ) {
           const inbox = e.status === 422 && e.code === "personal_inbox_requested";
           if (inbox) {
-            change(m => ({ ...m, pending: { ...m.pending, [destination]: { ...value, status: "inbox" } } }));
+            change(m => ({ ...m, pending: { ...m.pending, [destination]: { request_id: value.request_id, text: value.text, status: "inbox" } } }));
             openInboxRequest(destination, value.request_id);
             return;
           }
@@ -1918,8 +1829,9 @@ function Workspace({
   const briefIntent = briefRequest && parseConnectedBriefChat(briefRequest.text);
   const hasWork = Object.keys(work.groups).length > 0;
   // Work needs no model, so these drafts stay sendable while the chat engine is unavailable.
-  const draftWorkAllowed = browserMode === "chat" && (parsePublicWatchChat(draft) !== null || parseConnectedBriefChat(draft) !== null || parseMonitorChat(draft).ok || parseWorkItems(draft) !== null || (hasWork && parseWorkControl(draft) !== null) ||
-    memberRoute(draft) !== null);
+  const draftWorkAllowed = useMemo(() => browserMode === "chat" && (composerWork(draft) !== null ||
+    (hasWork && parseWorkControl(draft) !== null) || (preferredMode !== "chat" && !!browserIntent(draft))),
+    [draft, browserMode, hasWork, preferredMode]);
   const thread = threads.find((item) => item.id === selected);
   const heading = view === "chat" ? thread ? threadDisplayTitle(thread.title) : "새 대화"
     : view === "tasks" ? "맡긴 일"
@@ -2075,7 +1987,7 @@ function Workspace({
                           <span role="status">{r.reason === "text_follow_up_sent" || turns.some(t => t.run.request_id === r.request_id)
                             ? "후속 메시지로 보냄" : "후속 지시 저장됨 · 이 답변에는 미반영"}</span>
                           {r.reason === "text_follow_up_saved" && !turns.some(t => t.run.request_id === r.request_id) &&
-                            <button type="button" disabled={composerBusy || !ready || browserMode !== "chat"} onClick={() => void send(undefined, false, r)}>후속 메시지로 보내기</button>}
+                            <button type="button" disabled={composerBusy || !ready || browserMode !== "chat"} onClick={() => void send({ followUp: r })}>후속 메시지로 보내기</button>}
                         </div>)}
                     </>}
                     {(turn.assistant.length > 0 || turn.run.id !== browserWork?.run_id) && (
@@ -2129,8 +2041,8 @@ function Workspace({
                             onClick={() => openInboxRequest(selected, pending.request_id)} />
                         ) : (
                           <Button label="이전 메시지 다시 보내기" variant="ghost"
-                            isDisabled={(!pending.browser_request && !pending.research_request && !pending.work_request && !pending.member_request && !ready) || mutating || busy}
-                            onClick={() => void send(undefined, true)} />
+                            isDisabled={(!pending.browser_request && !pending.research_request && !pending.work_request && !pending.member_request && !pending.monitor && !pending.monitor_zone && pending.text_route !== "interpret" && !ready) || mutating || busy}
+                            onClick={() => void send({ replay: true })} />
                         )}
                         <Button label="이전 메시지 버리기" variant="ghost" isDisabled={mutating}
                           onClick={() => clearSend(selected, pending)} />
@@ -2145,7 +2057,7 @@ function Workspace({
                           }} />
                         {pending.status === "uncertain" && (
                           <Button label="동일 요청 다시 확인" variant="ghost" isDisabled={mutating}
-                            onClick={() => void send(undefined, true)} />
+                            onClick={() => void send({ replay: true })} />
                         )}
                       </div>
                     )}
@@ -2160,7 +2072,7 @@ function Workspace({
                         {workNotice.choices?.map(choice => <button key={choice.label} type="button" onClick={choice.run}>{choice.label}</button>)}
                         {workNotice.kind === "clarify" && (
                           <button type="button" disabled={composerBusy || !ready} onClick={() => {
-                            workBypass.current = workNotice.draft; setWorkNotice(null); void send();
+                            setWorkNotice(null); void send({ plain: true });
                           }}>일반 메시지로 보내기</button>
                         )}
                         <button type="button" onClick={() => setWorkNotice(null)}>닫기</button>
@@ -2261,7 +2173,7 @@ function Workspace({
           {!loading && browserMode === "chat" && (
             <div className="work-composer-wrap">
               <WorkComposer disabled={mutating || !!pending || (inventoryError && !initialized.current)}
-                onSubmit={(items) => void send(undefined, false, undefined, items)} />
+                onSubmit={(items) => void send({ batch: items })} />
             </div>
           )}
           {!loading && (
@@ -2271,7 +2183,7 @@ function Workspace({
                 pending={memory.instructions?.[selected]?.pending} rejected={memory.instructions?.[selected]?.draft} change={change} expired={expired}
                 refresh={() => { if (selectedRef.current === selected) void history(selected); }} />}
               disabled={inventoryError && !initialized.current}
-              sendUnavailable={!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up && !/^(?:기억|대화) 검색[:：]/u.test(draft) && !personalResearchIntent(draft) && !draftWorkAllowed} busy={composerBusy}
+              sendUnavailable={!ready && browserMode === "chat" && !working?.run.accepts_text_follow_up && !draftWorkAllowed} busy={composerBusy}
               waiting={busy ? "대화 불러오는 중…"
                 : pending?.status === "rejected" || pending?.status === "inbox" ? "다음 메시지를 작성하세요."
                 : pending?.status === "uncertain" ? "전송 결과를 확인해 주세요."

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
+import { parseWatchTiming } from "./member-watch-timing";
 
 // Member chat control for "watch one public status page and tell me only when it changes".
 // Pure parser (no network/model) + a start handler + the in-thread worklog.
@@ -34,26 +35,6 @@ const LOCAL_HOST = /(^|\.)(localhost|local|localdomain|internal|intranet|lan|hom
 
 const refuse = (reason: PublicWatchRefusal, message: string): PublicWatchParse => ({ ok: false, reason, message });
 
-function interval(text: string): PublicWatchEvery | "unsupported" | null {
-  const minutes = text.match(/(\d+)\s*분\s*(?:마다|간격|에\s*한\s*번)/);
-  if (minutes) return Number(minutes[1]) === 30 ? 1800 : "unsupported";
-  const hours = text.match(/(\d+|한)\s*시간\s*(?:마다|간격|에\s*한\s*번)/);
-  if (hours) { const n = hours[1] === "한" ? 1 : Number(hours[1]); return n === 1 ? 3600 : n === 24 ? 86400 : "unsupported"; }
-  if (/매\s?시간/.test(text)) return 3600;
-  if (/(반\s?시간마다|삼십\s*분마다)/.test(text)) return 1800;
-  if (/(매일|하루에\s*한\s*번|하루마다)/.test(text)) return 86400;
-  return null;
-}
-
-function duration(text: string): number | "unsupported" | null {
-  if (/일주일/.test(text)) return 7;
-  if (/한\s?달/.test(text)) return 30;
-  const m = text.match(/(\d+)\s*(일|주|개월|달)\s*(?:동안|간|까지)/);
-  if (!m) return null;
-  const n = Number(m[1]) * (m[2] === "일" ? 1 : m[2] === "주" ? 7 : 30);
-  return n >= 1 && n <= 90 ? n : "unsupported";
-}
-
 /** Why this address may not be watched, or null when it is a plain public http(s) address. */
 export function unsafePublicUrl(raw: string): string | null {
   if (raw.length > 2048) return "주소가 너무 길어요.";
@@ -83,21 +64,22 @@ export function parsePublicWatchChat(raw: string): PublicWatchParse | null {
   const outside = text.replace(QUOTED, (_quote, contents: string) => /^https?:\/\/[^\s]+$/i.test(contents) ? contents : " ");
   if (DECLINED.test(outside) || QUESTION.test(outside.replace(URL_RE, " ")) || ONE_OFF.test(outside)) return null;
   if (!CHANGE.test(outside) || !NOTIFY.test(outside)) return null;
-  const every = interval(outside);
+  const when = parseWatchTiming(outside.replace(URL_RE, " "));
   const ongoing = /(?:바뀌|변하|달라지)면|(?:바뀔|변할|달라질)\s*때|변경(?:되면|될\s*때)/.test(outside);
-  if (every === null && !ongoing) return null;
+  if (!when.cadence && !ongoing) return null;
   const urls = [...new Set([...outside.matchAll(URL_RE)].map(m => m[0].replace(/[.,;:!?)\]]+$/, "")))];
   if (!urls.length) return null;
   if (urls.length > 1) return refuse("many_urls", "한 번에 공개 주소 하나만 감시할 수 있어요. 감시를 만들지 않았어요.");
   const unsafe = unsafePublicUrl(urls[0]);
   if (unsafe) return refuse("unsafe_url", `${unsafe} 로그인 없이 열리는 공개 주소만 확인해요. 감시를 만들지 않았어요.`);
-  if (every === "unsupported" || every === null && /(?:마다|간격|매주|매월|초당)/.test(outside)) return refuse("unsupported_interval", "확인 간격은 30분, 1시간, 하루만 지원해요. 감시를 만들지 않았어요.");
-  const span = duration(outside);
-  if (span === "unsupported") return refuse("unsupported_duration", "감시 기간은 1일에서 90일까지만 정할 수 있어요. 감시를 만들지 않았어요.");
+  const stripped = outside.replace(URL_RE, " ");
+  const conflict = !when.ok && when.conflict ? " 서로 다른 값이 함께 들어 있어요." : "";
+  if (!when.ok && when.reason === "unsupported_interval" || when.ok && when.every_seconds === null && /(?:마다|간격)/.test(stripped)) return refuse("unsupported_interval", `확인 간격은 30분, 1시간, 하루만 지원해요.${conflict} 감시를 만들지 않았어요.`);
+  if (!when.ok) return refuse("unsupported_duration", `감시 기간은 1일에서 90일까지만 정할 수 있어요.${conflict} 감시를 만들지 않았어요.`);
   const assumed = [];
-  if (every === null) assumed.push("every_seconds");
-  if (span === null) assumed.push("days");
-  return { ok: true, intent: { url: urls[0], every_seconds: every ?? 3600, days: span ?? 7, assumed, message: text } };
+  if (when.every_seconds === null) assumed.push("every_seconds");
+  if (when.days === null) assumed.push("days");
+  return { ok: true, intent: { url: urls[0], every_seconds: when.every_seconds ?? 3600, days: when.days ?? 7, assumed, message: text } };
 }
 
 const EVERY: Record<number, string> = { 1800: "30분", 3600: "1시간", 86400: "하루" };

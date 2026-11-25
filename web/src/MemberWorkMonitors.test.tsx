@@ -22,6 +22,36 @@ it("parses straightforward Korean watches, briefs, list and stop requests", () =
   expect(ok("서비스 상태 감시 멈춰줘")).toEqual({ kind: "stop", target: "서비스 상태" });
 });
 
+it("uses the shared timing reader: Korean forms are exact, explicit unsupported or conflicting timing is refused", () => {
+  expect(ok("‘서비스 상태’ 기억이 바뀌면 알려줘 반 시간마다 이틀 동안")).toMatchObject({ kind: "watch", every_seconds: 1800, days: 2, assumed: [] });
+  expect(ok("서비스 상태가 바뀌면 알려줘 삼십 분마다 사흘 동안")).toMatchObject({ kind: "watch", query: "서비스 상태", every_seconds: 1800, days: 3 });
+  expect(ok("‘서비스 상태’ 바뀌면 알려줘 매시간 하루 동안")).toMatchObject({ every_seconds: 3600, days: 1 });
+  expect(ok("‘서비스 상태’ 바뀌면 알려줘 일주일")).toMatchObject({ days: 7 });
+  expect(ok("‘서비스 상태’ 바뀌면 알려줘 한 달")).toMatchObject({ days: 30 });
+  expect(ok("매일 아침 9시에 ‘오늘 일정’ 브리핑 해줘 이틀 동안")).toMatchObject({ kind: "brief", at: "09:00", days: 2 });
+  for (const text of ["‘서비스 상태’ 바뀌면 알려줘 두 시간마다", "‘서비스 상태’ 바뀌면 알려줘 매주", "‘서비스 상태’ 바뀌면 알려줘 2주마다",
+    "‘서비스 상태’ 바뀌면 알려줘 일주일마다", "30분마다 1시간마다 ‘서비스 상태’ 바뀌면 알려줘"]) expect(why(text), text).toBe("unsupported_interval");
+  for (const text of ["‘서비스 상태’ 바뀌면 알려줘 이틀 동안 사흘 동안", "‘서비스 상태’ 바뀌면 알려줘 91일 동안"]) expect(why(text), text).toBe("unsupported_duration");
+  // Quoted search terms never provide timing and stay the literal query.
+  expect(ok("‘10분마다 점검’ 기억이 바뀌면 알려줘")).toMatchObject({ query: "10분마다 점검", every_seconds: 3600, days: 7, assumed: ["days", "every_seconds"] });
+  expect(ok("30분마다 ‘200일 동안’ 기억이 바뀌면 알려줘")).toMatchObject({ query: "200일 동안", every_seconds: 1800, days: 7 });
+});
+
+it("uses complete quantities for the interval and lifetime of a watch", () => {
+  for (const interval of ["1시간 30분마다", "한 시간 반마다", "1.5시간마다"]) {
+    expect(why("‘출고 공지’가 바뀌면 " + interval + " 알려줘")).toBe("unsupported_interval");
+  }
+  expect(why("‘출고 공지’가 바뀌면 30분마다 2시간 동안 알려줘")).toBe("unsupported_duration");
+  for (const interval of ["하루에 두 번", "매일 두 번", "열한 시간마다"]) {
+    expect(why("‘출고 공지’가 바뀌면 " + interval + " 알려줘")).toBe("unsupported_interval");
+  }
+  expect(why("‘출고 공지’가 바뀌면 매시간 12월 25일까지 알려줘")).toBe("unsupported_duration");
+  expect(ok("‘출고 공지’가 바뀌면 하루 한 번 알려줘")).toMatchObject({ every_seconds: 86400 });
+  expect(ok("출고 공지가 바뀌면 매 30분 간격으로 48시간 동안 알려줘")).toMatchObject({
+    query: "출고 공지", every_seconds: 1800, days: 2, assumed: [],
+  });
+});
+
 it("refuses unsupported sources, ambiguous clocks and unsupported cadences instead of guessing", () => {
   expect(why("‘서비스 상태’ 기억이 바뀌면 알려줘 메일도 같이 봐줘")).toBe("unsupported_source");
   expect(why("https://example.org 가 바뀌면 알려줘")).toBe("not_monitor");

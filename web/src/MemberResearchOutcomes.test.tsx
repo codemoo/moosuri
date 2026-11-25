@@ -155,6 +155,17 @@ it("keeps a relative delivery deadline, year rollover and exclusive won budget f
   expect(suggestOutcome("1월 5일까지 도착하는 곳 가격 비교해 줘", today)?.criteria.deadline).toBe("2027-01-05");
 });
 
+it("does not treat comparing arrival times as shopping, and uses the explicit ceiling over a reference price", () => {
+  expect(suggestOutcome("버스 두 대의 도착 시간을 비교해 줘")).toBeNull();
+  expect(suggestOutcome("도착 시간 비교하고 도착 예정도 비교해줘")).toBeNull();
+  expect(suggestOutcome("어댑터 판매처 도착일을 비교해 줘")).toMatchObject({ kind: "shopping" });
+  expect(suggestOutcome("참고 가격은 2만 원이야. 예산은 5만 원 이하로 어댑터 판매처 가격을 비교해줘")?.criteria)
+    .toMatchObject({ budget_minor: 50000, currency: "KRW" });
+  expect(suggestOutcome("어댑터 가격 비교해줘. 예산 4만원, 예전엔 3만원이었어")?.criteria.budget_minor).toBe(40000);
+  expect(suggestOutcome("어댑터 가격 비교해줘. 3만원 이상은 제외")?.criteria.budget_minor).toBeUndefined();
+  expect(suggestOutcome("Compare price and delivery of this adapter")).toMatchObject({ kind: "shopping" });
+});
+
 it("edits a dollar budget in dollars and cents and preserves the existing deadline", async () => {
   const current = outcome({ criteria: { budget_minor: 4599, currency: "USD", deadline: "2026-12-10" } });
   route = (_url, method) => method === "POST" ? Response.json(current) : page([current]);

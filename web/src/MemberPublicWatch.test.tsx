@@ -37,6 +37,26 @@ it("parses only an explicit recurring change-only request with one exact public 
   ]) expect(parsePublicWatchChat(text)).toBeNull();
 });
 
+it("reads shared Korean cadence and duration forms and refuses explicit unsupported or conflicting timing", () => {
+  const every = (s: string) => { const p = parsePublicWatchChat(`${URL_} ${s}`); return p && p.ok ? p.intent : p; };
+  expect(every("반 시간마다 바뀌면 알려줘 이틀 동안")).toMatchObject({ every_seconds: 1800, days: 2, assumed: [] });
+  expect(every("삼십 분마다 바뀌면 알려줘 사흘간")).toMatchObject({ every_seconds: 1800, days: 3 });
+  expect(every("매시간 바뀌면 알려줘 하루 동안")).toMatchObject({ every_seconds: 3600, days: 1 });
+  expect(every("매시간 바뀌면 알려줘 일주일")).toMatchObject({ days: 7 });
+  expect(every("매시간 바뀌면 알려줘 한 달")).toMatchObject({ days: 30 });
+  expect(every("바뀌면 알려줘 90일 동안")).toMatchObject({ every_seconds: 3600, days: 90, assumed: ["every_seconds"] });
+  for (const s of ["두 시간마다 바뀌면 알려줘", "2주마다 바뀌면 알려줘", "일주일마다 바뀌면 알려줘", "매월 바뀌면 알려줘", "3일마다 바뀌면 알려줘",
+    "30분마다 확인하고 1시간마다 바뀌면 알려줘", "매시간 확인하고 매일 바뀌면 알려줘"]) {
+    expect(every(s), s).toMatchObject({ ok: false, reason: "unsupported_interval" });
+  }
+  for (const s of ["매시간 바뀌면 알려줘 이틀 동안 사흘 동안", "매시간 바뀌면 알려줘 91일 동안", "매시간 바뀌면 알려줘 0일 동안"]) {
+    expect(every(s), s).toMatchObject({ ok: false, reason: "unsupported_duration" });
+  }
+  // Quoted wording is search text, never timing.
+  expect(every("‘10분마다 점검’ 을 매시간 확인하고 ‘200일 동안’ 바뀌면 알려줘")).toMatchObject({ every_seconds: 3600, days: 7, assumed: ["days"] });
+  expect(every("‘10분마다 점검’ 바뀌면 알려줘")).toMatchObject({ every_seconds: 3600, assumed: ["every_seconds", "days"] });
+});
+
 it("refuses private, local, credentialed or token addresses, several addresses and unsupported cadence without creating", () => {
   const cases: [string, string][] = [
     ["http://localhost/status", "unsafe_url"], ["http://192.168.0.10/status", "unsafe_url"], ["http://127.0.0.1/s", "unsafe_url"],

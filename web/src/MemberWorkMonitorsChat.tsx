@@ -4,6 +4,7 @@
 // specific reason instead of a guess. Only the member's own memory and conversation records are
 // supported: external sites, mail and calendar are refused here, not silently approximated.
 import type { MonitorRequest, MonitorView } from "./MemberWorkMonitors";
+import { parseWatchTiming, stripWatchTiming } from "./member-watch-timing";
 
 export type MonitorScope = "memory" | "conversation";
 export type MonitorIntent =
@@ -57,37 +58,13 @@ function clock(text: string): { at: string } | "needs_time" | "ambiguous_time" {
   return { at: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
 
-function interval(text: string): 1800 | 3600 | 86400 | "unsupported" | null {
-  const t = unquoted(text);
-  const minutes = t.match(/(\d+)\s*분\s*(?:마다|간격|에\s*한\s*번)/);
-  if (minutes) return Number(minutes[1]) === 30 ? 1800 : "unsupported";
-  const hours = t.match(/(\d+|한)\s*시간\s*(?:마다|간격|에\s*한\s*번)/);
-  if (hours) { const n = hours[1] === "한" ? 1 : Number(hours[1]); return n === 1 ? 3600 : n === 24 ? 86400 : "unsupported"; }
-  if (/매\s?시간/.test(t)) return 3600;
-  if (/(매일|하루에\s*한\s*번|하루마다)/.test(t)) return 86400;
-  if (/(반\s?시간마다|삼십\s*분마다)/.test(t)) return 1800;
-  return null;
-}
-
-function duration(text: string): number | "unsupported" | null {
-  const t = unquoted(text);
-  if (/일주일/.test(t)) return 7;
-  if (/한\s?달/.test(t)) return 30;
-  const m = t.match(/(\d+)\s*(일|주|개월|달)\s*(?:동안|간|까지)/);
-  if (!m) return null;
-  const n = Number(m[1]) * (m[2] === "일" ? 1 : m[2] === "주" ? 7 : 30);
-  return n >= 1 && n <= 90 ? n : "unsupported";
-}
-
 function query(text: string): string {
   const quoted = quotedText(text);
   if (quoted) return quoted.slice(0, 128);
-  let r = text
+  let r = stripWatchTiming(text)
     .replace(CLOCK, " ")
     .replace(/(오전|아침|새벽|오후|저녁|밤|정오|자정)/g, " ")
-    .replace(/(\d+|한)\s*(분|시간)\s*(마다|간격|에\s*한\s*번)/g, " ")
-    .replace(/(\d+)\s*(일|주|개월|달)\s*(동안|간|까지)/g, " ")
-    .replace(/(매일|매\s?시간|일주일|한\s?달|하루에\s*한\s*번|하루마다|동안)/g, " ")
+    .replace(/동안/g, " ")
     .replace(/(변화가\s*있으면|바뀌었으면|바뀌면|바뀔\s*때|변하면|변경되면|달라지면|새로\s*생기면|새로\s*추가되면)/g, " ")
     .replace(/(알려\s*주세요|알려\s*줘|알려줘|알려|알림|지켜봐\s*줘|지켜봐|감시해\s*줘|감시|모니터링|브리핑해\s*줘|브리핑|요약해\s*줘|요약|정리해\s*줘|해\s*주세요|해\s*줘|해줘|주세요|줘)/g, " ")
     .replace(/(내\s*)?(기억|메모리|메모|대화\s*기록|대화|채팅)\s*(에서|의|이|가|을|를|은|는|에)?/g, " ");
@@ -104,7 +81,7 @@ export type BriefSource = "gmail" | "calendar";
 export type ConnectedBriefIntent = { sources: BriefSource[]; at: string; days: number; interval_days: 1; assumed: string[]; important_only: boolean };
 export type ConnectedBriefParse =
   | { ok: true; intent: ConnectedBriefIntent }
-  | { ok: false; reason: "ambiguous_time"; message: string };
+  | { ok: false; reason: "ambiguous_time" | "unsupported_interval" | "unsupported_duration"; message: string };
 const MAIL = /(메일|이메일|gmail|지메일)/i;
 const CALENDAR = /(캘린더|일정)/;
 // Anything about the member's own memory/conversation, or change watching, stays with the local monitors.
@@ -128,8 +105,10 @@ export function parseConnectedBriefChat(raw: string): ConnectedBriefParse | null
   const at = clock(text);
   if (at === "needs_time") return null;
   if (at === "ambiguous_time") return { ok: false, reason: "ambiguous_time", message: "오전인지 오후인지 알려 주세요. 예: 매일 아침 8시, 오후 6시 30분, 08:00" };
-  const span = duration(text);
-  if (span === "unsupported") return null;
+  const timing = parseWatchTiming(outside);
+  if (!timing.ok) return { ok: false, reason: timing.reason, message: timing.reason === "unsupported_duration"
+    ? "브리핑 기간을 1일에서 90일 사이로 하나만 정해 주세요." : "아침 브리핑은 하루 한 번 받을 수 있어요. 간격을 확인해 주세요." };
+  const span = timing.days;
   // Only "중요한 메일 / 중요 메일 / 중요한 이메일" asks for important mail; other uses of 중요 do not switch the source.
   const important_only = sources.includes("gmail") && /중요(?:한|\s*표시된?)?\s*(?:메일|이메일|gmail|지메일)/i.test(outside);
   return { ok: true, intent: { sources, at: at.at, days: span ?? 7, interval_days: 1, assumed: span === null ? ["days"] : [], important_only } };
@@ -183,13 +162,13 @@ export function parseMonitorChat(raw: string): MonitorParse {
   if (connected) {
     return connected.ok
       ? refuse("connected_brief", "메일·캘린더 브리핑은 Google 연결과 읽기 허용을 확인하는 카드로 설정해요. 읽기 전용이며 메일을 보내거나 일정을 바꾸지 않아요.")
-      : refuse("ambiguous_time", connected.message);
+      : refuse(connected.reason, connected.message);
   }
   const brief = (/브리핑/.test(outside) || /요약/.test(outside) && NOTIFY.test(outside)) && /(매일|하루에\s*한\s*번)/.test(outside);
-  const every = interval(text);
+  const when = parseWatchTiming(outside);
   const condition = WHEN_CHANGED.exec(outside);
   const notifyOnChange = condition && NOTIFY_AFTER_CONDITION.test(outside.slice(condition.index + condition[0].length));
-  const periodicChange = every !== null && WATCH_VERB.test(outside) && NOTIFY.test(outside);
+  const periodicChange = when.cadence && WATCH_VERB.test(outside) && NOTIFY.test(outside);
   const watch = !brief && (notifyOnChange || periodicChange || /(감시|지켜봐|모니터)/.test(outside));
   if (!brief && !watch) return { ok: false, reason: "not_monitor" };
   if (EXTERNAL.test(outside)) {
@@ -198,8 +177,14 @@ export function parseMonitorChat(raw: string): MonitorParse {
   const scope: MonitorScope = /(대화|채팅)/.test(outside) && !/기억|메모/.test(outside) ? "conversation" : "memory";
   const q = query(text);
   if (!q) return refuse("needs_query", brief ? "어떤 내용을 브리핑할까요? 예: ‘오늘 일정’ 브리핑" : "어떤 내용의 변화를 볼까요? 예: ‘서비스 상태’ 기억이 바뀌면 알려줘");
-  const span = duration(text);
-  if (span === "unsupported") return refuse("unsupported_duration", "감시 기간은 1일에서 90일까지만 정할 수 있어요.");
+  if (!when.ok) {
+    const conflict = when.conflict ? " 서로 다른 값이 함께 들어 있어요. 하나만 말해 주세요." : "";
+    return when.reason === "unsupported_interval"
+      ? refuse("unsupported_interval", `변화 감시는 30분, 1시간, 하루 간격만 지원해요.${conflict}`)
+      : refuse("unsupported_duration", `감시 기간은 1일에서 90일까지만 정할 수 있어요.${conflict}`);
+  }
+  const span = when.days;
+  const every = when.every_seconds;
   const assumed: string[] = [];
   let days = 7;
   if (span === null) assumed.push("days"); else days = span;
@@ -212,7 +197,6 @@ export function parseMonitorChat(raw: string): MonitorParse {
   if (/\d\s*시(?!간)|\d:\d{2}/.test(outside)) {
     return refuse("unsupported_interval", "변화 감시는 30분, 1시간, 하루 간격만 지원해요. 정해진 시각에 받으려면 ‘매일 아침 9시에 ○○ 브리핑’이라고 말해 주세요.");
   }
-  if (every === "unsupported") return refuse("unsupported_interval", "변화 감시는 30분, 1시간, 하루 간격만 지원해요.");
   if (every === null) assumed.push("every_seconds");
   return { ok: true, intent: { kind: "watch", scope, query: q, every_seconds: every ?? 3600, days, assumed } };
 }
@@ -250,6 +234,8 @@ export function browserOffset(date = new Date()): string {
 }
 
 /** The body for POST /personal/tasks/monitors. Keep `requestId` until the request is acknowledged. */
+export function toMonitorRequest(intent: Extract<MonitorIntent, { kind: "watch" | "brief" }>, requestId: string, timezone: string): MonitorRequest;
+export function toMonitorRequest(intent: MonitorIntent, requestId: string, timezone: string): MonitorRequest | null;
 export function toMonitorRequest(intent: MonitorIntent, requestId: string, timezone: string): MonitorRequest | null {
   if (intent.kind === "watch") {
     return { request_id: requestId, kind: "watch", title: `${intent.query} 변화 감시`.slice(0, 240), scope: intent.scope, query: intent.query, every_seconds: intent.every_seconds, days: intent.days };

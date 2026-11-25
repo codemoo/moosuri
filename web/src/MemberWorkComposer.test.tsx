@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import PersonalPreview, { MEMBER_WORK_KEY, memberRoute } from "./PersonalPreview";
+import PersonalPreview, { MEMBER_WORK_KEY } from "./PersonalPreview";
+import { explicitCalendarRequest, explicitMailRequest, memberRoute } from "./member-work-intent";
 import { publicSearchUrl } from "./MemberResearchOutcomes";
 
 /* Normal entry through the one ordinary composer: the member types a plain message and the first clear outcome
@@ -201,4 +202,20 @@ it("compares public prices with a separate no-mail instruction and respects a pr
   expect(memberRoute("‘공개 노트’를 검색해줘. 가격과 배송비를 비교해 줘. 내 메일은 쓰지 마.")).toMatchObject({ kind: "research", outcome: "shopping" });
   expect(memberRoute("가격과 배송비를 비교하지 마.")).toBeNull();
   expect(memberRoute("‘가격과 배송비를 비교해 줘’라는 말은 무슨 뜻이야?")).toBeNull();
+});
+
+it("routes ordinary comparisons and how-to questions to chat, but genuine direct requests to work", () => {
+  const now = new Date("2026-11-25T03:00:00Z");
+  expect(memberRoute("두 버스의 도착 시간을 비교해 줘")).toBeNull();
+  expect(memberRoute("메일 답장 초안은 어떻게 써?")).toBeNull();
+  expect(memberRoute("이메일에 답장 쓰는 방법 알려줘")).toBeNull();
+  expect(memberRoute("회의를 캘린더에 어떻게 등록해?", now, "Asia/Seoul")).toBeNull();
+  expect(memberRoute("'내일 오후 3시에 회의 잡아줘'라는 말은 무슨 뜻이야?", now, "Asia/Seoul")).toBeNull();
+  expect(memberRoute('"답장 써줘"라고 하면 어떻게 돼?')).toBeNull();
+  expect(explicitMailRequest("김 대리 메일에 답장 초안 써줘")).toBe(true);
+  expect(explicitCalendarRequest("내일 오후 3시에 팀 회의 잡아줘")).toBe(true);
+  expect(memberRoute("내일 오후 3시부터 4시까지 '팀 회의' 잡아줘", now, "Asia/Seoul")).toMatchObject({ kind: "calendar" });
+  expect(memberRoute('메일에 "확인했습니다" 라고 답장 써줘')).toMatchObject({ kind: "mail", body: "확인했습니다" });
+  expect(memberRoute("참고 가격은 2만 원이야. 예산은 5만 원 이하로 어댑터 판매처 가격을 비교해줘"))
+    .toMatchObject({ kind: "research", outcome: "shopping", criteria: { budget_minor: 50000 } });
 });

@@ -1,10 +1,11 @@
 """Real Claude journeys in fresh Linux member volumes. Retain only digests and counts in the harness."""
 import hashlib
+import importlib
 import json
 import re
 import time
 
-from playwright.sync_api import expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeout, expect
 
 import claude_cli
 
@@ -16,6 +17,21 @@ def digest(value):
 class Receipts:
     def __init__(self):
         self.events = []
+        self.outcomes = []
+
+    def interpretation(self, request, status, payload):
+        # Record only a digest and typed outcome after the gateway has finished its response.
+        # Chromium can discard a response body on navigation, even after receiving HTTP 200.
+        data = json.loads(request)
+        if data.get("read_only") or not isinstance(data.get("text"), str):
+            return
+        try:
+            body = json.loads(payload)
+        except (ValueError, UnicodeDecodeError):
+            body = {}
+        view = body.get("view") or {}
+        self.outcomes.append((digest(data["text"]), status, body.get("kind"), view.get("kind")))
+
 
     def record(self, classifier, messages, metrics):
         # This runs only after the official CLI verified the requested model's usage receipt.
@@ -46,30 +62,17 @@ ANSWERS = """select r.id,r.thread_id,r.state,o.text from chat_runs r
 
 
 class Journey:
-    def __init__(self, page, members, provider, login, logout, rows):
+    def __init__(self, page, members, provider, proxy, login, logout, rows):
+        self.proxy = proxy
         self.page, self.members, self.provider = page, members, provider
         self.login, self.logout, self.read = login, logout, rows
         self.member = members[0]
         self.entered = {0}
         self.events = provider.live.events
-        self.outcomes = []
-        self.page.on("response", self._response)
+        self.outcomes = provider.live.outcomes
         self.cases = []
         self.sent = self.last_sent = self.last_receipt = 0
         self.last_run = self.last_thread = self.last_wire = None
-
-    def _response(self, response):
-        if not response.url.endswith("/work-interpret") or response.request.method != "POST":
-            return
-        data = response.request.post_data_json or {}
-        if data.get("read_only") or not isinstance(data.get("text"), str):
-            return
-        try:
-            body = response.json()
-        except Exception:
-            body = {}
-        view = body.get("view") or {}
-        self.outcomes.append((digest(data["text"]), response.status, body.get("kind"), view.get("kind")))
 
     def button(self, label):
         return self.page.get_by_role("button", name=label, exact=True)
@@ -179,6 +182,20 @@ class Journey:
         expect(visible).to_be_visible()
         assert visible.text_content() == stored and len(self.events) == count, "reopening changed the answer or used the model"
 
+    def run_cases(self, cases):
+        failures = []
+        for code, exercise in cases:
+            try:
+                self.button("새 대화").click()
+                exercise()
+            except (AssertionError, PlaywrightTimeout) as exc:
+                failures.append(code)
+                print(f"FAIL {code} {str(exc).splitlines()[0] or type(exc).__name__}", flush=True)
+                self.last_receipt, self.last_sent = len(self.events), self.sent
+            else:
+                self.case(code)
+        assert not failures, "failed member scenarios " + ", ".join(failures)
+
     def case(self, code):
         events = self.events[self.last_receipt:]
         result = {"id": code, "messages": self.sent - self.last_sent,
@@ -227,6 +244,38 @@ def daily(j):
     choice(j.chat(COFFEE_ASK, [corrected]), COLD, HOT)
     assert len(j.rows(MEMORIES)) == 2
     j.case("DAY-05")
+
+
+def one_time_choices(j):
+    j.remember(COFFEE)
+    saved = j.memories()
+
+    def ask(text, expected_memories, wanted, other):
+        choice(j.chat(text, expected_memories), wanted, other)
+        assert j.memories() == saved, "this order changed the standing preference"
+
+    def this_order():
+        previous = j.chat(COFFEE_ASK, [COFFEE])
+        ask("오늘 커피는 아이스로 할게, 이번 주문 온도만 한 단어로 답해줘.", (), COLD, HOT)
+        assert digest(previous) not in j.last_wire["history"], "old preference answer entered this order"
+
+    def opt_out():
+        previous = j.chat(COFFEE_ASK, [COFFEE])
+        ask("내 커피 취향은 쓰지 마. 이번 한 잔은 아이스로 정했어. 오늘 온도만 답해줘.", (), COLD, HOT)
+        assert digest(previous) not in j.last_wire["history"], "opted-out preference entered answer history"
+
+    def exclude_drink():
+        ask("녹차 말고 커피로 할래. 내 평소 커피 취향에 맞게 온도만 한 단어로 추천해줘.", [COFFEE], HOT, COLD)
+        j.new_chat()
+        ask("내 커피 취향을 놓치지 말고 온도를 추천해줘. 온도만 한 단어로.", [COFFEE], HOT, COLD)
+
+    j.run_cases([
+        ("CHOICE-01", this_order),
+        ("CHOICE-02", lambda: ask("이번 커피는 아이스로 할게. 평소 내가 고르는 커피 온도는 뭐였지? 평소 온도만 한 단어로.", [COFFEE], HOT, COLD)),
+        ("CHOICE-03", lambda: ask("카페에서 커피를 주문하려고 해. 내 취향 잊지 말고 온도를 추천해줘. 한 단어만.", [COFFEE], HOT, COLD)),
+        ("CHOICE-04", opt_out),
+        ("CHOICE-05", exclude_drink),
+    ])
 
 
 def privacy(j):
@@ -334,16 +383,23 @@ def boundaries(j):
     assert j.rows("SELECT id,state,next_due FROM member_work_monitors") == [(mid, "stopped", None)]
     j.case("CHK-03")
 
-def exercise(group, page, members, origin, provider, *, login, logout, rows):
-    import member_live_trip
-    import member_live_work
-    suites = {"daily": (daily, 5), "continuity": (member_live_trip.exercise, 4),
-              "privacy": (privacy, 5), "library": (library, 4), "work": (member_live_work.exercise, 4),
-              "boundaries": (boundaries, 3)}
+# One registry for the CLI choices, implementation and expected completed cases.
+SUITES = {
+    "daily": (__name__, "daily", 5), "continuity": ("member_live_trip", "exercise", 4),
+    "privacy": (__name__, "privacy", 5), "library": (__name__, "library", 4),
+    "work": ("member_live_work", "exercise", 4), "boundaries": (__name__, "boundaries", 3),
+    "routing": ("member_live_composer", "routing", 8), "timing": ("member_live_timing", "exercise", 10),
+    "choices": (__name__, "one_time_choices", 5),
+    "acknowledgement": ("member_live_ack", "exercise", 5), "drafts": ("member_live_tabs", "exercise", 4),
+}
+
+
+def exercise(group, page, members, origin, provider, proxy, *, login, logout, rows):
     page.goto(origin)
     login(page, members[0], True)
-    j = Journey(page, members, provider, login, logout, rows)
-    run, total = suites[group]
+    j = Journey(page, members, provider, proxy, login, logout, rows)
+    module, name, total = SUITES[group]
+    run = getattr(importlib.import_module(module), name)
     try:
         run(j)
     finally:

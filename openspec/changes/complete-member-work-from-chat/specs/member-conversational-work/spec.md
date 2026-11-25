@@ -9,6 +9,11 @@ The member service SHALL route a reworded request to the same permitted outcome 
 - **WHEN** a member asks to look up a past decision and packing items and save them on one page
 - **THEN** the resulting work records the sources it actually read and links one private document containing the requested parts.
 
+#### Scenario: The member chooses ordinary chat or starts entering the next request
+
+- **WHEN** the member manually resends a pending ordinary message after a reload
+- **THEN** the selected route and request ID survive, and accepting the original submission preserves an independently edited draft.
+
 #### Scenario: One follow-up refers to the second task
 
 - **WHEN** two tasks are visible and the member narrows only the second one
@@ -36,6 +41,21 @@ The runtime SHALL preserve the member, task, current source versions, input ques
 ### Requirement: Recurring work and reuse stay within the original scope
 
 The runtime SHALL retain the timing, scope and cessation of a member's recurring check. Reusing a workflow SHALL resolve the new input and current permissions. A revoked source or connection SHALL cease to supply private data to later output.
+
+#### Scenario: A member retries a stop after its acknowledgement was lost
+
+- **WHEN** a member stops a watch, loses the acknowledgement and creates another watch with the same name
+- **THEN** a manual retry submits the original watch ID, revision and request ID. A definitive conflict returns the member to the current list.
+
+#### Scenario: An explicit cadence and lifetime in chat
+
+- **WHEN** a member specifies a cadence and lifetime for a local or public watch
+- **THEN** the service records the supported values or leaves the draft editable for correction. Quoted search terms do not supply timing.
+
+#### Scenario: A member combines hours and minutes
+
+- **WHEN** the requested check interval is one hour and thirty minutes
+- **THEN** the member can correct the unsupported 90-minute interval before a watch is created. A supported interval with a lifetime of 48 hours is stored as two days.
 
 #### Scenario: Repeated identical observation
 

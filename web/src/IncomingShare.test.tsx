@@ -112,12 +112,17 @@ it("explicit import reveals inert editable text, explicit insertion appends late
 it("changing threads prevents insertion until the original slot is explicitly selected", async () => {
   await staged(); const view = render(<Fixture/>);
   fireEvent.click(screen.getByRole("button", { name: "이 계정의 초안으로 가져오기" }));
-  await screen.findByRole("textbox", { name: "공유 글 편집" });
+  const share = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "공유 글 편집" });
+  const insert = screen.getByRole("button", { name: "초안에 넣기" });
+  await waitFor(() => expect(insert).toBeEnabled());
   view.rerender(<Fixture slot="other-thread"/>);
-  expect(screen.getByRole("button", { name: "초안에 넣기" })).toBeDisabled();
+  expect(insert).toBeDisabled();
   expect(screen.getByRole("textbox", { name: "Ordinary draft" })).toHaveValue("existing draft");
   view.rerender(<Fixture/>);
-  expect(screen.getByRole("button", { name: "초안에 넣기" })).toBeEnabled();
+  expect(insert).toBeEnabled();
+  const combined = "existing draft\n\n" + share.value;
+  fireEvent.click(insert);
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Ordinary draft" })).toHaveValue(combined));
 });
 it("reload/back cannot transfer a claim to a fresh window or recover plaintext", async () => {
   await staged(); const first = render(<Fixture/>);

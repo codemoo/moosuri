@@ -1,0 +1,546 @@
+{
+  "date": "2026-11-25",
+  "environment": "Linux x86_64, real Chromium, isolated HTTPS member gateway and SQLite volumes",
+  "model": "claude-sonnet-5-5",
+  "effort": "medium",
+  "baseline": {
+    "source_commit": "f89fa3ffea079e6c26aaa839e7c2add1af95c160",
+    "binary_sha256": "2125c87a03397d048a595ffa6c832825379a592defee5dc3dd49f1ab1f6c5d9e",
+    "passed_cases": [
+      "ACK-01",
+      "ACK-02",
+      "CHOICE-02",
+      "INT-04",
+      "INT-06",
+      "TAB-01",
+      "TAB-03",
+      "TIME-03"
+    ],
+    "failed_cases": [
+      "ACK-03",
+      "ACK-04",
+      "ACK-05",
+      "CHOICE-01",
+      "CHOICE-03",
+      "CHOICE-04",
+      "CHOICE-05",
+      "INT-01",
+      "INT-02",
+      "INT-03",
+      "INT-05",
+      "INT-07",
+      "INT-08",
+      "TAB-02",
+      "TAB-04",
+      "TIME-01",
+      "TIME-02",
+      "TIME-04",
+      "TIME-05",
+      "TIME-06",
+      "TIME-07",
+      "TIME-08",
+      "TIME-09",
+      "TIME-10"
+    ]
+  },
+  "binary_sha256": "66bbd08672e09787bb0cc42f639efe9aac28c4683c786b693640dccd411ef480",
+  "new_totals": {
+    "planned": 32,
+    "passed": 32,
+    "messages": 49,
+    "interpretations": 17,
+    "answers": 17
+  },
+  "regression_totals": {
+    "planned": 25,
+    "passed": 25,
+    "messages": 44,
+    "interpretations": 41,
+    "answers": 34
+  },
+  "new_groups": [
+    {
+      "group": "routing",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 8,
+      "planned": 8,
+      "messages": 8,
+      "cases": [
+        {
+          "id": "INT-01",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "INT-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "INT-03",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "INT-04",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "INT-05",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "INT-06",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "INT-07",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "INT-08",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 5,
+      "answers": 5
+    },
+    {
+      "group": "timing",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 10,
+      "planned": 10,
+      "messages": 16,
+      "cases": [
+        {
+          "id": "TIME-01",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-02",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-03",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-04",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-05",
+          "messages": 4,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-06",
+          "messages": 2,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-07",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-08",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-09",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TIME-10",
+          "messages": 3,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 0,
+      "answers": 0
+    },
+    {
+      "group": "acknowledgement",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 5,
+      "planned": 5,
+      "messages": 8,
+      "cases": [
+        {
+          "id": "ACK-01",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "ACK-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "ACK-03",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 1
+        },
+        {
+          "id": "ACK-04",
+          "messages": 3,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "ACK-05",
+          "messages": 2,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 1,
+      "answers": 2
+    },
+    {
+      "group": "drafts",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 4,
+      "planned": 4,
+      "messages": 8,
+      "cases": [
+        {
+          "id": "TAB-01",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "TAB-03",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TAB-04",
+          "messages": 4,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "TAB-02",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 2,
+      "answers": 2
+    },
+    {
+      "group": "choices",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 5,
+      "planned": 5,
+      "messages": 9,
+      "cases": [
+        {
+          "id": "CHOICE-01",
+          "messages": 3,
+          "interpretations": 3,
+          "answers": 2
+        },
+        {
+          "id": "CHOICE-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "CHOICE-03",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "CHOICE-04",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "CHOICE-05",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        }
+      ],
+      "interpretations": 9,
+      "answers": 8
+    }
+  ],
+  "regression_groups": [
+    {
+      "group": "daily",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 5,
+      "planned": 5,
+      "messages": 9,
+      "cases": [
+        {
+          "id": "DAY-01",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 1
+        },
+        {
+          "id": "DAY-02",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "DAY-03",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 1
+        },
+        {
+          "id": "DAY-04",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "DAY-05",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 1
+        }
+      ],
+      "interpretations": 9,
+      "answers": 6
+    },
+    {
+      "group": "continuity",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 4,
+      "planned": 4,
+      "messages": 13,
+      "cases": [
+        {
+          "id": "PLAN-01",
+          "messages": 3,
+          "interpretations": 3,
+          "answers": 2
+        },
+        {
+          "id": "PLAN-02",
+          "messages": 8,
+          "interpretations": 8,
+          "answers": 8
+        },
+        {
+          "id": "PLAN-03",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "PLAN-04",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        }
+      ],
+      "interpretations": 13,
+      "answers": 12
+    },
+    {
+      "group": "privacy",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 5,
+      "planned": 5,
+      "messages": 10,
+      "cases": [
+        {
+          "id": "OWN-01",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 1
+        },
+        {
+          "id": "OWN-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "OWN-03",
+          "messages": 3,
+          "interpretations": 3,
+          "answers": 2
+        },
+        {
+          "id": "OWN-04",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "OWN-05",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        }
+      ],
+      "interpretations": 10,
+      "answers": 8
+    },
+    {
+      "group": "library",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 4,
+      "planned": 4,
+      "messages": 4,
+      "cases": [
+        {
+          "id": "LIB-01",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "LIB-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "LIB-03",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "LIB-04",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        }
+      ],
+      "interpretations": 4,
+      "answers": 4
+    },
+    {
+      "group": "work",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 4,
+      "planned": 4,
+      "messages": 2,
+      "cases": [
+        {
+          "id": "WORK-01",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "WORK-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 0
+        },
+        {
+          "id": "WORK-03",
+          "messages": 0,
+          "interpretations": 0,
+          "answers": 0
+        },
+        {
+          "id": "WORK-04",
+          "messages": 0,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 2,
+      "answers": 1
+    },
+    {
+      "group": "boundaries",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 3,
+      "planned": 3,
+      "messages": 6,
+      "cases": [
+        {
+          "id": "CHK-01",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "CHK-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "CHK-03",
+          "messages": 3,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 3,
+      "answers": 3
+    }
+  ],
+  "other_linux_checks": {
+    "web_files_passed": 90,
+    "web_tests_passed": 893,
+    "server_personal_text_tests_passed": 19,
+    "store_personal_text_preview_tests_passed": 22,
+    "plan_links_verified": 1682
+  }
+}

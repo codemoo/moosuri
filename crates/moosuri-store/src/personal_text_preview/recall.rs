@@ -105,31 +105,89 @@ fn current(
     Ok(usable.then_some(document))
 }
 
-/// A member can request an impersonal answer even when earlier answers used memory.
+/// A generic answer or an already-made choice for this occasion doesn't need a standing preference.
 pub fn allows_preference_recall(text: &str) -> bool {
     let words = squash(text);
     let contains = |phrases: &[&str]| phrases.iter().any(|phrase| words.contains(phrase));
-    let generic = contains(&[
-        "개인화없이",
-        "일반적으로만",
-        "일반적인답",
-        "취향은빼",
-        "취향빼고",
-    ]);
-    let private = contains(&["기억", "취향", "선호", "지난대화"]);
-    let omit = contains(&[
-        "지마",
-        "지말",
-        "없이",
-        "빼고",
-        "무시",
-        "말고",
-        "반영하지",
-        "참고하지",
-        "사용하지",
-        "쓰지",
-    ]);
-    !(generic || private && omit)
+    let generic = contains(&["개인화없이", "일반적으로만", "일반적인답"]);
+    let subjects = ["기억", "취향", "선호", "지난대화"];
+    let clauses = || {
+        text.split_inclusive([',', '，', '!', '！', '?', '？', '。', '\n'])
+            .flat_map(|line| line.split(". "))
+            .map(squash)
+    };
+    let omits_subject = clauses().any(|part| {
+        subjects.iter().any(|&subject| {
+            part.match_indices(subject).any(|(index, _)| {
+                let after = part[index + subject.len()..]
+                    .trim_start_matches(['은', '는', '을', '를', '도', '만']);
+                if [
+                    "말고",
+                    "없이",
+                    "빼고",
+                    "빼줘",
+                    "빼주",
+                    "제외",
+                    "무시해",
+                    "무시하고",
+                ]
+                .iter()
+                .any(|phrase| after.starts_with(phrase))
+                {
+                    return true;
+                }
+                // "취향을 따르지 마" declines the preference. "취향을 놓치지 마" asks to use it.
+                ["지마", "지말"].iter().any(|ending| {
+                    after.match_indices(ending).any(|(i, _)| {
+                        !["잊", "놓치", "무시하", "빼먹", "까먹", "빠뜨리"]
+                            .iter()
+                            .any(|verb| after[..i].ends_with(verb))
+                    })
+                })
+            })
+        })
+    });
+    // Explicit use/omission can also be stated across a clause boundary.
+    let refuses_use = contains(&subjects)
+        && contains(&[
+            "반영하지",
+            "참고하지",
+            "사용하지",
+            "쓰지",
+            "적용하지",
+            "제외해",
+        ]);
+    if generic || omits_subject || refuses_use {
+        return false;
+    }
+    let asks_usual = clauses().any(|part| {
+        ["평소", "취향", "선호"]
+            .iter()
+            .any(|word| part.contains(word))
+            && ["알려", "추천", "어떤", "무슨", "?", "？"]
+                .iter()
+                .any(|word| part.contains(word))
+    });
+    let already_chosen = clauses().any(|part| {
+        let ending = part
+            .trim_end_matches([',', '，', '.', '。', '!', '！', '~', '…', 'ㅋ', 'ㅎ'])
+            .trim_end_matches('요');
+        ["오늘", "이번", "한번만", "한잔만"]
+            .iter()
+            .any(|word| part.contains(word))
+            && [
+                "로할래",
+                "로할게",
+                "로하자",
+                "로마실래",
+                "로마실게",
+                "로주문할게",
+                "로정했어",
+            ]
+            .iter()
+            .any(|choice| ending.ends_with(choice))
+    });
+    asks_usual || !already_chosen
 }
 
 /// Expiry and a scheduled change of preference can occur without a write.

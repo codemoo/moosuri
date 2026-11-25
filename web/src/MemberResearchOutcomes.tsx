@@ -66,42 +66,7 @@ export function formatMoney(m: Money | null): string {
   return `${whole.toLocaleString("en-US")}${fraction} ${m.currency}`;
 }
 
-/** Recognize the comparison and retain the deadline and budget in the original request. */
-export function suggestOutcome(message: string, today = new Date()): { kind: OutcomeKind; criteria: Criteria } | null {
-  const text = message.trim();
-  const shopping = /(최저가|배송|도착|구매|주문|가격|비교).*(비교|합계|가격|배송|도착)|compare.*(offer|price|delivery)|cheapest/i.test(text) && /(배송|도착|가격|합계|구매|offer|price|delivery)/i.test(text);
-  const application = /(공고|지원금|공모|지원서|신청서|grant|funding).*(메일|초안|지원|apply|application|draft)|(메일|mail).*(공고|grant)/i.test(text);
-  if (!shopping && !application) return null;
-  const criteria: Criteria = {};
-  const iso = text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
-  const korean = text.match(/(?:(20\d{2})년\s*)?(\d{1,2})월\s*(\d{1,2})일/);
-  if (shopping && iso) criteria.deadline = iso[0];
-  else if (shopping && korean) {
-    const passed = +korean[2] < today.getMonth() + 1 || (+korean[2] === today.getMonth() + 1 && +korean[3] < today.getDate());
-    const year = korean[1] ?? String(today.getFullYear() + (passed ? 1 : 0));
-    criteria.deadline = `${year}-${korean[2].padStart(2, "0")}-${korean[3].padStart(2, "0")}`;
-  }
-  if (shopping && !criteria.deadline) {
-    const relative = text.match(/(오늘|내일|모레|글피)(?:까지|\s*(?:도착|배송))/);
-    const weekday = text.match(/(?:(이번|다음)\s*주\s*)?([월화수목금토일])요일(?:까지|\s*(?:도착|배송))/);
-    let days: number | undefined;
-    if (relative) days = ["오늘", "내일", "모레", "글피"].indexOf(relative[1]);
-    else if (weekday) {
-      const target = "월화수목금토일".indexOf(weekday[2]), current = (today.getDay() + 6) % 7;
-      days = weekday[1] === "다음" ? target - current + 7 : weekday[1] === "이번" ? target - current : (target - current + 7) % 7;
-    }
-    if (days !== undefined) {
-      const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days, 12);
-      criteria.deadline = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
-    }
-  }
-  const won = text.match(/(\d[\d,]*)\s*(만)?\s*원\s*(이하|이내|까지|미만)?/);
-  if (shopping && won) {
-    const amount = Number(won[1].replace(/,/g, "")) * (won[2] ? 10000 : 1);
-    if (Number.isSafeInteger(amount) && amount > 0) { criteria.budget_minor = amount - (won[3] === "미만" ? 1 : 0); criteria.currency = "KRW"; }
-  }
-  return { kind: shopping && !application ? "shopping" : application && !shopping ? "application" : (/(공고|grant|지원)/i.test(text) ? "application" : "shopping"), criteria };
-}
+export { suggestOutcome } from "./member-work-intent";
 
 export type OutcomeApi = {
   outcomes: Record<string, Outcome>; order: string[]; busy: Set<string>; notices: Record<string, string>; loading: boolean;

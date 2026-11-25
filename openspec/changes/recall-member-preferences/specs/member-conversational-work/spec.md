@@ -19,6 +19,11 @@ A Kiri member SHALL be able to state a lasting personal preference in ordinary c
 - **WHEN** the member asks for a window seat this time
 - **THEN** the reply follows the request and the next independent journey retains the usual preference.
 
+#### Scenario: This order and the usual choice appear in one message
+
+- **WHEN** the member has chosen today's order and asks only about that order
+- **THEN** the answer excludes the saved preference and earlier answers derived from it. If the member also asks for their usual choice, the answer can use the current preference. Both requests preserve the saved version.
+
 #### Scenario: Correction and withdrawal
 
 - **WHEN** a retrieved preference is corrected or forgotten

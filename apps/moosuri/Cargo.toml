@@ -28,6 +28,7 @@ moosuri-core = { path = "../../crates/moosuri-core" }
 moosuri-store = { path = "../../crates/moosuri-store" }
 moosuri-server = { path = "../../crates/moosuri-server" }
 moosuri-agent = { path = "../../crates/moosuri-agent" }
+moosuri-vault-protocol = { path = "../../crates/moosuri-vault-protocol" }
 axum = "0.8"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }

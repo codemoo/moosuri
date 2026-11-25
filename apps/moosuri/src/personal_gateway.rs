@@ -36,6 +36,7 @@ mod google;
 mod google_setup;
 mod memory;
 mod tasks;
+mod vault;
 
 const ROUTER: &str = "__Host-moosuri_route";
 const SESSION: &str = "moosuri_session";
@@ -68,9 +69,24 @@ pub struct Options {
     /// Only this trusted Unix group can connect to the public HTTP gateway socket.
     #[arg(long, requires = "proxy_socket_dir")]
     proxy_gid: Option<u32>,
+    /// Canonical account UUID of the one member enrolled for v2-vault handoff.
+    #[arg(
+        long,
+        requires = "vault_site_origin",
+        requires = "vault_adapter_listen",
+        requires = "vault_adapter_key_file"
+    )]
+    vault_member: Option<Uuid>,
+    /// Fixed loopback address of the service-only vault authority adapter.
+    #[arg(long, requires = "vault_member")]
+    vault_adapter_listen: Option<std::net::SocketAddr>,
+    /// Absolute owner-only file holding the random 64-hex adapter key (created if empty/missing).
+    #[arg(long, requires = "vault_member")]
+    vault_adapter_key_file: Option<PathBuf>,
 }
 #[derive(Clone)]
 struct Gateway {
+    vault: Option<Arc<vault::Enrollment>>,
     origin: String,
     host: String,
     vault_site_origin: Option<String>,
@@ -197,7 +213,9 @@ impl Gateway {
                 Ok(site.to_owned())
             })
             .transpose()?;
+        let vault = vault::Enrollment::new(options, vault_site_origin.as_deref())?.map(Arc::new);
         Ok(Self {
+            vault,
             host: origin[8..].into(),
             origin,
             vault_site_origin,
@@ -377,6 +395,7 @@ impl Gateway {
                 if browser
                     || path.ends_with("/text-preview")
                     || path.ends_with("/work-interpret")
+                    || path.starts_with("/api/v1/personal/vault")
                     || path.starts_with("/api/v1/personal/tasks/briefs")
                     || path.starts_with("/api/v1/personal/tasks/public-watches")
                     || path.starts_with("/api/v1/personal/tasks/monitors")
@@ -868,63 +887,6 @@ fn member_session_view(
     Ok(view)
 }
 
-async fn vault_status(
-    State(g): State<Gateway>,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-    body: axum::body::Bytes,
-) -> Response {
-    #[derive(Serialize)]
-    #[serde(tag = "state", rename_all = "snake_case")]
-    enum VaultStatus<'a> {
-        SetupRequired {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            site_origin: Option<&'a str>,
-        },
-    }
-
-    let result = async {
-        if method != Method::GET {
-            return Err(StatusCode::METHOD_NOT_ALLOWED);
-        }
-        g.headers(&headers, &method)?;
-        if uri.query().is_some() || !body.is_empty() {
-            return Err(StatusCode::BAD_REQUEST);
-        }
-        let _permit = g
-            .inflight
-            .try_acquire()
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        let (allocation, session) = authenticated_allocation(&g, &headers, true).await?;
-        let upstream = g
-            .proxy(
-                &allocation,
-                Method::GET,
-                "/api/v1/auth/session",
-                None,
-                Some(&session),
-            )
-            .await;
-        recheck(&g, &allocation).await?;
-        let (status, bytes, _) = upstream?;
-        if status != StatusCode::OK {
-            return Err(status);
-        }
-        let view = member_session_view(&bytes, &allocation)?;
-        if view.password_change_required || view.user.must_change_password {
-            return Err(StatusCode::FORBIDDEN);
-        }
-        let body = serde_json::to_vec(&VaultStatus::SetupRequired {
-            site_origin: g.vault_site_origin.as_deref(),
-        })
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        Ok(response(StatusCode::OK, body))
-    }
-    .await;
-    result.unwrap_or_else(failure)
-}
-
 async fn handler(
     State(g): State<Gateway>,
     method: Method,
@@ -1180,7 +1142,11 @@ async fn public_shell(
     let Ok(uri) = asset.parse() else {
         return failure(StatusCode::NOT_FOUND);
     };
-    super::static_asset(uri).await
+    let mut result = super::static_asset(uri).await;
+    if g.vault.is_some() && asset == "/personal.html" {
+        super::allow_vault_form(&mut result, g.vault_site_origin.as_deref());
+    }
+    result
 }
 fn router(g: Gateway) -> Router {
     Router::new()
@@ -1188,7 +1154,7 @@ fn router(g: Gateway) -> Router {
         .route("/api/v1/auth/session", get(handler))
         .route("/api/v1/auth/password", post(handler))
         .route("/api/v1/auth/logout", post(handler))
-        .route("/api/v1/personal/vault", get(vault_status))
+        .merge(vault::routes())
         .route("/api/v1/threads", get(handler).post(handler))
         .route("/api/v1/threads/{id}", delete(handler))
         .route("/api/v1/threads/{id}/messages", get(handler))
@@ -1279,9 +1245,12 @@ pub async fn run(options: &Options) -> Result<(), String> {
     let g = Gateway::new(options)?;
     let (_socket_directory, listener) = bind_public_socket(options).await?;
     let timer = tasks::timer(g.clone());
+    let adapter = vault::serve_adapter(&g);
+    let adapter = adapter.await?;
     tokio::select! {
         result=axum::serve(listener,router(g))=>result.map_err(|_|"gateway_stopped".into()),
         ()=timer=>Err("gateway_timer_stopped".into()),
+        result=adapter=>result,
     }
 }
 
@@ -1306,6 +1275,9 @@ mod tests {
             socket_dir: directory(parent, "gateway"),
             proxy_socket_dir: None,
             proxy_gid: None,
+            vault_member: None,
+            vault_adapter_listen: None,
+            vault_adapter_key_file: None,
         }
     }
     #[test]

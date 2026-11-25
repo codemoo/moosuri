@@ -28,6 +28,7 @@ mod import_private;
 mod installation;
 mod installation_admin;
 mod kiri_invite;
+mod kiri_chrome_signin;
 mod kiri_lifecycle;
 mod kiri_provision;
 mod kiri_storage;
@@ -96,6 +97,8 @@ enum Command {
     RuntimeGwsRelay(gws_relay::Options),
     /// Serve isolated Chromium workspaces to enrolled member runtimes.
     RuntimeBrowserRelay(browser_relay::Options),
+    /// Handle one owner-bound fresh Google sign-in from a private systemd socket.
+    KiriChromeSignin(kiri_chrome_signin::Options),
     /// Serve fixed read-only Google OAuth/Gmail egress to isolated members.
     RuntimeGoogle(runtime_google::Options),
     /// Read public Google broker configuration or build a consent URL.
@@ -438,6 +441,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         .map_err(|_| "claude_execution_failed".into());
     }
 
+    if let Command::KiriChromeSignin(options) = &cli.command {
+        return kiri_chrome_signin::serve(options).await;
+    }
     if let Command::RuntimeBrowserRelay(options) = &cli.command {
         return browser_relay::run(options).await;
     }
@@ -633,7 +639,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::InternalClaudeRun { .. } => {
             unreachable!("container helper does not open installation state")
         }
-        Command::RuntimeBrowserRelay(_)
+        Command::KiriChromeSignin(_)
+        | Command::RuntimeBrowserRelay(_)
         | Command::RuntimeGwsRelay(_)
         | Command::RuntimeGoogle(_)
         | Command::RuntimeGoogleCall(_)
@@ -1016,28 +1023,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                     let vault_origin = vault_form_origin.clone();
                     async move {
                         let mut response = static_asset(uri).await;
-                        if let Some(origin) = vault_origin
-                            && let Some(policy) = response
-                                .headers()
-                                .get(header::CONTENT_SECURITY_POLICY)
-                                .and_then(|v| v.to_str().ok())
-                                .map(str::to_owned)
-                        {
-                            // Cross-origin form handoff must preserve the assistant
-                            // Origin. no-referrer turns this header into null.
-                            response.headers_mut().insert(
-                                header::REFERRER_POLICY,
-                                header::HeaderValue::from_static("strict-origin"),
-                            );
-                            let policy = policy.replace(
-                                "form-action 'self'",
-                                &format!("form-action 'self' {origin}"),
-                            );
-                            response.headers_mut().insert(
-                                header::CONTENT_SECURITY_POLICY,
-                                policy.parse().expect("validated vault origin"),
-                            );
-                        }
+                        allow_vault_form(&mut response, vault_origin.as_deref());
                         response
                     }
                 },
@@ -1275,6 +1261,18 @@ async fn shutdown_signal() {
     };
     tokio::select! { _ = ctrl_c => (), _ = terminate => () }
 }
+fn allow_vault_form(response: &mut Response, vault_origin: Option<&str>) {
+    if let Some(origin) = vault_origin
+        && let Some(policy) = response.headers().get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok()).map(str::to_owned)
+    {
+        // Preserve the assistant Origin on the vault's cross-origin handoff POST.
+        response.headers_mut().insert(header::REFERRER_POLICY, header::HeaderValue::from_static("strict-origin"));
+        let policy = policy.replace("form-action 'self'", &format!("form-action 'self' {origin}"));
+        response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, policy.parse().expect("validated vault origin"));
+    }
+}
+
 async fn static_asset(uri: Uri) -> Response {
     let path = match uri.path() {
         "/" | "/app" | "/admin" | "/admin/providers" | "/admin/usage" | "/admin/google"

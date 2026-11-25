@@ -1,5 +1,6 @@
 //! One bounded request per member socket. Never forward HTTP headers or return arbitrary broker fields.
 use super::browser::{Failure, Service};
+use crate::browser_relay::google::{self, Outcome as GoogleOutcome};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{
@@ -79,6 +80,17 @@ pub(super) async fn call<T: DeserializeOwned>(
     call_on(&endpoint(s), workspace, op, args).await
 }
 
+/// The single typed Google sign-in operation. It carries no arguments: the relay's enrolled bridge owns the
+/// account, and the member supplies no email, URL or target. The reply is validated against the exact enum.
+pub(super) async fn google_sign_in(s: &Service, workspace: &str) -> Result<GoogleOutcome, Failure> {
+    let outcome: GoogleOutcome = call(s, workspace, google::OP, serde_json::json!({})).await?;
+    if outcome.consistent() {
+        Ok(outcome)
+    } else {
+        Err(Failure::Unknown)
+    }
+}
+
 /// The only broker operations a disposable public read may use: open the fresh workspace on the pinned
 /// page, and stop it. There is deliberately no way to name any other operation through this entry point
 /// (no frame, input, follow, switch, tab or takeover), so a public read can never act on a page.
@@ -153,6 +165,8 @@ async fn once<T: DeserializeOwned>(
     let time = match op {
         "open" | "follow" => 80,
         "frame" | "tabs" => 8,
+        // Longer than the relay's own bridge deadline, so its typed answer arrives before this gives up.
+        "google_sign_in" => 130,
         _ => 45,
     };
     let future = async {

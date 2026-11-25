@@ -1,3 +1,4 @@
+import { postVaultForm, trustedVaultOrigin } from "./VaultLaunch";
 import { setupOpenedFromAdmin, type MemberRoute } from "./member-route";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useScope } from "./account-scope";
@@ -48,6 +49,7 @@ function googleInfo(status: ConnectionStatus, mailbox: string | undefined, insta
 function getVaultInfo(connection: VaultConnectionState): ConnectionInfo {
   if (connection.status === "checking") return { badge: { label: "확인 중" }, message: "볼트 주소를 확인하고 있습니다." };
   if (connection.status === "error") return { badge: { label: "확인 실패", tone: "attention" }, message: "연결 상태를 확인할 수 없습니다." };
+  if (connection.status === "ready") return { badge: { label: "연결됨", tone: "connected" }, message: "볼트는 새 탭에서 열리며, 지금 로그인한 계정으로 바로 연결됩니다. 볼트 비밀번호(마스터 비밀번호)는 이 앱에 전달되지 않습니다." };
   return connection.siteOrigin
     ? { badge: { label: "별도 로그인" }, message: "볼트는 새 탭에서 열립니다. 볼트 계정으로 로그인하세요." }
     : { badge: { label: "볼트 주소 미설정", tone: "attention" }, message: "이 설치에 등록된 볼트 주소가 없습니다. 설치 관리자에게 문의해 주세요." };
@@ -210,7 +212,12 @@ export function PersonalConnections({
           busy={selected.id !== vault.id && memberFlow.busy && memberFlow.status === "ready"}
           notice={notice}>
           {selected.id === vault.id ? (
-            vaultStatus.siteOrigin ? (
+            vaultStatus.status === "ready" ? (
+              <>
+                <button type="button" className="member-page-action connector-primary" disabled={vaultStatus.busy} onClick={() => void vaultStatus.open()}>볼트 열기</button>
+                {vaultStatus.failure && <p className="connector-notice" role="status">{vaultStatus.failure}</p>}
+              </>
+            ) : vaultStatus.siteOrigin ? (
               <a className="member-page-action connector-primary" href={vaultStatus.siteOrigin} target="_blank" rel="noopener noreferrer">볼트 열기</a>
             ) : vaultStatus.status === "error" && (
               <button type="button" className="member-page-action" onClick={vaultStatus.retry}>다시 확인</button>
@@ -322,10 +329,7 @@ function ConnectorDetail({ connector, info, mailbox, busy, notice, children }: {
 function separateHttpsOrigin(value: unknown) {
   if (typeof value !== "string") return null;
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.origin === value && url.origin !== location.origin
-      ? url.origin
-      : null;
+    return value.startsWith("https://") ? trustedVaultOrigin(value) : null;
   } catch {
     return null;
   }
@@ -333,7 +337,8 @@ function separateHttpsOrigin(value: unknown) {
 
 type VaultConnectionState =
   | { status: "checking" | "error"; siteOrigin?: never }
-  | { status: "setup_required"; siteOrigin: string | null };
+  | { status: "setup_required"; siteOrigin: string | null }
+  | { status: "ready"; siteOrigin: string };
 
 function useVaultConnection(account: string, expired: () => void) {
   const scope = useScope(account, "personal-vault");
@@ -342,8 +347,9 @@ function useVaultConnection(account: string, expired: () => void) {
     setConnection({ status: "checking" });
     try {
       const { state, site_origin } = await scope.request<{ state: string; site_origin?: unknown }>("/personal/vault");
-      setConnection(state === "setup_required"
-        ? { status: state, siteOrigin: separateHttpsOrigin(site_origin) }
+      const origin = separateHttpsOrigin(site_origin);
+      setConnection(state === "setup_required" ? { status: state, siteOrigin: origin }
+        : state === "ready" && origin ? { status: state, siteOrigin: origin }
         : { status: "error" });
     } catch (error) {
       if (isAborted(error)) return;
@@ -355,5 +361,35 @@ function useVaultConnection(account: string, expired: () => void) {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => clearTimeout(timer);
   }, [scope, expired]);
-  return { ...connection, retry: () => void refresh() };
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+  async function open() {
+    if (connection.status !== "ready" || busy) return;
+    const expected = connection.siteOrigin;
+    setBusy(true);
+    setFailure("");
+    // Open synchronously inside the click so the browser keeps the user gesture.
+    const target = `moosuri-vault-${crypto.randomUUID()}`;
+    const popup = window.open("about:blank", target);
+    if (!popup) {
+      setFailure("새 창을 허용한 뒤 다시 열어 주세요.");
+      setBusy(false);
+      return;
+    }
+    try {
+      const handoff = await scope.request<{ token: unknown; vault_origin: unknown }>("/personal/vault/handoff", "POST", {});
+      if (typeof handoff.token !== "string" || !/^[0-9a-f]{64}$/i.test(handoff.token) || handoff.vault_origin !== expected) {
+        throw new Error("vault_unavailable");
+      }
+      postVaultForm(popup, target, { token: handoff.token, vault_origin: expected }, account);
+    } catch (error) {
+      popup.close();
+      if (isAborted(error)) return;
+      if (error instanceof ApiFailure && error.status === 401) expired();
+      else setFailure("볼트 연결을 확인하지 못했습니다. 다시 열어 주세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return { ...connection, busy, failure, open, retry: () => void refresh() };
 }

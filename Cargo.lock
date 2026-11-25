@@ -2588,6 +2588,7 @@ dependencies = [
  "moosuri-documents",
  "moosuri-server",
  "moosuri-store",
+ "moosuri-vault-protocol",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

@@ -11,7 +11,8 @@ mod wire;
 
 pub use apple::{AppleImport, ImportPreview, ImportRow, ImportStatus, UsernameFilter};
 pub use archive::{
-    ARCHIVE_ITEMS, ARCHIVE_LIMIT, ArchiveImport, ArchivePreview, ArchiveRow, UnlockedArchive,
+    ARCHIVE_ITEMS, ARCHIVE_LIMIT, ArchiveImport, ArchivePreview, ArchiveRow,
+    LEGACY_ARCHIVE_ITEMS, UnlockedArchive,
 };
 pub use crypto::{
     ActiveVault, ClientVault, CommittedHeader, HeaderReceipt, PendingChange, PendingVault,
@@ -19,7 +20,10 @@ pub use crypto::{
 };
 pub use secret::{ItemFields, ItemKind, SecretText};
 pub use totp::{OtpCode, Totp, TotpAlgorithm};
-pub use wire::{Binding, EncryptedItem, Header, PasswordKdf};
+pub use wire::{
+    Binding, EncryptedItem, Header, INVENTORY_WIRE_LIMIT, MAX_ITEMS, PasswordKdf,
+    inventory_fits, inventory_wire_bytes, item_wire_cost,
+};
 
 /// Fixed diagnostics never carry a parser/provider error or secret value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

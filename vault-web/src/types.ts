@@ -4,7 +4,7 @@ export type EntryDetails={username:string;host:string;has_url:boolean};
 export type Receipt={operation:string;payload_sha256:string;state:string;header_sha256:string;inventory_sha256:string;commitment:string|null};
 export type Operation={kind:"key"|"put"|"delete";id:string}&Record<string,unknown>;
 export type State={owner:Owner;header:unknown|null;header_sha256:string;inventory_sha256:string;items:unknown[];pending:Receipt[]};
-export type Preview={eligible:number;duplicates:number;filtered:number;rows:{row:number;status:string;blank_password:boolean;unsupported_url:boolean;invalid_otp:boolean}[]};
+export type Preview={eligible:number;duplicates:number;filtered:number;existing?:number;capacity?:number;limit?:number;bytes_used?:number;bytes_limit?:number;rows:{row:number;status:string;blank_password:boolean;unsupported_url:boolean;invalid_otp:boolean}[]};
 export type Draft={kind:Summary["kind"];title:string;username:string;url:string;notes:string;favorite:boolean;expires_at:string;secret?:string|null;totp?:string|null};
 export type Command={op:string}&Record<string,unknown>;
 

@@ -6,6 +6,7 @@ const BASE: &str = "/api/v1/threads/{id}/browser";
 pub(super) fn routes() -> Router<Gateway> {
     Router::new()
         .route(BASE, get(handler).post(handler))
+        .route("/api/v1/threads/{id}/browser/google-sign-in", post(handler))
         .route("/api/v1/threads/{id}/browser/frame", get(handler))
         .route("/api/v1/threads/{id}/browser/takeover", post(handler))
         .route("/api/v1/threads/{id}/browser/input", post(handler))
@@ -36,6 +37,7 @@ fn target(method: &Method, uri: &Uri) -> Result<(Uuid, &'static str), StatusCode
         "browser/resume" if method == Method::POST => "resume",
         "browser/close" if method == Method::POST => "close",
         "browser/tabs" if method == Method::POST => "tabs",
+        "browser/google-sign-in" if method == Method::POST => "google-sign-in",
         _ => return Err(StatusCode::NOT_FOUND),
     };
     Ok((id, operation))
@@ -128,6 +130,7 @@ mod tests {
             (Method::GET, "/frame"),
             (Method::POST, "/resume"),
             (Method::POST, "/tabs"),
+            (Method::POST, "/google-sign-in"),
         ] {
             assert_eq!(
                 target(&method, &format!("{path}{suffix}").parse().unwrap())
@@ -141,6 +144,7 @@ mod tests {
             (Method::POST, "/frame"),
             (Method::GET, "/frame?lease=x"),
             (Method::GET, "/debug"),
+            (Method::GET, "/google-sign-in"),
         ] {
             assert!(target(&method, &format!("{path}{suffix}").parse().unwrap()).is_err());
         }

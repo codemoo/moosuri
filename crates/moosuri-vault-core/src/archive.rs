@@ -5,7 +5,7 @@ use crate::{
     apple::{account_fingerprint, fingerprint},
     crypto::random_id,
     inventory_digest,
-    wire::{b64, json, unb64},
+    wire::{b64, inventory_fits, inventory_wire_bytes, json, unb64},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,7 +13,12 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub const ARCHIVE_LIMIT: usize = 26 * 1024 * 1024;
-pub const ARCHIVE_ITEMS: usize = 256;
+/// v2 encrypted archives follow the shared live-item limit; the 26 MiB byte
+/// cap still applies, so an unusually large inventory can fail on size.
+pub const ARCHIVE_ITEMS: usize = crate::wire::MAX_ITEMS;
+/// Old musuri-vault v1 exports were produced under a 256-item cap. Keep that
+/// documented format cap for legacy migration only.
+pub const LEGACY_ARCHIVE_ITEMS: usize = 256;
 const FORMAT: &str = "moosuri-encrypted-vault-archive";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,7 +73,7 @@ impl ActiveVault {
         if cancel.cancelled() {
             return Err(Error::Cancelled);
         }
-        if items.len() > ARCHIVE_ITEMS {
+        if items.len() > crate::wire::MAX_ITEMS {
             return Err(Error::Limit);
         }
         if inventory_digest(items)? != expected_inventory {
@@ -101,6 +106,9 @@ pub struct ArchivePreview {
     pub rows: Vec<ArchiveRow>,
     pub eligible: u32,
     pub duplicates: u32,
+    /// Live items already in the destination and remaining free slots.
+    pub existing: u32,
+    pub capacity: u32,
 }
 struct Row {
     number: u32,
@@ -112,6 +120,7 @@ pub struct ArchiveImport {
     rows: Vec<Row>,
     forbidden_ids: HashSet<Uuid>,
     existing_count: usize,
+    existing_bytes: usize,
     batch: Option<(Vec<u32>, Vec<EncryptedItem>)>,
 }
 impl ArchiveImport {
@@ -128,7 +137,7 @@ impl ArchiveImport {
         if cancel.cancelled() {
             return Err(Error::Cancelled);
         }
-        if bytes.len() > ARCHIVE_LIMIT || existing.len() > ARCHIVE_ITEMS {
+        if bytes.len() > ARCHIVE_LIMIT || existing.len() > crate::wire::MAX_ITEMS {
             return Err(Error::Limit);
         }
         let archive: Archive = serde_json::from_slice(bytes).map_err(|_| Error::Invalid)?;
@@ -169,10 +178,11 @@ impl ArchiveImport {
         existing: &[EncryptedItem],
         cancel: &impl Cancellation,
     ) -> Result<Self> {
-        if authenticated.len() > ARCHIVE_ITEMS || existing.len() > ARCHIVE_ITEMS {
+        if authenticated.len() > ARCHIVE_ITEMS || existing.len() > crate::wire::MAX_ITEMS {
             return Err(Error::Limit);
         }
         inventory_digest(existing)?; // Reject duplicate current IDs as well.
+        let existing_bytes = inventory_wire_bytes(existing)?;
         let mut contents = HashSet::new();
         let mut accounts = HashSet::new();
         for item in existing {
@@ -188,6 +198,8 @@ impl ArchiveImport {
             rows: vec![],
             eligible: 0,
             duplicates: 0,
+            existing: existing.len() as u32,
+            capacity: (crate::wire::MAX_ITEMS - existing.len()) as u32,
         };
         let mut rows = vec![];
         for (index, fields) in authenticated.into_iter().enumerate() {
@@ -223,11 +235,16 @@ impl ArchiveImport {
             rows,
             forbidden_ids,
             existing_count: existing.len(),
+            existing_bytes,
             batch: None,
         })
     }
     pub fn counts(&self) -> &ArchivePreview {
         &self.preview
+    }
+    /// Serialized bytes of the destination inventory this preview was built on.
+    pub fn existing_bytes(&self) -> usize {
+        self.existing_bytes
     }
     /// Immutable reencrypted batch; only existing exact-operation machinery may
     /// publish/acknowledge it. Repeated selection returns identical ciphertexts.
@@ -241,7 +258,8 @@ impl ArchiveImport {
         if current.header_digest()? != self.header {
             return Err(Error::Conflict);
         }
-        if selected.is_empty() || selected.len() > ARCHIVE_ITEMS.saturating_sub(self.existing_count)
+        if selected.is_empty()
+            || selected.len() > crate::wire::MAX_ITEMS.saturating_sub(self.existing_count)
         {
             return Err(Error::Limit);
         }
@@ -288,6 +306,8 @@ impl ArchiveImport {
                     entropy,
                 )?);
             }
+            // Exact sealed sizes: refuse before the batch is retained.
+            inventory_fits(self.existing_bytes, &batch)?;
             self.batch = Some((selected.to_vec(), batch));
             self.rows.clear();
         }
@@ -550,8 +570,8 @@ mod tests {
         );
         // An excessive item count and disallowed KDF fail before secret parsing/KDF.
         let mut a: Archive = serde_json::from_slice(&archive).unwrap();
-        a.items = vec![items[0].clone(); 257];
-        a.count = 257;
+        a.items = vec![items[0].clone(); ARCHIVE_ITEMS + 1];
+        a.count = (ARCHIVE_ITEMS + 1) as u32;
         assert!(matches!(
             ArchiveImport::preview(
                 &serde_json::to_vec(&a).unwrap(),

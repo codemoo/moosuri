@@ -1,3 +1,4 @@
+import { lockVaultWindows } from "./VaultLaunch";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import type {
@@ -39,7 +40,7 @@ import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { PersonalChatComposer } from "./PersonalChatComposer";
 import { PersonalWorkspaceChrome, threadDisplayTitle, type MemberView } from "./PersonalWorkspaceChrome";
 import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
-import { browserEndpoint, browserIntent, browserNeedsGuidance, browserStateLabel, type PersonalBrowserStatus } from "./personal-browser";
+import { browserEndpoint, googleSignInEndpoint, browserIntent, browserNeedsGuidance, browserStateLabel, type PersonalBrowserStatus } from "./personal-browser";
 import { usePersonalBrowser } from "./usePersonalBrowser";
 import { InstructionReceipts } from "./RunInstructions";
 import { PersonalTextFollowUp, clearSavedFollowUp, isTextFollowUp } from "./PersonalTextFollowUp";
@@ -207,6 +208,7 @@ export default function PersonalPreview() {
   const logout = useRef<{ account: string; scope: RequestScope } | null>(null),
     channel = useRef<BroadcastChannel | null>(null);
   function fence() {
+    lockVaultWindows();
     for (const s of scopes) s.close();
     recovery.clear();
     clearWorkRecovery();
@@ -779,7 +781,7 @@ function Workspace({
   }, [selected]);
   const workspaceKey = browserWork ? `${browserWork.id}:${browserWork.revision}:${browserWork.state}` : "";
   const lastWorkspace = useRef(workspaceKey);
-  const pageRead = !!browserWork && ["ready", "completed", "user_control"].includes(browserWork.state);
+  const pageRead = !!browserWork && !browserWork.reason?.startsWith("browser_google_") && ["ready", "completed", "user_control"].includes(browserWork.state);
   useEffect(() => {
     const previous = lastWorkspace.current;
     lastWorkspace.current = workspaceKey;
@@ -810,7 +812,7 @@ function Workspace({
       cap.capability === "text_only_preview" &&
       cap.tools === false;
   useEffect(() => {
-    if (selected && pending?.browser_request?.kind === "start" &&
+    if (selected && (pending?.browser_request?.kind === "start" || pending?.browser_request?.kind === "google_sign_in") &&
         browserWork?.request_id === pending.request_id) clearSend(selected, pending);
   }, [selected, pending, browserWork?.request_id]);
   function fail(e: unknown) {
@@ -1418,12 +1420,13 @@ function Workspace({
     }
     const intent = monitor || old || followUp || plain || memberRequest || browserMode === "guide" || preferredMode === "chat"
       ? null : browserIntent(text, browserMode === "start");
-    if (intent && !intent.url) {
+    if (intent && !intent.url && !intent.operation) {
       setError("브라우저로 열 http 또는 https 주소를 메시지에 넣어 주세요.");
       return;
     }
     const browserRequest = old ? old.browser_request : followUp ? undefined : (
-      browserMode === "guide" && browserWork
+      intent?.operation === "google_sign_in" ? { kind: "google_sign_in" as const }
+      : browserMode === "guide" && browserWork
         ? { kind: "guide" as const, workspace_id: browserWork.id }
         : intent?.url ? { kind: "start" as const, url: intent.url, wait_for_user: intent.wait } : undefined
     );
@@ -1556,15 +1559,22 @@ function Workspace({
         return;
       }
       if (value.browser_request) {
-        const body = value.browser_request.kind === "start"
-          ? { url: value.browser_request.url, wait_for_user: value.browser_request.wait_for_user }
-          : { workspace_id: value.browser_request.workspace_id };
+        const request = value.browser_request;
+        // A typed provider operation: same request id on replay, nothing but the id in the body.
+        const google = request.kind === "google_sign_in";
         const status = await scope.request<PersonalBrowserStatus>(
-          browserEndpoint(destination), "POST", { request_id: value.request_id, text: value.text, ...body },
+          google ? googleSignInEndpoint(destination) : browserEndpoint(destination), "POST",
+          google ? { request_id: value.request_id } : {
+            request_id: value.request_id, text: value.text,
+            ...(request.kind === "start"
+              ? { url: request.url, wait_for_user: request.wait_for_user }
+              : { workspace_id: request.workspace_id }),
+          },
           undefined, { timeoutMs: 90000 },
         );
         browser.publish(destination, status);
-        if (!status.configured || !status.workspace) {
+        // The Google record itself reports "not configured"; only a missing record is a refusal.
+        if (!status.workspace || (!status.configured && !google)) {
           clearSend(destination, value, true);
           setError("이 설치에서 브라우저 작업을 사용할 수 없습니다.");
           return;

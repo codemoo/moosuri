@@ -54,6 +54,7 @@ async fn socket_admission_binds_process_uid_registry_generation_and_epoch() {
         reader: CapsuleReader::new(config).unwrap(),
         clients: Arc::new(Semaphore::new(2)),
         checks: Arc::new(Semaphore::new(2)),
+        google: None,
     };
     async fn call(b: Binding, host: Host, generation: i64) -> Option<Value> {
         let (mut stream, peer) = UnixStream::pair().unwrap();

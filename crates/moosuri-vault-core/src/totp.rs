@@ -93,7 +93,6 @@ impl Totp {
             || url.password().is_some()
             || url.port().is_some()
             || url.fragment().is_some()
-            || url.path().len() <= 1
         {
             return Err(Error::Invalid);
         }
@@ -108,6 +107,12 @@ impl Totp {
             let name = match k.expose() {
                 "secret" => "secret",
                 "issuer" => "issuer",
+                // Some authenticator exports include device enrollment metadata.
+                // The encrypted URI retains it, while RFC 6238 uses the seed,
+                // algorithm, digit count and period only.
+                "Deviceid" => "Deviceid",
+                "companyName" => "companyName",
+                "SSE" => "SSE",
                 "algorithm" => "algorithm",
                 "digits" => "digits",
                 "period" => "period",
@@ -118,7 +123,7 @@ impl Totp {
             }
             match name {
                 "secret" => seed = Some(v),
-                "issuer" => {
+                "issuer" | "Deviceid" | "companyName" | "SSE" => {
                     if v.expose().len() > 512 {
                         return Err(Error::Limit);
                     }

@@ -162,6 +162,11 @@ fn rfc6238_all_algorithms_and_boundaries() {
     let totp = Totp::parse_uri(&uri).unwrap();
     assert_eq!(totp.code_at(59).unwrap().expose(), "94287082");
     assert_eq!(totp.code_at(60).unwrap().valid_from, 60);
+    for path in ["/", "", "/Example?Deviceid=demo&companyName=Example&SSE=1"] {
+        let separator = if path.contains('?') { '&' } else { '?' };
+        let exported = text(&format!("otpauth://totp{path}{separator}secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8"));
+        assert_eq!(Totp::parse_uri(&exported).unwrap().code_at(59).unwrap().expose(), "94287082");
+    }
     for raw in [
         "otpauth://hotp/x?secret=AAAAAAAAAAAAAAAA&counter=1",
         "otpauth://totp/x?secret=AAAAAAAAAAAAAAAA&secret=BBBBBBBBBBBBBBBB",
@@ -433,14 +438,16 @@ fn synthetic_apple_csv_multiline_filter_duplicates_flags_and_stable_encrypted_ba
         &Continue,
     )
     .unwrap();
-    assert_eq!(import.counts().rows.len(), 4);
+    // Filtered rows are counted but never listed or decoded.
+    assert_eq!(import.counts().rows.len(), 3);
     assert_eq!(import.counts().eligible, 2);
     assert_eq!(import.counts().duplicates, 1);
     assert_eq!(import.counts().filtered, 1);
+    assert_eq!(import.counts().capacity as usize, MAX_ITEMS);
     assert!(
-        import.counts().rows[3].blank_password
-            && import.counts().rows[3].unsupported_url
-            && import.counts().rows[3].invalid_otp
+        import.counts().rows[2].blank_password
+            && import.counts().rows[2].unsupported_url
+            && import.counts().rows[2].invalid_otp
     );
     let batch = import
         .seal_selected(&mut a, &[2, 5], &mut rng, &Continue)
@@ -493,7 +500,13 @@ fn hostile_csv_bounds_quoting_encoding_cancellation_and_generic_empty_username_f
         AppleImport::preview(huge.as_bytes(), &mut a, &[], UsernameFilter::All, &Continue),
         Err(Error::Limit)
     ));
-    let many = format!("Title,URL,Username,Password\n{}", "a,b,c,p\n".repeat(1001));
+    let many: String = (0..=MAX_ITEMS).fold(
+        String::from("Title,URL,Username,Password\n"),
+        |mut s, n| {
+            s.push_str(&format!("t{n},https://example.test,c,p\n"));
+            s
+        },
+    );
     assert!(matches!(
         AppleImport::preview(many.as_bytes(), &mut a, &[], UsernameFilter::All, &Continue),
         Err(Error::Limit)
@@ -649,6 +662,266 @@ fn entropy_collision_failure_and_streaming_csv_caps_cancel_and_stale_epoch() {
         fresh.seal_selected(&mut vault, &[2], &mut rng, &Continue),
         Err(Error::Conflict)
     ));
+}
+
+const SYNTHETIC_SEED_URI: &str =
+    "otpauth://totp/Fixture?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // gitleaks:allow -- RFC6238 public test seed.
+/// `matching` selectable rows first, then rows a username filter must skip
+/// without decoding: invalid UTF-8, bad favorite flag, bad URL and bad seed.
+fn household_csv(total: usize, matching: usize) -> Vec<u8> {
+    let mut out = b"Title,URL,Username,Password,Notes,OTPAuth,Favorite\r\n".to_vec();
+    for n in 0..total {
+        if n < matching {
+            let user = if n % 2 == 0 {
+                "FIXTURE-user-a"
+            } else {
+                "fixture-USER-b@example.test"
+            };
+            let totp = match n % 3 {
+                0 => SYNTHETIC_SEED_URI,
+                1 => "not-a-seed",
+                _ => "",
+            };
+            out.extend_from_slice(
+                format!(
+                    "Site {n},https://site{n}.example.test,{user},pw-{n},note {n},{totp},false\r\n"
+                )
+                .as_bytes(),
+            );
+        } else {
+            out.extend_from_slice(
+                format!("Other {n},javascript:bad,unrelated-{n}@example.test,,").as_bytes(),
+            );
+            out.extend_from_slice(&[0xff, 0xfe]);
+            out.extend_from_slice(b",not-a-seed,maybe\r\n");
+        }
+    }
+    out
+}
+fn extra_csv(count: usize) -> Vec<u8> {
+    let mut out = b"Title,URL,Username,Password\n".to_vec();
+    for n in 0..count {
+        out.extend_from_slice(
+            format!("Extra {n},https://extra{n}.example.test,extra-user,pw-extra-{n}\n").as_bytes(),
+        );
+    }
+    out
+}
+fn sealed_filler(a: &mut ActiveVault, rng: &mut Synthetic, n: u128) -> EncryptedItem {
+    let mut f = fields();
+    f.title = text(&format!("Filler {n}"));
+    a.seal_item(Uuid::from_u128(10_000 + n), 1, &f, rng).unwrap()
+}
+#[test]
+fn household_scale_selective_import_with_totp_skips_nonmatching_rows_and_respects_capacity() {
+    let mut rng = Synthetic(0);
+    let (mut a, _) = ready(1, &mut rng);
+    // 1100 physical rows (> the 1000 live-item limit); 883 selectable.
+    let csv = household_csv(1100, 883);
+    let filter = || {
+        UsernameFilter::contains_any(vec![text("fixture-user-a"), text("FIXTURE-USER-B")]).unwrap()
+    };
+    // Unfiltered import must decode the corrupt rows and fail; the filter never does.
+    assert!(matches!(
+        AppleImport::preview(csv.as_slice(), &mut a, &[], UsernameFilter::All, &Continue),
+        Err(Error::Csv)
+    ));
+    let mut import =
+        AppleImport::preview(csv.as_slice(), &mut a, &[], filter(), &Continue).unwrap();
+    let p = import.counts();
+    assert_eq!((p.eligible, p.duplicates, p.filtered), (883, 0, 217));
+    assert_eq!((p.existing, p.capacity as usize), (0, MAX_ITEMS));
+    assert_eq!(p.rows.len(), 883);
+    assert_eq!(
+        p.rows.iter().filter(|r| r.invalid_otp).count(),
+        (0..883).filter(|n| n % 3 == 1).count()
+    );
+    let selected: Vec<u32> = p.rows.iter().map(|r| r.row).collect();
+    assert_eq!((selected[0], selected[882]), (2, 884));
+    let batch = import
+        .seal_selected(&mut a, &selected, &mut rng, &Continue)
+        .unwrap()
+        .to_vec();
+    assert_eq!(batch.len(), 883);
+    inventory_digest(&batch).unwrap();
+    let first = a.open_item(&batch[0]).unwrap();
+    assert_eq!(first.username.expose(), "FIXTURE-user-a");
+    assert!(Totp::parse_uri(&first.totp).is_ok());
+    assert_eq!(a.open_item(&batch[1]).unwrap().totp.expose(), "not-a-seed");
+    assert_eq!(a.open_item(&batch[2]).unwrap().totp.expose(), "");
+    assert_eq!(
+        a.open_item(&batch[882]).unwrap().title.expose(),
+        "Site 882"
+    );
+    // Retry after the whole batch is stored: everything is a duplicate, nothing new.
+    let retry = AppleImport::preview(csv.as_slice(), &mut a, &batch, filter(), &Continue).unwrap();
+    let p = retry.counts();
+    assert_eq!((p.eligible, p.duplicates, p.filtered), (0, 883, 217));
+    assert_eq!((p.existing, p.capacity), (883, 117));
+    // A partially committed retry only offers the missing tail.
+    let partial =
+        AppleImport::preview(csv.as_slice(), &mut a, &batch[..500], filter(), &Continue).unwrap();
+    assert_eq!(partial.counts().eligible, 383);
+    assert_eq!(partial.counts().duplicates, 500);
+    // Known over-capacity selection fails before sealing anything.
+    let extra = extra_csv(150);
+    let mut over =
+        AppleImport::preview(extra.as_slice(), &mut a, &batch, UsernameFilter::All, &Continue)
+            .unwrap();
+    assert_eq!((over.counts().eligible, over.counts().capacity), (150, 117));
+    let all: Vec<u32> = over.counts().rows.iter().map(|r| r.row).collect();
+    assert!(matches!(
+        over.seal_selected(&mut a, &all, &mut rng, &Continue),
+        Err(Error::Limit)
+    ));
+    let fits = over
+        .seal_selected(&mut a, &all[..117], &mut rng, &Continue)
+        .unwrap()
+        .to_vec();
+    assert_eq!(fits.len(), 117);
+    // Exactly full: nothing more can be selected, and one extra stored item is rejected.
+    let mut full = batch.clone();
+    full.extend(fits);
+    assert_eq!(full.len(), MAX_ITEMS);
+    let mut none = AppleImport::preview(
+        extra_csv(3).as_slice(),
+        &mut a,
+        &full,
+        UsernameFilter::All,
+        &Continue,
+    )
+    .unwrap();
+    assert_eq!(none.counts().capacity, 0);
+    assert!(matches!(
+        none.seal_selected(&mut a, &[2], &mut rng, &Continue),
+        Err(Error::Limit)
+    ));
+    full.push(sealed_filler(&mut a, &mut rng, 1));
+    assert!(matches!(
+        AppleImport::preview(
+            extra_csv(1).as_slice(),
+            &mut a,
+            &full,
+            UsernameFilter::All,
+            &Continue
+        ),
+        Err(Error::Limit)
+    ));
+    assert!(matches!(
+        inventory_digest(&full),
+        Err(Error::Limit)
+    ));
+}
+#[test]
+fn username_filter_any_of_is_case_insensitive_generic_and_rejects_broad_or_empty_terms() {
+    let mut rng = Synthetic(0);
+    let (mut a, _) = ready(1, &mut rng);
+    for bad in [
+        vec![],
+        vec![text("")],
+        vec![text("   ")],
+        vec![text("a")],
+        vec![text("ok-term"), text(" x ")],
+        (0..9).map(|n| text(&format!("term-{n}"))).collect(),
+        vec![text(&"x".repeat(129))],
+    ] {
+        assert!(matches!(
+            UsernameFilter::contains_any(bad),
+            Err(Error::Invalid)
+        ));
+    }
+    // The enum is public, so preview re-validates a directly built filter.
+    assert!(matches!(
+        AppleImport::preview(
+            b"Title,URL,Username,Password\na,b,c,d\n".as_slice(),
+            &mut a,
+            &[],
+            UsernameFilter::ContainsAny(vec![text("")]),
+            &Continue
+        ),
+        Err(Error::Invalid)
+    ));
+    let csv = "Title,URL,Username,Password\n\
+        one,https://a.test,Ünique.Person,p1\n\
+        two,https://b.test,team-ALPHA@example.test,p2\n\
+        three,https://c.test,someone-else,p3\n\
+        four,https://d.test,,p4\n";
+    let run = |filter: UsernameFilter, a: &mut ActiveVault| {
+        let import = AppleImport::preview(csv.as_bytes(), a, &[], filter, &Continue).unwrap();
+        let p = import.counts();
+        (
+            p.rows.iter().map(|r| r.row).collect::<Vec<_>>(),
+            p.filtered,
+        )
+    };
+    let any = UsernameFilter::contains_any(vec![text("ÜNIQUE"), text(" alpha@")]).unwrap();
+    assert_eq!(run(any, &mut a), (vec![2, 3], 2));
+    // Duplicate terms collapse; a term that matches nothing selects nothing, never everything.
+    let dup = UsernameFilter::contains_any(vec![text("zz"), text("ZZ")]).unwrap();
+    assert_eq!(run(dup, &mut a), (vec![], 4));
+    // Existing modes are unchanged.
+    assert_eq!(run(UsernameFilter::All, &mut a).0.len(), 4);
+    assert_eq!(run(UsernameFilter::Exact(text("someone-else")), &mut a), (vec![4], 3));
+    assert_eq!(run(UsernameFilter::Exact(text("someone")), &mut a), (vec![], 4));
+    assert_eq!(run(UsernameFilter::Exact(text("")), &mut a), (vec![5], 3));
+}
+#[test]
+fn duplicates_and_changed_accounts_are_preserved_across_retry_and_blocks_invalid_matching_rows() {
+    let mut rng = Synthetic(0);
+    let (mut a, _) = ready(1, &mut rng);
+    let csv = "Title,URL,Username,Password\n\
+        Site,https://same.test,member,old\n\
+        Site,https://same.test,member,old\n\
+        Site,https://same.test,member,new\n";
+    let mut import =
+        AppleImport::preview(csv.as_bytes(), &mut a, &[], UsernameFilter::All, &Continue).unwrap();
+    let statuses: Vec<_> = import.counts().rows.iter().map(|r| r.status).collect();
+    assert!(statuses == [ImportStatus::New, ImportStatus::Duplicate, ImportStatus::ChangedAccount]);
+    let batch = import
+        .seal_selected(&mut a, &[2, 4], &mut rng, &Continue)
+        .unwrap()
+        .to_vec();
+    // The duplicate row can never be selected.
+    assert!(matches!(
+        AppleImport::preview(csv.as_bytes(), &mut a, &[], UsernameFilter::All, &Continue)
+            .unwrap()
+            .seal_selected(&mut a, &[3], &mut rng, &Continue),
+        Err(Error::Invalid)
+    ));
+    let retry =
+        AppleImport::preview(csv.as_bytes(), &mut a, &batch, UsernameFilter::All, &Continue)
+            .unwrap();
+    assert_eq!((retry.counts().eligible, retry.counts().duplicates), (0, 3));
+    // An empty selection is refused rather than treated as "all".
+    let mut empty = AppleImport::preview(
+        csv.as_bytes(),
+        &mut a,
+        &[],
+        UsernameFilter::contains_any(vec![text("nobody-here")]).unwrap(),
+        &Continue,
+    )
+    .unwrap();
+    assert_eq!((empty.counts().eligible, empty.counts().filtered), (0, 3));
+    assert!(matches!(
+        empty.seal_selected(&mut a, &[], &mut rng, &Continue),
+        Err(Error::Invalid)
+    ));
+    // A matching row is fully validated: invalid UTF-8 / bad favorite fail closed.
+    for bad in [
+        b"Title,URL,Username,Password\na,b,member,\xff\n".as_slice(),
+        b"Title,URL,Username,Password,Favorite\na,b,member,p,maybe\n",
+    ] {
+        assert!(matches!(
+            AppleImport::preview(
+                bad,
+                &mut a,
+                &[],
+                UsernameFilter::contains_any(vec![text("member")]).unwrap(),
+                &Continue
+            ),
+            Err(Error::Csv)
+        ));
+    }
 }
 
 fn synthetic_committed(header: Header) -> Result<CommittedHeader> {

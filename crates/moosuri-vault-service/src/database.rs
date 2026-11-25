@@ -1,7 +1,10 @@
 //! Immutable ciphertext history, exact operation receipts, durable nonce ledger.
 use crate::*;
 use fs2::FileExt;
-use moosuri_vault_core::{inventory_digest, storage_commitment};
+use moosuri_vault_core::{
+    INVENTORY_WIRE_LIMIT, inventory_digest, inventory_wire_bytes, item_wire_cost,
+    storage_commitment,
+};
 use protocol::{Binding, EncryptedItem, Header, Operation, Owner, Receipt, VaultState};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -978,6 +981,18 @@ fn validate_operation(owner: &Owner, current: &VaultState, op: &Operation) -> Re
             if old.is_none() && current.items.len() >= MAX_ITEMS {
                 return Err(Error::Limit);
             }
+            // Count alone is not enough: the complete state, a v2 archive (26 MiB)
+            // and rotation must stay representable. Only growth is refused, so a
+            // historical vault already above the bound can still shrink or edit.
+            let used = inventory_wire_bytes(&current.items).map_err(|_| Error::Unavailable)?;
+            let freed = match old {
+                Some(i) => item_wire_cost(i).map_err(|_| Error::Unavailable)?,
+                None => 0,
+            };
+            let next = used - freed + item_wire_cost(item).map_err(|_| Error::Invalid)?;
+            if next > INVENTORY_WIRE_LIMIT && next > used {
+                return Err(Error::Limit);
+            }
         }
         Operation::Delete {
             expected_header,
@@ -1056,6 +1071,108 @@ fn item_nonces(
         hash(&item.to_json().map_err(|_| Error::Invalid)?),
     ));
     Ok(())
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    fn item(n: u128, revision: u64, ciphertext_bytes: usize) -> EncryptedItem {
+        EncryptedItem {
+            ciphertext: "A".repeat(ciphertext_bytes / 3 * 4),
+            generation: 1,
+            id: uuid::Uuid::from_u128(n + 1),
+            key_nonce: "A".repeat(16),
+            nonce: "A".repeat(16),
+            revision,
+            version: 2,
+            wrapped_key: "A".repeat(64),
+        }
+    }
+    fn state(items: Vec<EncryptedItem>) -> (Owner, VaultState) {
+        let owner = Owner {
+            account: uuid::Uuid::from_u128(1),
+            tenant: uuid::Uuid::from_u128(2),
+            installation: uuid::Uuid::from_u128(3),
+            epoch: 1,
+        };
+        let binding = serde_json::json!({
+            "owner_id": owner.account, "tenant_id": owner.tenant,
+            "vault_id": uuid::Uuid::from_u128(4)
+        });
+        let header: Header = serde_json::from_value(serde_json::json!({
+            "authentication": "", "binding": binding, "envelope_epoch": 1,
+            "envelopes": [], "generation": 1, "revision": 1, "version": 2
+        }))
+        .unwrap();
+        let state = VaultState {
+            owner: owner.clone(),
+            binding: Some(header.binding),
+            header: Some(header),
+            header_sha256: "synthetic-head".into(),
+            items,
+            inventory_sha256: String::new(),
+            pending: vec![],
+        };
+        (owner, state)
+    }
+    fn put(state: &VaultState, item: EncryptedItem, expected_revision: u64) -> Operation {
+        Operation::Put {
+            id: uuid::Uuid::from_u128(99),
+            expected_header: state.header_sha256.clone(),
+            expected_revision,
+            item,
+        }
+    }
+    #[test]
+    fn ordinary_883_small_rows_are_admitted() {
+        let (owner, current) = state((0..882).map(|n| item(n, 1, 600)).collect());
+        let op = put(&current, item(5_000, 1, 600), 0);
+        validate_operation(&owner, &current, &op).unwrap();
+    }
+    #[test]
+    fn byte_bound_refuses_new_large_items_but_not_shrinking_or_same_size_edits() {
+        let mut items = vec![];
+        let mut used = 0;
+        while used + item_wire_cost(&item(0, 1, 30_000)).unwrap() <= INVENTORY_WIRE_LIMIT {
+            let next = item(items.len() as u128, 1, 30_000);
+            used += item_wire_cost(&next).unwrap();
+            items.push(next);
+        }
+        let next_id = items.len() as u128;
+        let overhead = item_wire_cost(&item(next_id, 1, 30)).unwrap() - 40;
+        let remaining = INVENTORY_WIRE_LIMIT - used;
+        if remaining > overhead + 64 {
+            // Fill the last partial slot, leaving under four bytes of base64 slack.
+            items.push(item(next_id, 1, (remaining - overhead) / 4 * 3));
+        }
+        assert!(items.len() < MAX_ITEMS);
+        let (owner, current) = state(items);
+        let added = put(&current, item(5_000, 1, 30_000), 0);
+        assert!(matches!(
+            validate_operation(&owner, &current, &added),
+            Err(Error::Limit)
+        ));
+        // A same-size replacement does not grow the inventory.
+        let edit = put(&current, item(0, 2, 30_000), 1);
+        validate_operation(&owner, &current, &edit).unwrap();
+        // A larger replacement would grow it past the bound.
+        let larger = put(&current, item(0, 2, 31_500), 1);
+        assert!(matches!(
+            validate_operation(&owner, &current, &larger),
+            Err(Error::Limit)
+        ));
+        // A historical vault already over the bound may still shrink an item.
+        let mut over = current.items.clone();
+        over.push(item(4_000, 1, 30_000));
+        let (owner, historical) = state(over);
+        let shrink = put(&historical, item(0, 2, 600), 1);
+        validate_operation(&owner, &historical, &shrink).unwrap();
+        let more = put(&historical, item(5_000, 1, 600), 0);
+        assert!(matches!(
+            validate_operation(&owner, &historical, &more),
+            Err(Error::Limit)
+        ));
+    }
 }
 
 #[cfg(test)]

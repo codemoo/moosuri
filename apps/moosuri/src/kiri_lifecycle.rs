@@ -81,6 +81,8 @@ struct Member {
     /// None inherits this installation's browser setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     browser_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vault_origin: Option<String>,
 }
 fn engine_socket() -> PathBuf {
     "/run/kiri/docker.sock".into()
@@ -136,6 +138,7 @@ impl Config {
                 None
             },
             browser_sockets_root: self.browser_root(m).cloned(),
+            vault_origin: m.vault_origin.clone(),
             enable_local_gws: self.local_gws(m),
             enable_text_preview: m.enable_text_preview,
             uid: m.uid,
@@ -543,6 +546,7 @@ mod tests {
                 enable_google_readonly: false,
                 enable_local_gws: false,
                 browser_enabled: None,
+                vault_origin: None,
             },
             Member {
                 account_id: Uuid::new_v4(),
@@ -553,6 +557,7 @@ mod tests {
                 enable_google_readonly: false,
                 enable_local_gws: false,
                 browser_enabled: None,
+                vault_origin: None,
             },
         ];
         assert!(c.validate().is_err());
@@ -642,6 +647,7 @@ mod tests {
             enable_google_readonly: false,
             enable_local_gws: false,
             browser_enabled: None,
+            vault_origin: None,
         });
         let states = cycle(&c, &CancellationToken::new()).await;
         assert_eq!(states[0].state, "not_active");

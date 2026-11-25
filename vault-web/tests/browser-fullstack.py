@@ -136,6 +136,37 @@ def exercise(context, origin, vault_origin, account, login_password):
     expect(vault.get_by_role("button", name=renamed)).to_have_count(0)
     print("PASS VWEB-06 cancel deletion then confirm and verify it after reload and unlock", flush=True)
 
+    # A private fixture exercises both the worker selector and real encrypted storage.
+    def choose_subset():
+        vault.get_by_role("button", name="볼트 설정").click()
+        vault.get_by_role("button", name="CSV 가져오기").click()
+        vault.get_by_label("가져올 항목").select_option("any")
+        vault.get_by_role("textbox", name="포함할 글자", exact=False).fill("fixture-one, fixture-two")
+        vault.locator('input[type=file]').set_input_files({
+            "name": "synthetic.csv", "mimeType": "text/csv", "buffer": (
+                "Title,URL,Username,Password,Notes,OTPAuth\n"
+                "Fixture A,https://a.example.test,FIXTURE-ONE-user,synthetic a,,otpauth://totp/?secret=JBSWY3DPEHPK3PXP\n"
+                "Fixture B,https://b.example.test,user-fixture-two,synthetic b,,\n"
+                "Excluded,https://x.example.test,other,synthetic x,,invalid\n"
+            ).encode(),
+        })
+    choose_subset()
+    save = vault.get_by_role("button", name="선택한 2개 항목 저장")
+    expect(save).to_be_visible()
+    expect(vault.get_by_label("가져올 항목")).to_be_disabled()
+    save.click()
+    expect(vault.get_by_role("heading", name="볼트 보호 설정")).to_be_visible(timeout=30000)
+    vault.get_by_role("button", name="뒤로", exact=True).click()
+    expect(vault.get_by_role("button", name="Fixture A", exact=False)).to_be_visible(timeout=30000)
+    expect(vault.get_by_role("button", name="Fixture B", exact=False)).to_be_visible()
+    expect(vault.get_by_role("button", name="Excluded", exact=False)).to_have_count(0)
+    vault.reload()
+    vault.get_by_label("볼트 비밀번호", exact=True).fill(password)
+    vault.get_by_role("button", name="열기", exact=True).click()
+    choose_subset()
+    expect(vault.get_by_role("button", name="선택한 0개 항목 저장")).to_be_disabled()
+    print("PASS VWEB-07 filtered import, excluded row, reload and duplicate preview", flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

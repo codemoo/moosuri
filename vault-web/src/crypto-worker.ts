@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import init,{VaultEngine} from "./wasm/vault_crypto.js";
 import type {Command,EntryDetails,Operation,Owner,Receipt,State,VaultHead,CurrentSession} from "./types";
+import {workerSelector} from "./import-filter";
 const scope=self as unknown as DedicatedWorkerGlobalScope;
 let engine:VaultEngine|undefined,owner:Owner|undefined,closed=false,published=false;
 let queue=Promise.resolve(),loaded:Promise<unknown>|undefined,admittedHead:VaultHead|undefined,pollQueued=false;
@@ -137,7 +138,10 @@ async function dispatch(command:Command):Promise<unknown>{
   }
   if(command.op==="csv_file"){
     const file=command.file;if(!(file instanceof File)||file.size>10*1024*1024)throw fixed("vault_limit");
-    const csv=await file.text();if(closed)throw fixed("vault_locked");await checkHead();return local({op:"csv_preview",csv,username:command.username??null});
+    // Validate the selector before reading the file; Rust re-validates and keeps
+    // blank/ambiguous selectors from degrading to "import everything".
+    const chosen=workerSelector(command.username,command.usernames);
+    const csv=await file.text();if(closed)throw fixed("vault_locked");await checkHead();return local({op:"csv_preview",csv,username:chosen.username,usernames:chosen.usernames});
   }
   if(command.op==="view_details"){
     const address=local<string>({op:"reveal",item:command.item,field:"url"});

@@ -208,6 +208,7 @@ pub(super) async fn run_locked(
         enable_google_readonly: o.enable_google_readonly,
         enable_local_gws: o.enable_local_gws,
         browser_enabled: None,
+        vault_origin: None,
     };
     worker::check_claim(&o.operations_root, &config, &invite, &m)?;
     if !matching(&config, &m)? {

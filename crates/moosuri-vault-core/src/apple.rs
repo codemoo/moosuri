@@ -4,7 +4,7 @@ use crate::{
     TrustedEntropy,
     crypto::random_id,
     secret::{SecretUrl, utf8},
-    wire::MAX_ITEMS,
+    wire::{MAX_ITEMS, inventory_fits, inventory_wire_bytes},
 };
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, io::Read};
@@ -13,9 +13,48 @@ use zeroize::Zeroizing;
 const CSV_LIMIT: usize = 10 * 1024 * 1024;
 const ROW_LIMIT: usize = 65_536;
 const COLUMN_LIMIT: usize = 16;
+/// Terms are caller input, not credentials, but stay in `SecretText` so a
+/// username list cannot reach Debug/Serialize paths.
+pub const FILTER_TERMS_MAX: usize = 8;
+pub const FILTER_TERM_MIN_CHARS: usize = 2;
+const FILTER_TERM_MAX_BYTES: usize = 128;
 pub enum UsernameFilter {
     All,
     Exact(SecretText),
+    /// Case-insensitive substring match; a row is selected when ANY term occurs
+    /// in its username. Build with [`UsernameFilter::contains_any`].
+    ContainsAny(Vec<SecretText>),
+}
+impl UsernameFilter {
+    /// Rejects an empty list, blank/one-character terms and oversize lists so a
+    /// typo cannot silently become "select everything".
+    pub fn contains_any(terms: Vec<SecretText>) -> Result<Self> {
+        let filter = Self::ContainsAny(terms);
+        filter.terms()?;
+        Ok(filter)
+    }
+    fn terms(&self) -> Result<Vec<Zeroizing<String>>> {
+        let Self::ContainsAny(terms) = self else {
+            return Ok(vec![]);
+        };
+        if terms.is_empty() || terms.len() > FILTER_TERMS_MAX {
+            return Err(Error::Invalid);
+        }
+        let mut out: Vec<Zeroizing<String>> = Vec::with_capacity(terms.len());
+        for term in terms {
+            let trimmed = term.expose().trim();
+            if trimmed.chars().count() < FILTER_TERM_MIN_CHARS
+                || trimmed.len() > FILTER_TERM_MAX_BYTES
+            {
+                return Err(Error::Invalid);
+            }
+            let lower = Zeroizing::new(trimmed.to_lowercase());
+            if !out.iter().any(|v| **v == *lower) {
+                out.push(lower);
+            }
+        }
+        Ok(out)
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ImportStatus {
@@ -37,6 +76,9 @@ pub struct ImportPreview {
     pub eligible: u32,
     pub duplicates: u32,
     pub filtered: u32,
+    /// Live items already stored and remaining free slots under `MAX_ITEMS`.
+    pub existing: u32,
+    pub capacity: u32,
 }
 struct Row {
     number: u32,
@@ -44,6 +86,8 @@ struct Row {
 }
 pub struct AppleImport {
     header: [u8; 32],
+    existing_count: usize,
+    existing_bytes: usize,
     preview: ImportPreview,
     rows: Vec<Row>,
     batch: Option<(Vec<u32>, Vec<EncryptedItem>)>,
@@ -61,6 +105,9 @@ impl AppleImport {
         if existing.len() > MAX_ITEMS {
             return Err(Error::Limit);
         }
+        let existing_bytes = inventory_wire_bytes(existing)?;
+        // Validate the filter before any decrypt/KDF-adjacent work.
+        let terms = filter.terms()?;
         let mut contents = HashSet::new();
         let mut accounts = HashSet::new();
         for item in existing {
@@ -106,11 +153,19 @@ impl AppleImport {
             eligible: 0,
             duplicates: 0,
             filtered: 0,
+            existing: existing.len() as u32,
+            capacity: (MAX_ITEMS - existing.len()) as u32,
         };
+        let username_at = names
+            .iter()
+            .position(|s| *s == "username")
+            .ok_or(Error::Csv)?;
         let mut rows = Vec::new();
         let mut number = 1u32;
         while let Some(raw) = csv.record()? {
             number = number.checked_add(1).ok_or(Error::Limit)?;
+            // Physical rows (including filtered/blank ones) have their own cap;
+            // only rows that can become live items count against vault capacity.
             if number > 10_001 {
                 return Err(Error::Limit);
             }
@@ -121,8 +176,23 @@ impl AppleImport {
             if raw.len() != names.len() {
                 return Err(Error::Csv);
             }
-            if preview.rows.len() >= MAX_ITEMS {
-                return Err(Error::Limit);
+            // Decide membership from the username cell alone. A non-matching
+            // row's other cells are never UTF-8 decoded, parsed, URL/OTP
+            // validated, fingerprinted or retained.
+            let matched = match &filter {
+                UsernameFilter::All => true,
+                UsernameFilter::Exact(value) => {
+                    raw[username_at].as_slice() == value.expose().as_bytes()
+                }
+                UsernameFilter::ContainsAny(_) => {
+                    let name = std::str::from_utf8(&raw[username_at]).map_err(|_| Error::Csv)?;
+                    let lower = Zeroizing::new(name.to_lowercase());
+                    terms.iter().any(|t| lower.contains(t.as_str()))
+                }
+            };
+            if !matched {
+                preview.filtered += 1;
+                continue;
             }
             let mut cells: Vec<Option<SecretText>> = raw
                 .into_iter()
@@ -153,10 +223,6 @@ impl AppleImport {
                 totp: take("otpauth")?,
             };
             fields.encode()?;
-            let selected = match &filter {
-                UsernameFilter::All => true,
-                UsernameFilter::Exact(value) => fields.username.expose() == value.expose(),
-            };
             let blank_password = fields.secret.expose().is_empty();
             let unsupported_url = if fields.url.expose().is_empty() {
                 false
@@ -170,17 +236,25 @@ impl AppleImport {
                     Err(_) => true,
                 }
             };
-            let invalid_otp =
-                !fields.totp.expose().is_empty() && crate::Totp::parse_uri(&fields.totp).is_err();
+            // Same rule the vault uses when generating a code: an otpauth URI or
+            // a bare Base32 seed. Flagged rows are still importable by choice.
+            let invalid_otp = !fields.totp.expose().is_empty()
+                && if fields.totp.expose().starts_with("otpauth:") {
+                    crate::Totp::parse_uri(&fields.totp).is_err()
+                } else {
+                    crate::Totp::from_base32(&fields.totp, crate::TotpAlgorithm::Sha1, 6, 30)
+                        .is_err()
+                };
             let content = fingerprint(&fields)?;
             let identity = account_fingerprint(&fields)?;
-            let status = if !selected {
-                preview.filtered += 1;
-                ImportStatus::Filtered
-            } else if contents.contains(&content) {
+            let status = if contents.contains(&content) {
                 preview.duplicates += 1;
                 ImportStatus::Duplicate
             } else {
+                // Can never fit in any vault: stop retaining plaintext rows.
+                if rows.len() >= MAX_ITEMS {
+                    return Err(Error::Limit);
+                }
                 preview.eligible += 1;
                 if accounts.contains(&identity) {
                     ImportStatus::ChangedAccount
@@ -195,19 +269,21 @@ impl AppleImport {
                 unsupported_url,
                 invalid_otp,
             });
-            if selected {
-                contents.insert(content);
-                accounts.insert(identity);
-            }
+            contents.insert(content);
+            accounts.insert(identity);
             if matches!(status, ImportStatus::New | ImportStatus::ChangedAccount) {
                 rows.push(Row { number, fields });
             }
         }
-        if preview.rows.is_empty() {
+        // A file with only filtered rows is a valid empty selection (UI blocks
+        // commit); a file with no data rows at all is not a usable import.
+        if preview.rows.is_empty() && preview.filtered == 0 {
             return Err(Error::Csv);
         }
         Ok(Self {
             header,
+            existing_count: existing.len(),
+            existing_bytes,
             preview,
             rows,
             batch: None,
@@ -215,6 +291,10 @@ impl AppleImport {
     }
     pub fn counts(&self) -> &ImportPreview {
         &self.preview
+    }
+    /// Serialized bytes of the destination inventory this preview was built on.
+    pub fn existing_bytes(&self) -> usize {
+        self.existing_bytes
     }
     /// Stable encrypted batch on retry. Caller commits only the chosen immutable
     /// ciphertexts and tracks partial ACKs; this function makes no storage claim.
@@ -228,8 +308,13 @@ impl AppleImport {
         if self.header != vault.header_digest()? {
             return Err(Error::Conflict);
         }
-        if selected.is_empty() || selected.len() > MAX_ITEMS {
+        if selected.is_empty() {
             return Err(Error::Invalid);
+        }
+        // Known over-limit selections fail before any row is sealed, so none can
+        // be queued for a partial commit.
+        if selected.len() > MAX_ITEMS.saturating_sub(self.existing_count) {
+            return Err(Error::Limit);
         }
         if cancel.cancelled() {
             return Err(Error::Cancelled);
@@ -260,6 +345,9 @@ impl AppleImport {
                     .ok_or(Error::Invalid)?;
                 batch.push(vault.seal_item(random_id(entropy)?, 1, &row.fields, entropy)?);
             }
+            // Exact sealed sizes: refuse before the batch is retained, so an
+            // oversize selection can be reduced and retried with the rows intact.
+            inventory_fits(self.existing_bytes, &batch)?;
             self.batch = Some((selected.to_vec(), batch));
             self.rows.clear();
         }

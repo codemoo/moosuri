@@ -41,7 +41,17 @@ pub struct Options {
     /// Private JSON emitted for the verified deployment/browser capsule.
     #[arg(long)]
     pub capsule_config: PathBuf,
+    /// Optional: the one member allowed to request a Google sign-in attempt. Requires the next two flags.
+    #[arg(long)]
+    pub google_signin_account: Option<Uuid>,
+    /// Optional: root-trusted directory's owner-bridge Unix socket for that member.
+    #[arg(long)]
+    pub google_signin_socket: Option<PathBuf>,
+    /// Optional: the Linux uid that must own the bridge socket and answer on it.
+    #[arg(long)]
+    pub google_signin_peer_uid: Option<u32>,
 }
+pub(crate) mod google;
 
 const REQUEST_BYTES: u64 = 16 * 1024;
 const IO_DEADLINE: Duration = Duration::from_secs(5);
@@ -90,6 +100,8 @@ struct Host {
     reader: CapsuleReader,
     clients: Arc<Semaphore>,
     checks: Arc<Semaphore>,
+    /// Present only when an installer enrolled one member's Google sign-in bridge.
+    google: Option<Arc<google::Gate>>,
 }
 
 impl Host {
@@ -175,6 +187,46 @@ async fn dispatch(
     Ok(result)
 }
 
+/// One typed Google sign-in attempt. It runs to completion even if the member disconnects, so the recorded
+/// result answers a reconnect; revocation or fencing at any point discards the answer.
+async fn serve_google(
+    host: &Host,
+    b: Binding,
+    request: google::Request,
+    stop: &CancellationToken,
+) -> Result<Value, &'static str> {
+    if request.generation != b.generation {
+        return Err("forbidden");
+    }
+    let initial = host.current(b).await.ok_or("forbidden")?;
+    if stop.is_cancelled() {
+        return Err("forbidden");
+    }
+    let outcome = match &host.google {
+        None => google::Outcome::unavailable(google::Reason::NotConfigured),
+        Some(gate) => {
+            let fenced = async {
+                loop {
+                    tokio::time::sleep(POLL).await;
+                    if host.current(b).await != Some(initial) {
+                        return;
+                    }
+                }
+            };
+            tokio::select! {
+                biased;
+                _ = stop.cancelled() => return Err("forbidden"),
+                _ = fenced => return Err("forbidden"),
+                outcome = gate.run(b.account_id, request.workspace) => outcome,
+            }
+        }
+    };
+    if stop.is_cancelled() || host.current(b).await != Some(initial) {
+        return Err("forbidden");
+    }
+    serde_json::to_value(outcome).map_err(|_| "unavailable")
+}
+
 async fn serve_client(
     stream: UnixStream,
     host: Host,
@@ -204,6 +256,9 @@ async fn serve_client(
         return;
     }
     let result = async {
+        if let Some(request) = google::Request::parse(&bytes) {
+            return serve_google(&host, b, request?, &stop).await;
+        }
         let request = Request::parse(&bytes)?;
         if request.generation != b.generation {
             return Err("forbidden");
@@ -398,6 +453,12 @@ pub async fn run(options: &Options) -> Result<(), String> {
         reader: CapsuleReader::new(config).map_err(|_| "browser_capsule_config_invalid")?,
         clients: Arc::new(Semaphore::new(32)),
         checks: Arc::new(Semaphore::new(64)),
+        google: google::config(
+            options.google_signin_account,
+            options.google_signin_socket.clone(),
+            options.google_signin_peer_uid,
+        )?
+        .map(|config| Arc::new(google::Gate::new(config))),
     };
     let mut members = HashMap::new();
     let mut poll = interval(POLL);

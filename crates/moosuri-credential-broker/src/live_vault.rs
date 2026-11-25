@@ -1,7 +1,8 @@
 //! Native authenticated live ciphertext client. Master passwords never enter HTTP.
 use crate::*;
 use moosuri_vault_core::{
-    ActiveVault, CommittedHeader, HeaderReceipt, ItemFields, ItemKind, SecretText, inventory_digest,
+    ActiveVault, CommittedHeader, HeaderReceipt, ItemFields, ItemKind, MAX_ITEMS, SecretText,
+    inventory_digest,
 };
 use moosuri_vault_protocol::{Handoff, Owner, VaultHead, VaultState};
 use reqwest::{
@@ -279,7 +280,8 @@ impl LiveVault {
             32 * 1024 * 1024,
         )
         .await?;
-        if state.owner != self.owner || state.items.len() > 256 {
+        // Same public count limit the service, wasm client, rotation and archives use.
+        if state.owner != self.owner || state.items.len() > MAX_ITEMS {
             return Err(Error::Reconnect);
         }
         let header = state.header.as_ref().ok_or(Error::Reconnect)?;

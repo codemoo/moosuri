@@ -126,6 +126,7 @@ fn member(i: &Invitation, uid: u32, text: bool) -> Result<Member, String> {
         enable_google_readonly: false,
         enable_local_gws: false,
         browser_enabled: None,
+        vault_origin: None,
     })
 }
 

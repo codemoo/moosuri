@@ -148,6 +148,9 @@ enum PersonalOperation {
         /// Run Google OAuth and the installed gws command inside this member.
         #[arg(long, conflicts_with = "google_readonly")]
         local_gws: bool,
+        /// Opt-in v2 vault handoff for this one member: exact distinct HTTPS vault origin.
+        #[arg(long)]
+        vault_origin: Option<String>,
         /// Test binaries only: use this same-UID private socket as the browser broker (acceptance fixture).
         /// The option does not exist in a production build.
         #[cfg(feature = "test-fixtures")]
@@ -193,6 +196,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             browser,
             google_readonly,
             local_gws,
+            vault_origin,
             #[cfg(feature = "test-fixtures")]
             browser_test_socket,
         } => {
@@ -270,6 +274,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
                 extensions,
                 brief_reads,
                 public_reads,
+                vault_origin.as_deref(),
             )
             .await;
         }
@@ -314,6 +319,7 @@ async fn serve_member(
     extensions: axum::Router,
     brief_reads: Option<std::sync::Arc<dyn moosuri_server::personal_tasks::BriefReads>>,
     public_reads: std::sync::Arc<dyn moosuri_server::personal_tasks::PublicReads>,
+    vault_origin: Option<&str>,
 ) -> Result<(), String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use tokio::net::UnixListener;
@@ -351,6 +357,17 @@ async fn serve_member(
     let gateway_uid = std::fs::metadata(parent.parent().ok_or("invalid_ipc_root")?)
         .map_err(|_| "invalid_ipc_root")?
         .uid();
+    let extensions = match vault_origin {
+        Some(origin) => extensions.merge(
+            moosuri_server::personal_tasks::member_vault::routes(
+                store.clone(),
+                owner,
+                origin,
+                gateway_uid,
+            )?,
+        ),
+        None => extensions,
+    };
     let extensions = extensions.merge(moosuri_server::personal_tasks::timer_routes_with_readers(
         store.clone(),
         owner,

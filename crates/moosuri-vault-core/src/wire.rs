@@ -4,7 +4,20 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub(crate) const HEADER_LIMIT: usize = 16_384;
-pub(crate) const MAX_ITEMS: usize = 1000;
+/// The single live-item limit shared by store, service, wasm, rotation, v2
+/// archive export/restore and CSV import capacity. Byte limits stay separate.
+pub const MAX_ITEMS: usize = 1000;
+/// Room kept for the archive's fixed keys, `count`, `authentication` and for a
+/// few extra digits when rotation bumps every item's revision/generation.
+const ARCHIVE_ENVELOPE_SLACK: usize = 8 * 1024;
+/// Conservative aggregate bound on `sum(item_wire_cost)` for NEW inventory.
+/// A v2 archive is `fixed keys + header (<= HEADER_LIMIT) + comma-joined items`,
+/// so a vault under this bound always exports within `ARCHIVE_LIMIT` (26 MiB).
+/// That is also far below the 32 MiB complete-state and rotation bodies, whose
+/// extra fields (hashes, <= 32 receipts) are a few tens of KiB at most. Growth
+/// beyond it is refused; vaults already above it stay readable and may shrink.
+pub const INVENTORY_WIRE_LIMIT: usize =
+    crate::archive::ARCHIVE_LIMIT - HEADER_LIMIT - ARCHIVE_ENVELOPE_SLACK;
 pub(crate) const MAX_REVISION: u64 = 9_007_199_254_740_991;
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +113,26 @@ pub struct EncryptedItem {
     pub revision: u64,
     pub version: u8,
     pub wrapped_key: String,
+}
+/// Exact serialized size of one item as stored/exported, plus the separating comma.
+pub fn item_wire_cost(item: &EncryptedItem) -> Result<usize> {
+    Ok(item.to_json()?.len() + 1)
+}
+pub fn inventory_wire_bytes(items: &[EncryptedItem]) -> Result<usize> {
+    items.iter().try_fold(0usize, |sum, item| {
+        sum.checked_add(item_wire_cost(item)?).ok_or(Error::Limit)
+    })
+}
+/// Wire size after adding `added` to an inventory of `existing` bytes. Fails
+/// with `Limit` when the result exceeds [`INVENTORY_WIRE_LIMIT`].
+pub fn inventory_fits(existing: usize, added: &[EncryptedItem]) -> Result<usize> {
+    let total = added.iter().try_fold(existing, |sum, item| {
+        sum.checked_add(item_wire_cost(item)?).ok_or(Error::Limit)
+    })?;
+    if total > INVENTORY_WIRE_LIMIT {
+        return Err(Error::Limit);
+    }
+    Ok(total)
 }
 pub(crate) fn rev(n: u64) -> Result<()> {
     if n == 0 || n > MAX_REVISION {
@@ -208,5 +241,44 @@ impl EncryptedItem {
         unb64(&self.wrapped_key, 48, 48)?;
         unb64(&self.ciphertext, 16, crate::secret::ITEM_LIMIT + 16)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    fn synthetic(n: u128, ciphertext_len: usize) -> EncryptedItem {
+        EncryptedItem {
+            ciphertext: b64(&vec![7; ciphertext_len]),
+            generation: 1,
+            id: Uuid::from_u128(n + 1),
+            key_nonce: b64(&[1; 12]),
+            nonce: b64(&[2; 12]),
+            revision: 1,
+            version: 2,
+            wrapped_key: b64(&[3; 48]),
+        }
+    }
+    #[test]
+    fn ordinary_small_inventory_fits_and_oversize_is_refused_exactly() {
+        let small: Vec<_> = (0..883).map(|n| synthetic(n, 400)).collect();
+        let used = inventory_wire_bytes(&small).unwrap();
+        assert!(used < INVENTORY_WIRE_LIMIT / 10);
+        assert!(inventory_fits(used, &[synthetic(9_000, 400)]).is_ok());
+        // Largest permitted items: the 1000-count limit is not reachable by bytes.
+        let big = synthetic(1, crate::secret::ITEM_LIMIT + 16);
+        let cost = item_wire_cost(&big).unwrap();
+        let fits = INVENTORY_WIRE_LIMIT / cost;
+        assert!(fits < MAX_ITEMS);
+        assert!(inventory_fits(cost * fits, &[]).is_ok());
+        assert!(matches!(
+            inventory_fits(cost * fits, &[big.clone()]),
+            Err(Error::Limit) if (fits + 1) * cost > INVENTORY_WIRE_LIMIT
+        ));
+        // Whatever the bound admits must still serialize as a v2 archive.
+        assert!(
+            INVENTORY_WIRE_LIMIT + HEADER_LIMIT + ARCHIVE_ENVELOPE_SLACK
+                <= crate::archive::ARCHIVE_LIMIT
+        );
     }
 }

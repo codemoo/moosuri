@@ -54,6 +54,9 @@ pub struct Options {
     /// Root-owned directory of member-specific browser relay sockets.
     #[arg(long)]
     pub browser_sockets_root: Option<PathBuf>,
+    /// Enable authenticated handoff for this member to this exact HTTPS vault origin.
+    #[arg(long)]
+    pub vault_origin: Option<String>,
     /// Use GWS inside the member runtime and the mounted socket for Google egress.
     #[arg(long, requires = "google_sockets_root")]
     pub enable_local_gws: bool,
@@ -97,6 +100,7 @@ struct Expected {
     model: Option<PathBuf>,
     google: Option<PathBuf>,
     browser: Option<PathBuf>,
+    vault_origin: Option<String>,
     local_gws: bool,
     text_preview: bool,
     memory: u64,
@@ -140,6 +144,9 @@ impl Expected {
         }
         if self.browser.is_some() {
             command.push("--browser".into());
+        }
+        if let Some(origin) = &self.vault_origin {
+            command.extend(["--vault-origin".to_owned(), origin.clone()]);
         }
         json!(command)
     }
@@ -323,6 +330,7 @@ fn expected_member(args: &Options, initialized: bool) -> Result<(Expected, Engin
         google,
         browser,
         model,
+        vault_origin: args.vault_origin.clone(),
         local_gws: args.enable_local_gws,
         text_preview: args.enable_text_preview,
         memory: args.memory_bytes,
@@ -422,6 +430,9 @@ fn validate_member_data(
 }
 
 pub(crate) fn validate_limits(a: &Options) -> Result<(), String> {
+    if a.vault_origin.as_deref().is_some_and(|origin| !moosuri_server::personal_tasks::member_vault::valid_origin(origin)) {
+        return Err("kiri_provision_invalid_vault_origin".into());
+    }
     if a.enable_local_gws && a.google_sockets_root.is_none() {
         return Err("kiri_provision_local_gws_requires_google_sockets_root".into());
     }
@@ -943,6 +954,7 @@ mod tests {
             model: None,
             google: None,
             browser: None,
+            vault_origin: None,
             local_gws: false,
             text_preview: false,
             memory: 67108864,

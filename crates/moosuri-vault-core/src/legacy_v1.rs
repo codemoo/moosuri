@@ -150,7 +150,7 @@ impl Archive {
         if self.format != FORMAT || self.version != 1 || self.header.version != 1 {
             return Err(Error::Unsupported);
         }
-        if self.items.len() > ARCHIVE_ITEMS {
+        if self.items.len() > LEGACY_ARCHIVE_ITEMS {
             return Err(Error::Limit);
         }
         let h = &self.header;
@@ -380,7 +380,7 @@ impl ArchiveImport {
         existing: &[EncryptedItem],
         cancel: &impl Cancellation,
     ) -> Result<Self> {
-        if bytes.len() > ARCHIVE_LIMIT || existing.len() > ARCHIVE_ITEMS {
+        if bytes.len() > ARCHIVE_LIMIT || existing.len() > MAX_ITEMS {
             return Err(Error::Limit);
         }
         if cancel.cancelled() {

@@ -73,6 +73,10 @@ pub(super) fn routes(
     Router::new()
         .route("/api/v1/threads/{id}/browser", get(status).post(start))
         .route("/api/v1/threads/{id}/browser/frame", get(frame))
+        .route(
+            "/api/v1/threads/{id}/browser/google-sign-in",
+            post(google_sign_in),
+        )
         .route("/api/v1/threads/{id}/browser/{operation}", post(mutate))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .with_state(state)
@@ -234,6 +238,31 @@ fn display_url(raw: &str) -> String {
     url.set_fragment(None);
     url.into()
 }
+/// Stored/displayed address: query-free, and origin-only when the tab is an authentication page.
+fn safe_url(raw: &str) -> String {
+    if auth::is_auth_url(raw) {
+        return auth::origin_only(raw);
+    }
+    display_url(raw)
+}
+/// Remove page evidence from a workspace stopped at an authentication page.
+fn redact_view(v: &mut Workspace) {
+    v.url = auth::origin_only(&v.url);
+    v.title.clear();
+    v.links.clear();
+    let active = v.active_tab_id.clone();
+    for tab in v.tabs.iter_mut().filter(|t| Some(&t.id) == active.as_ref()) {
+        tab.url = auth::origin_only(&tab.url);
+        tab.title.clear();
+    }
+}
+fn google_record(v: &Workspace) -> bool {
+    v.reason.as_deref().is_some_and(auth::is_google_reason)
+}
+/// A Google sign-in record has no Chromium tab behind it: no screen, no control, no broker polling.
+fn auth_locked(v: &Workspace) -> bool {
+    v.reason.as_deref().is_some_and(auth::is_reason) || google_record(v) || auth::is_auth_url(&v.url)
+}
 fn scrub_urls(text: &str) -> String {
     let lower = text.to_ascii_lowercase();
     let mut out = String::new();
@@ -296,7 +325,7 @@ fn tabs(view: &mut Workspace, t: Tabs) -> Result<(), Failure> {
     view.active_tab_id = t.active_tab.map(|id| id.to_string());
     let mut mapped = Vec::new();
     for mut tab in t.tabs {
-        tab.url = display_url(&tab.url);
+        tab.url = safe_url(&tab.url);
         let id = tab.tab_id.to_string();
         let title = view
             .tabs
@@ -323,7 +352,7 @@ async fn status(State(s): State<Arc<Service>>, h: HeaderMap, Path(thread): Path<
         return Ok(status_view(&s, None));
     };
     let mut v = j.view;
-    if matches!(v.state.as_str(), "ready" | "user_control" | "completed") {
+    if matches!(v.state.as_str(), "ready" | "user_control" | "completed") && !google_record(&v) {
         match wire::call(&s, &v.id, "tabs", json!({})).await {
             Ok(t) => tabs(&mut v, t)?,
             Err(Failure::Missing) => {
@@ -332,6 +361,9 @@ async fn status(State(s): State<Arc<Service>>, h: HeaderMap, Path(thread): Path<
             }
             Err(Failure::Busy) => {}
             Err(error) => return Err(error),
+        }
+        if v.reason.as_deref().is_some_and(auth::is_reason) || auth::is_auth_url(&v.url) {
+            redact_view(&mut v);
         }
         v = s
             .store
@@ -347,6 +379,10 @@ async fn frame(State(s): State<Arc<Service>>, h: HeaderMap, Path(thread): Path<S
     };
     let _permit = s.frames.try_acquire().map_err(|_| Failure::Stale)?;
     let v = job.view;
+    // No screen of a sign-in, verification or blocked page leaves the worker.
+    if auth_locked(&v) {
+        return Err(Failure::Forbidden);
+    }
     if !matches!(
         v.state.as_str(),
         "reading" | "ready" | "user_control" | "completed"
@@ -355,6 +391,9 @@ async fn frame(State(s): State<Arc<Service>>, h: HeaderMap, Path(thread): Path<S
     }
     let tab = v.active_tab_id.ok_or(Failure::Stale)?;
     let f: WorkspaceFrame = wire::call(&s, &v.id, "frame", json!({"tab_id":tab})).await?;
+    if auth::is_auth_url(&f.url) {
+        return Err(Failure::Forbidden);
+    }
     if f.width != 1280
         || f.height != 900
         || f.png_base64.len() > 3 * 1024 * 1024
@@ -440,6 +479,19 @@ async fn start(
             {
                 return Err(Failure::Invalid);
             }
+            // Sign-in is never opened in the general workspace; nothing is stored or dispatched.
+            if let Some(kind) = auth::classify(input.url.as_str(), "", "") {
+                return Ok((
+                    StatusCode::CONFLICT,
+                    [("cache-control", "no-store")],
+                    Json(json!({
+                        "code": "browser_auth_unsupported",
+                        "reason": kind.reason(),
+                        "handoff": "member_device",
+                    })),
+                )
+                    .into_response());
+            }
             if !wire::available(&s) {
                 s.store.personal_browser_current(scope.clone()).await?;
                 return Err(Failure::Unavailable);
@@ -484,6 +536,75 @@ async fn start(
         }
     }
 }
+/// The member's explicit Google sign-in request. The body is only the idempotency id: no URL, email, text or
+/// target is accepted, and the page-reading `start` route never reaches this path.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoogleStart {
+    request_id: Uuid,
+}
+const GOOGLE_REQUEST_TEXT: &str = "Google 로그인 시도 요청";
+async fn google_sign_in(
+    State(s): State<Arc<Service>>,
+    h: HeaderMap,
+    Path(thread): Path<String>,
+    Json(input): Json<GoogleStart>,
+) -> Reply {
+    let scope = scope(&s, &h, thread).await?;
+    // The same request id returns the same record; a reconnect never starts another attempt.
+    let admission = s
+        .store
+        .personal_browser_open(
+            scope.clone(),
+            input.request_id,
+            "about:blank".into(),
+            GOOGLE_REQUEST_TEXT.into(),
+            true,
+        )
+        .await?;
+    let job = match admission {
+        Admission::Existing(j) => return Ok(status_view(&s, Some(j.view))),
+        Admission::Fresh(j) => j,
+    };
+    let accepted = status_view(&s, Some(job.view.clone()));
+    tokio::spawn(async move {
+        let _ = settle_google(&s, scope, job.view, input.request_id).await;
+    });
+    Ok((StatusCode::ACCEPTED, accepted).into_response())
+}
+/// One bridge attempt, then one recorded answer. Anything that leaves the outcome unclear is recorded as
+/// unknown and is never repeated automatically.
+async fn settle_google(s: &Service, scope: Scope, mut view: Workspace, request: Uuid) -> Reply {
+    use crate::browser_relay::google::{Outcome, Reason};
+    let outcome = if !wire::available(s) {
+        Some(Outcome::unavailable(Reason::NotConfigured))
+    } else {
+        match wire::google_sign_in(s, &view.id).await {
+            Ok(outcome) => Some(outcome),
+            // Nothing was sent to the bridge in these cases.
+            Err(Failure::Unavailable) => Some(Outcome::unavailable(Reason::NotConfigured)),
+            Err(Failure::Busy) => Some(Outcome::unavailable(Reason::Busy)),
+            Err(_) => None,
+        }
+    };
+    let shown = auth::google_view(outcome);
+    view.state = shown.state.into();
+    view.reason = Some(shown.reason.into());
+    let workspace = workspace_lock(s, &view.id)?;
+    let _guard = workspace.lock().await;
+    // Finishing is conditioned on the same job, revision and pending request: a revoked member, a closed
+    // or replaced job, or a stale session cannot receive this answer.
+    let saved = s
+        .store
+        .personal_browser_finish(
+            scope,
+            view,
+            request,
+            Some(Output::Observation(shown.note)),
+        )
+        .await?;
+    Ok(status_view(s, Some(saved)))
+}
 async fn observed(
     s: &Service,
     scope: Scope,
@@ -499,14 +620,21 @@ async fn observed(
     // Content already read by this execution; the store remembers the last read across executions.
     let mut seen = Vec::new();
     let mut stalled = false;
+    let mut stopped_at_auth = None;
     let generated = loop {
-        p.url = display_url(&p.url);
-        p.title = scrub_urls(&p.title);
-        p.text = scrub_urls(&page_reading(&p.text));
-        // Query-bearing links are not durable action targets; retain only exact safe URLs.
-        p.links.retain(|l| display_url(&l.url) == l.url);
-        for link in &mut p.links {
-            link.text = scrub_urls(&link.text);
+        // Authentication pages (including redirects) are wiped before anything is stored or modelled.
+        let gate = auth::guard(&mut p.url, &mut p.title, &mut p.text);
+        if gate.is_some() {
+            p.links.clear();
+        } else {
+            p.url = display_url(&p.url);
+            p.title = scrub_urls(&p.title);
+            p.text = scrub_urls(&page_reading(&p.text));
+            // Query-bearing links are not durable action targets; retain only exact safe URLs.
+            p.links.retain(|l| display_url(&l.url) == l.url);
+            for link in &mut p.links {
+                link.text = scrub_urls(&link.text);
+            }
         }
         publish_tab(&mut j, tab, &p);
         let workspace = workspace_lock(s, &j.view.id)?;
@@ -516,6 +644,10 @@ async fn observed(
             .personal_browser_publish(scope.clone(), request, j.view)
             .await?;
         drop(guard);
+        if gate.is_some() {
+            stopped_at_auth = gate;
+            break None;
+        }
         // Progress is judged on what was read and the instructions in force, never on UI wording.
         let choices = p
             .links
@@ -600,6 +732,10 @@ async fn observed(
         p = next.observation.page;
     };
     let (output, needs_user, reason) = match generated {
+        None if stopped_at_auth.is_some() => {
+            let kind = stopped_at_auth.unwrap_or(auth::Auth::SignIn);
+            (Output::Observation(kind.note().to_owned()), true, kind.reason())
+        }
         Some((answer, model)) => {
             let text = if previous.is_empty() {
                 format!("{}\n\n{}", scrub_urls(&answer.answer), p.url)
@@ -660,7 +796,14 @@ async fn observed(
         || !active
             .tabs
             .iter()
-            .any(|t| t.tab_id == tab && display_url(&t.url) == p.url)
+            .any(|t| {
+                t.tab_id == tab
+                    && if stopped_at_auth.is_some() {
+                        auth::origin_only(&t.url) == p.url
+                    } else {
+                        display_url(&t.url) == p.url
+                    }
+            })
     {
         return failed(s, scope, j.view, request, Failure::Stale, Some("ready")).await;
     }
@@ -879,6 +1022,13 @@ async fn dispatch(
     if op == "close_tab" && a.tab_id.map(|t| t.to_string()) != prior.view.active_tab_id {
         return Err(Failure::Stale);
     }
+    // Credential entry and manual control never run through the general workspace.
+    if (matches!(op, "takeover" | "input") && auth_locked(&prior.view))
+        || (op != "close" && google_record(&prior.view))
+        || (op == "follow" && a.url.as_deref().is_some_and(auth::is_auth_url))
+    {
+        return Err(Failure::Forbidden);
+    }
     let control = if op == "takeover" {
         Some(Uuid::new_v4().to_string())
     } else {
@@ -971,6 +1121,8 @@ async fn dispatch(
     Ok(status_view(&s, Some(view)))
 }
 
+#[path = "browser_auth.rs"]
+mod auth;
 #[cfg(test)]
 #[path = "browser_progress_tests.rs"]
 mod progress_tests;

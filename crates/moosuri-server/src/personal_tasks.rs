@@ -4,6 +4,7 @@ mod briefs;
 mod public_watches;
 pub use public_watches::{PublicReadFuture, PublicReads, PublicStopFuture};
 mod conversation;
+pub mod member_vault;
 mod monitors;
 pub use briefs::{BriefReads, ReadFuture};
 mod research_outcomes;

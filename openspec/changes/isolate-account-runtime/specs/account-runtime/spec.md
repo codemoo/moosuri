@@ -112,6 +112,17 @@ The personal connector catalog SHALL show the current member's service account a
 - **WHEN** the member opens the vault connector and a separate HTTPS vault origin is configured
 - **THEN** the UI identifies the missing member-session integration and may open the configured site without carrying session credentials
 
+#### Scenario: An enrolled member opens the vault and repeats a selective import
+- **WHEN** an enrolled member opens the vault from a full member session
+- **THEN** the vault accepts a short-lived single-use handoff bound to the member and current allocation, and the client unlocks the vault on its own origin
+- **AND** the client can preview and select Apple Passwords CSV rows by username, preserve the selected OTPAuth data, and identify committed entries as duplicates on a repeat import
+- **AND** logout or a change of allocation prevents later authorized writes under the old grant
+
+#### Scenario: A member explicitly asks to sign in to Google
+- **WHEN** the enrolled member requests Google sign-in in chat
+- **THEN** the original thread records one attempt in a fresh Kiri Chrome profile and reports the provider outcome
+- **AND** only verification of the requested account on the official Google account home can mark it signed in; a browser rejection, a human step or an uncertain response remains visible in the original task
+
 ### Requirement: Independently recoverable personal state
 The migration SHALL establish an authenticated child backup baseline from a fenced parent checkpoint before enabling writes. Account deletion and vault revocation SHALL remain deliverable after the account runtime is removed.
 

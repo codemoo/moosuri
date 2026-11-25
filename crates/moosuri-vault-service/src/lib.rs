@@ -6,7 +6,8 @@ pub mod recovery;
 pub use moosuri_vault_protocol as protocol;
 use sha2::{Digest, Sha256};
 pub const MAX_BODY: usize = 32 * 1024 * 1024;
-pub const MAX_ITEMS: usize = 256;
+/// Shared with core/wasm so store, rotation, import and archives agree.
+pub const MAX_ITEMS: usize = moosuri_vault_core::MAX_ITEMS;
 pub const MAX_RETAINED: usize = 256 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {

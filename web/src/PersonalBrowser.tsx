@@ -3,7 +3,10 @@ import {
   browserClick, browserFrameSource, browserKeys, browserLocation, browserScroll,
   type BrowserInput,
 } from "./browser-frame";
-import { browserCanWatch, browserStateLabel, type PersonalBrowserFrame } from "./personal-browser";
+import {
+  authHandoffStatus, browserAuthStopped, browserCanWatch, browserGoogleSignIn, browserStateLabel, googleStatusLabel,
+  type AuthHandoff, type PersonalBrowserFrame,
+} from "./personal-browser";
 import type { PersonalBrowser } from "./usePersonalBrowser";
 import "./personal-browser.css";
 
@@ -14,6 +17,10 @@ const browserReasons: Partial<Record<string, string>> = {
   browser_unavailable: "브라우저 연결이 끊겼습니다. 마지막 동작이 반영됐는지 확인할 수 없습니다.",
   browser_worker_missing: "브라우저 세션이 종료되었습니다.",
   browser_stale: "페이지가 바뀌었습니다. 최신 화면을 확인해 주세요.",
+  browser_auth_required: "로그인이 필요한 화면에서 읽기를 멈췄습니다. 화면과 주소는 저장하지 않았고, 이 작업공간에서는 로그인이나 직접 조작을 제공하지 않습니다.",
+  browser_auth_google: "Google 로그인 화면에서 멈췄습니다. 로그인은 진행·확인되지 않았고 로그인된 상태가 아닙니다. 본인 기기에서 Google 공식 페이지를 열어 진행하세요.",
+  browser_auth_human_verification: "사람 확인이 필요해 멈췄습니다. 우회하지 않으며 로그인되지 않았습니다. 본인 기기에서 직접 진행하세요.",
+  browser_auth_blocked: "사이트가 이 브라우저의 로그인을 거부하거나 차단했습니다. 로그인되지 않았습니다.",
   browser_no_progress: "같은 화면과 같은 지시로는 새로운 내용이 없어 작업을 일시 중지했습니다. 추가 지시를 보내거나, 직접 조작으로 조건을 바꾸거나, 확인된 다른 링크를 열어 이어가세요.",
 };
 const noProgress = "browser_no_progress";
@@ -24,18 +31,47 @@ export function PersonalBrowserCard({ browser, pending, onOpen }: {
   const workspace = browser.status?.workspace;
   if (!workspace && !pending) return null;
   const preview = browser.preview;
+  const google = browserGoogleSignIn(workspace ?? null);
   return (
-    <article className="member-browser-card" aria-label="브라우저 작업">
+    <article className="member-browser-card" aria-label="브라우저 작업" data-google-sign-in={google?.status}>
       <div>
-        <strong>{workspace ? browserStateLabel[workspace.state] : "브라우저 작업 요청 중"}</strong>
+        <strong role={google ? "status" : undefined}>
+          {google ? googleStatusLabel[google.status]
+            : workspace ? browserStateLabel[workspace.state] : "브라우저 작업 요청 중"}
+        </strong>
+        {google?.officialUrl && (
+          <a href={google.officialUrl} target="_blank" rel="noopener noreferrer">내 기기에서 Google 공식 페이지 열기</a>
+        )}
         {workspace?.title && <span>{workspace.title}</span>}
         {workspace?.state === "ready" && workspace.reason === noProgress &&
           <span data-reason={noProgress}>진행이 없어 일시 중지됨</span>}
       </div>
-      {preview && <img src={browserFrameSource(preview)} alt="" />}
-      {workspace && <button type="button" onClick={(event) => onOpen(event.currentTarget)}>
+      {preview && !browserAuthStopped(workspace ?? null) && <img src={browserFrameSource(preview)} alt="" />}
+      {workspace && !google && <button type="button" onClick={(event) => onOpen(event.currentTarget)}>
         {["closed", "outcome_unknown"].includes(workspace.state) ? "브라우저 작업 보기" : "미리 보기 열기"}
       </button>}
+    </article>
+  );
+}
+
+/**
+ * Sign-in requests are answered with a truthful handoff, never a credential form.
+ * `onConnect` is supplied only when the member's own Workspace OAuth consent path exists.
+ */
+export function AuthHandoffCard({ handoff, onConnect }: { handoff: AuthHandoff; onConnect?: () => void }) {
+  return (
+    <article className="member-browser-card" aria-label="로그인 안내" data-provider={handoff.provider}>
+      <div>
+        <strong>{handoff.provider === "google" ? "Google 로그인은 여기서 진행하지 않습니다" : "로그인은 여기서 진행하지 않습니다"}</strong>
+        <span role="status">{authHandoffStatus}</span>
+        <span>비밀번호, 인증 코드, 쿠키는 채팅이나 브라우저 작업에 입력하지 마세요.</span>
+      </div>
+      <div className="member-browser-actions">
+        {handoff.officialUrl && (
+          <a href={handoff.officialUrl} target="_blank" rel="noopener noreferrer">내 기기에서 Google 공식 페이지 열기</a>
+        )}
+        {onConnect && <button type="button" onClick={onConnect}>내 Google Workspace 연결 동의 진행</button>}
+      </div>
     </article>
   );
 }
@@ -136,6 +172,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
   const canTake = watchable && !!value && ["reading", "ready", "completed", "user_control"].includes(value.state);
   const handoff = browser.busy === "resume" || value?.state === "resuming";
   const paused = value?.state === "ready" && value.reason === noProgress;
+  const authStopped = browserAuthStopped(value ?? null);
   const location = browserLocation(frame?.url ?? value?.url);
   const title = frame?.url === "about:blank" ? "빈 페이지" : location?.hostname ?? "브라우저 작업";
 
@@ -246,7 +283,7 @@ export function PersonalBrowserViewer({ browser, onClose }: {
         {value?.reason && browserReasons[value.reason] &&
           (value.reason !== noProgress || value.state === "ready") &&
           <p role="status" data-reason={value.reason}>{browserReasons[value.reason]}</p>}
-        {value?.state === "ready" && canTake && !paused && (
+        {value?.state === "ready" && canTake && !paused && !authStopped && (
           <p>조건을 바꾸거나 입력하려면 직접 조작을 시작하세요.</p>
         )}
         {(watchable || value?.state === "starting") && (

@@ -65,6 +65,14 @@ impl<'de> Deserialize<'de> for CsvText {
         Ok(Self(value))
     }
 }
+fn status_name(status: ImportStatus) -> &'static str {
+    match status {
+        ImportStatus::New => "new",
+        ImportStatus::ChangedAccount => "changed",
+        ImportStatus::Duplicate => "duplicate",
+        ImportStatus::Filtered => "filtered",
+    }
+}
 fn keep(value: Option<SecretText>, prior: Option<&SecretText>) -> Result<SecretText> {
     match value {
         Some(v) => Ok(v),
@@ -146,7 +154,10 @@ enum Request {
     },
     CsvPreview {
         csv: CsvText,
+        /// Exact username match (existing behaviour).
         username: Option<SecretText>,
+        /// Case-insensitive "contains any of" list; mutually exclusive with `username`.
+        usernames: Option<Vec<SecretText>>,
     },
     CsvSelect {
         rows: Vec<u32>,
@@ -255,6 +266,35 @@ impl VaultEngine {
         }
         Ok(())
     }
+    /// Trusted-client preflight with the exact serialized sizes the service
+    /// admits against. Only growth beyond the bound is refused, so a historical
+    /// vault that is already above it can still edit in place or shrink.
+    fn fits_wire(&self, add: &[EncryptedItem]) -> Result<()> {
+        let items = &self.current()?.items;
+        let used = inventory_wire_bytes(items)?;
+        let mut next = used;
+        for item in add {
+            if let Some(old) = items.iter().find(|v| v.id == item.id) {
+                next -= item_wire_cost(old)?;
+            }
+            next = next.checked_add(item_wire_cost(item)?).ok_or(Error::Limit)?;
+        }
+        if next > INVENTORY_WIRE_LIMIT && next > used {
+            return Err(Error::Limit);
+        }
+        Ok(())
+    }
+    /// Keep the delivered-count when the exact same immutable batch is selected
+    /// again (retry, duplicate click); only a different batch restarts at zero.
+    fn adopt_batch(&mut self, batch: Vec<EncryptedItem>) {
+        let same = !batch.is_empty()
+            && batch.len() == self.batch.len()
+            && batch.iter().zip(&self.batch).all(|(a, b)| a.id == b.id);
+        self.batch = batch;
+        if !same {
+            self.batch_index = 0;
+        }
+    }
     fn preview_archive(
         &mut self,
         archive: &str,
@@ -285,7 +325,7 @@ impl VaultEngine {
             )?
         };
         let p = import.counts();
-        let result = json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":0,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":match r.status{ImportStatus::New=>"new",ImportStatus::ChangedAccount=>"changed",ImportStatus::Duplicate=>"duplicate",ImportStatus::Filtered=>"filtered"},"blank_password":false,"unsupported_url":false,"invalid_otp":false})).collect::<Vec<_>>()});
+        let result = json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":0,"existing":p.existing,"capacity":p.capacity,"limit":MAX_ITEMS,"bytes_used":import.existing_bytes(),"bytes_limit":INVENTORY_WIRE_LIMIT,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":status_name(r.status),"blank_password":false,"unsupported_url":false,"invalid_otp":false})).collect::<Vec<_>>()});
         self.archive_import = Some(import);
         self.batch_index = 0;
         Ok(result)
@@ -299,7 +339,7 @@ impl VaultEngine {
             .ok_or(Error::Invalid)
     }
     fn validate_state(&self, state: &VaultState) -> Result<()> {
-        if state.owner != self.owner || state.items.len() > 256 || state.pending.len() > 32 {
+        if state.owner != self.owner || state.items.len() > MAX_ITEMS || state.pending.len() > 32 {
             return Err(Error::Authentication);
         }
         if hex(&inventory_digest(&state.items)?) != state.inventory_sha256 {
@@ -492,6 +532,7 @@ impl VaultEngine {
                     &f,
                     &mut BrowserEntropy,
                 )?;
+                self.fits_wire(std::slice::from_ref(&encrypted))?;
                 self.pending = Some(Operation::Put {
                     id: id()?,
                     expected_header: self.current()?.header_sha256.clone(),
@@ -646,18 +687,27 @@ impl VaultEngine {
                     .seal_selected(self.active()?, &rows, &mut BrowserEntropy, &Continue)
                     .map(|v| v.to_vec());
                 self.archive_import = Some(import);
-                self.batch = result?;
-                self.batch_index = 0;
+                self.adopt_batch(result?);
                 Ok(json!({"selected":self.batch.len()}))
             }
-            Request::CsvPreview { csv, username } => {
+            Request::CsvPreview {
+                csv,
+                username,
+                usernames,
+            } => {
                 self.mutable()?;
                 self.no_import()?;
                 if csv.0.len() > 10 * 1024 * 1024 {
                     return Err(Error::Limit);
                 }
+                // Two selectors, or an empty/blank list, never fall back to "all".
+                let filter = match (username, usernames) {
+                    (Some(_), Some(_)) => return Err(Error::Invalid),
+                    (Some(v), None) => UsernameFilter::Exact(v),
+                    (None, Some(list)) => UsernameFilter::contains_any(list)?,
+                    (None, None) => UsernameFilter::All,
+                };
                 let items = self.current()?.items.clone();
-                let filter = username.map_or(UsernameFilter::All, UsernameFilter::Exact);
                 self.import = Some(AppleImport::preview(
                     csv.0.as_bytes(),
                     self.active()?,
@@ -667,28 +717,39 @@ impl VaultEngine {
                 )?);
                 self.batch.clear();
                 self.batch_index = 0;
-                let p = self.import.as_ref().ok_or(Error::State)?.counts();
+                let staged = self.import.as_ref().ok_or(Error::State)?;
+                let (p, bytes) = (staged.counts(), staged.existing_bytes());
                 Ok(
-                    json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":p.filtered,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":match r.status{ImportStatus::New=>"new",ImportStatus::ChangedAccount=>"changed",ImportStatus::Duplicate=>"duplicate",ImportStatus::Filtered=>"filtered"},"blank_password":r.blank_password,"unsupported_url":r.unsupported_url,"invalid_otp":r.invalid_otp})).collect::<Vec<_>>()}),
+                    json!({"eligible":p.eligible,"duplicates":p.duplicates,"filtered":p.filtered,"existing":p.existing,"capacity":p.capacity,"limit":MAX_ITEMS,"bytes_used":bytes,"bytes_limit":INVENTORY_WIRE_LIMIT,"rows":p.rows.iter().map(|r|json!({"row":r.row,"status":status_name(r.status),"blank_password":r.blank_password,"unsupported_url":r.unsupported_url,"invalid_otp":r.invalid_otp})).collect::<Vec<_>>()}),
                 )
             }
             Request::CsvSelect { rows } => {
                 self.mutable()?;
                 let mut import = self.import.take().ok_or(Error::State)?;
-                let batch = import
-                    .seal_selected(self.active()?, &rows, &mut BrowserEntropy, &Continue)?
-                    .to_vec();
-                self.batch = batch;
+                // Keep the staged import on failure (e.g. a known over-capacity
+                // selection) so the user can adjust the selection and retry.
+                let result = match self.active() {
+                    Ok(active) => import
+                        .seal_selected(active, &rows, &mut BrowserEntropy, &Continue)
+                        .map(|v| v.to_vec()),
+                    Err(e) => Err(e),
+                };
                 self.import = Some(import);
-                self.batch_index = 0;
+                self.adopt_batch(result?);
                 Ok(json!({"selected":self.batch.len()}))
             }
             Request::CsvNext => {
                 self.mutable()?;
+                // No selection is a state error, never "finished". Finished means
+                // every selected item is acknowledged and is checked BEFORE any
+                // capacity test, so an inventory of exactly MAX_ITEMS is not a failure.
+                if self.batch.is_empty() {
+                    return Err(Error::State);
+                }
                 if self.batch_index >= self.batch.len() {
                     return Ok(Value::Null);
                 }
-                self.next_import(id()?)
+                self.next_import(id)
             }
             Request::CsvStatus => {
                 Ok(json!({"committed":self.batch_index,"selected":self.batch.len()}))
@@ -705,15 +766,22 @@ impl VaultEngine {
             }
         }
     }
-    fn next_import(&mut self, operation_id: Uuid) -> Result<Value> {
+    fn next_import(&mut self, operation_id: impl FnOnce() -> Result<Uuid>) -> Result<Value> {
         self.mutable()?;
+        // The whole remaining batch must still fit; a known over-limit import is
+        // refused before its next operation is created, never half-published.
+        let remaining = self.batch.len().saturating_sub(self.batch_index);
+        if self.current()?.items.len().saturating_add(remaining) > MAX_ITEMS {
+            return Err(Error::Limit);
+        }
+        self.fits_wire(&self.batch[self.batch_index..])?;
         let item = self
             .batch
             .get(self.batch_index)
             .ok_or(Error::State)?
             .clone();
         self.pending = Some(Operation::Put {
-            id: operation_id,
+            id: operation_id()?,
             expected_header: self.current()?.header_sha256.clone(),
             expected_revision: 0,
             item,
@@ -1078,10 +1146,10 @@ mod tests {
             .unwrap()
             .to_vec();
         e.archive_import = Some(import);
-        e.next_import(Uuid::from_u128(441)).unwrap();
+        e.next_import(|| Ok(Uuid::from_u128(441))).unwrap();
         let exact = serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap();
         assert_eq!(e.batch_index, 0);
-        assert!(e.next_import(Uuid::from_u128(442)).is_err());
+        assert!(e.next_import(|| Ok(Uuid::from_u128(442))).is_err());
         assert_eq!(
             serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap(),
             exact
@@ -1131,11 +1199,11 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        e.next_import(Uuid::from_u128(41)).unwrap();
+        e.next_import(|| Ok(Uuid::from_u128(41))).unwrap();
         let exact = serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap();
         // Lost network ACK leaves immutable operation/batch/index untouched.
         assert_eq!(e.batch_index, 0);
-        assert!(e.next_import(Uuid::from_u128(42)).is_err());
+        assert!(e.next_import(|| Ok(Uuid::from_u128(42))).is_err());
         assert_eq!(
             serde_json::to_vec(e.pending.as_ref().unwrap()).unwrap(),
             exact
@@ -1170,7 +1238,7 @@ mod tests {
         assert_eq!(e.batch_index, 0);
         e.acknowledge(receipt, state).unwrap();
         assert_eq!(e.batch_index, 1);
-        e.next_import(Uuid::from_u128(43)).unwrap();
+        e.next_import(|| Ok(Uuid::from_u128(43))).unwrap();
         let Operation::Put { item, .. } = e.pending.as_ref().unwrap() else {
             panic!()
         };
@@ -1181,5 +1249,182 @@ mod tests {
         e.dispatch(Request::CsvCancel).unwrap();
         assert_eq!(e.current().unwrap().items.len(), 1);
         assert!(e.batch.is_empty());
+    }
+    fn filler_state(e: &mut VaultEngine, entropy: &mut Synthetic, count: u128) -> VaultState {
+        let mut items = vec![];
+        for n in 0..count {
+            let fields: ItemFields = serde_json::from_value(json!({"kind":"login","title":format!("Synthetic filler {n}"),"username":"fixture","url":"https://example.test","notes":"","favorite":false,"expires_at":"","secret":"Synthetic encrypted item","totp":""})).unwrap();
+            items.push(
+                e.active()
+                    .unwrap()
+                    .seal_item(Uuid::from_u128(1000 + n), 1, &fields, entropy)
+                    .unwrap(),
+            );
+        }
+        let current = e.current().unwrap();
+        VaultState {
+            owner: current.owner.clone(),
+            binding: current.binding,
+            header: current.header.clone(),
+            header_sha256: current.header_sha256.clone(),
+            inventory_sha256: inventory_digest(&items)
+                .map(|d| hex(&d))
+                .unwrap_or_default(),
+            items,
+            pending: vec![],
+        }
+    }
+    #[test]
+    fn shared_item_limit_loads_beyond_legacy_256_and_rejects_over_limit_state() {
+        let (mut e, mut entropy) = fixture();
+        let state = filler_state(&mut e, &mut entropy, 300);
+        e.dispatch(Request::Load { state }).unwrap();
+        assert_eq!(e.current().unwrap().items.len(), 300);
+        let found = e
+            .dispatch(Request::List {
+                query: SecretText::new("filler 29".into()).unwrap(),
+            })
+            .unwrap();
+        assert_eq!(found.as_array().unwrap().len(), 11);
+        let full = filler_state(&mut e, &mut entropy, MAX_ITEMS as u128);
+        e.dispatch(Request::Load { state: full }).unwrap();
+        let over = filler_state(&mut e, &mut entropy, MAX_ITEMS as u128 + 1);
+        assert!(e.dispatch(Request::Load { state: over }).is_err());
+        assert_eq!(e.current().unwrap().items.len(), MAX_ITEMS);
+    }
+    #[test]
+    fn csv_any_of_filter_reports_capacity_and_refuses_over_limit_selection_without_partial_batch() {
+        let (mut e, mut entropy) = fixture();
+        let state = filler_state(&mut e, &mut entropy, MAX_ITEMS as u128 - 2);
+        e.dispatch(Request::Load { state }).unwrap();
+        let csv = "Title,URL,Username,Password,OTPAuth\n\
+            a,https://a.test,Fixture.One,pw1,JBSWY3DPEHPK3PXP\n\
+            b,https://b.test,FIXTURE.two,pw2,not-a-seed\n\
+            c,https://c.test,fixture.THREE,pw3,\n\
+            d,https://d.test,someone-else,pw4,garbage\n";
+        let secret = |v: &str| SecretText::new(v.into()).unwrap();
+        let preview = |e: &mut VaultEngine, one: Option<&str>, any: Option<Vec<&str>>| {
+            e.dispatch(Request::CsvPreview {
+                csv: CsvText(Zeroizing::new(csv.into())),
+                username: one.map(secret),
+                usernames: any.map(|l| l.into_iter().map(secret).collect()),
+            })
+        };
+        // Ambiguous or broad selectors are refused, never treated as "all".
+        assert!(preview(&mut e, Some("x"), Some(vec!["fixture."])).is_err());
+        assert!(preview(&mut e, None, Some(vec![])).is_err());
+        assert!(preview(&mut e, None, Some(vec![""])).is_err());
+        assert!(preview(&mut e, None, Some(vec!["fixture.", " "])).is_err());
+        assert!(e.import.is_none());
+        let p = preview(&mut e, None, Some(vec!["FIXTURE."])).unwrap();
+        assert_eq!(
+            (p["eligible"].clone(), p["filtered"].clone(), p["duplicates"].clone()),
+            (json!(3), json!(1), json!(0))
+        );
+        assert_eq!(
+            (p["existing"].clone(), p["capacity"].clone(), p["limit"].clone()),
+            (json!(MAX_ITEMS - 2), json!(2), json!(MAX_ITEMS))
+        );
+        assert_eq!(p["rows"].as_array().unwrap().len(), 3);
+        assert_eq!(p["rows"][1]["invalid_otp"], true);
+        assert!(!p.to_string().contains("pw1"));
+        // Three rows cannot fit in two slots: refused whole, staged import survives.
+        assert!(matches!(
+            e.dispatch(Request::CsvSelect { rows: vec![2, 3, 4] }),
+            Err(Error::Limit)
+        ));
+        assert!(e.batch.is_empty() && e.import.is_some());
+        let mut import = e.import.take().unwrap();
+        e.batch = import
+            .seal_selected(e.active().unwrap(), &[2, 3], &mut entropy, &Continue)
+            .unwrap()
+            .to_vec();
+        e.import = Some(import);
+        e.next_import(|| Ok(Uuid::from_u128(500))).unwrap();
+        e.dispatch(Request::Abort { receipt: None }).unwrap();
+        // Another writer filled a slot: the remaining batch no longer fits.
+        let extra = e.batch[0].clone();
+        e.state.as_mut().unwrap().items.push(extra);
+        assert!(matches!(
+            e.next_import(|| Ok(Uuid::from_u128(501))),
+            Err(Error::Limit)
+        ));
+        assert!(e.pending.is_none());
+        e.dispatch(Request::CsvCancel).unwrap();
+        let p = preview(&mut e, Some("Fixture.One"), None).unwrap();
+        // The concurrent writer inserted the exact first row, so it is now a duplicate.
+        assert_eq!((p["eligible"].clone(), p["duplicates"].clone(), p["filtered"].clone()), (json!(0), json!(1), json!(3)));
+        let p = preview(&mut e, None, None);
+        assert!(p.is_err()); // import still staged
+    }
+    fn sealed(e: &mut VaultEngine, entropy: &mut Synthetic, n: u128) -> EncryptedItem {
+        let fields: ItemFields = serde_json::from_value(json!({"kind":"login","title":format!("Synthetic batch {n}"),"username":"fixture","url":"https://example.test","notes":"","favorite":false,"expires_at":"","secret":"Synthetic encrypted item","totp":""})).unwrap();
+        e.active()
+            .unwrap()
+            .seal_item(Uuid::from_u128(7000 + n), 1, &fields, entropy)
+            .unwrap()
+    }
+    #[test]
+    fn repeated_selection_keeps_delivered_index_but_a_different_batch_restarts() {
+        let (mut e, mut entropy) = fixture();
+        let batch: Vec<_> = (0..3).map(|n| sealed(&mut e, &mut entropy, n)).collect();
+        e.adopt_batch(batch.clone());
+        e.batch_index = 2;
+        // Retry or duplicate click returns the identical immutable ciphertexts.
+        e.adopt_batch(batch.clone());
+        assert_eq!(e.batch_index, 2);
+        e.adopt_batch(batch[..2].to_vec());
+        assert_eq!(e.batch_index, 0);
+        e.batch_index = 1;
+        e.adopt_batch(vec![]);
+        assert_eq!((e.batch.len(), e.batch_index), (0, 0));
+    }
+    #[test]
+    fn finished_batch_at_exactly_max_items_is_null_but_capacity_failure_and_no_batch_are_errors() {
+        let (mut e, mut entropy) = fixture();
+        let state = filler_state(&mut e, &mut entropy, MAX_ITEMS as u128);
+        e.dispatch(Request::Load { state }).unwrap();
+        // No selection is never reported as "finished".
+        assert!(matches!(e.dispatch(Request::CsvNext), Err(Error::State)));
+        let extra = sealed(&mut e, &mut entropy, 1);
+        e.batch = vec![extra];
+        // Not yet delivered: a real capacity failure.
+        assert!(matches!(e.dispatch(Request::CsvNext), Err(Error::Limit)));
+        assert!(e.pending.is_none());
+        // Fully delivered inventory of exactly MAX_ITEMS: finished, not an error.
+        e.batch_index = 1;
+        assert!(e.dispatch(Request::CsvNext).unwrap().is_null());
+    }
+    #[test]
+    fn exact_wire_size_preflight_refuses_growth_only() {
+        let (mut e, mut entropy) = fixture();
+        let synthetic = |n: u128, bytes: usize| EncryptedItem {
+            ciphertext: "A".repeat(bytes / 3 * 4),
+            generation: 1,
+            id: Uuid::from_u128(n + 1),
+            key_nonce: "A".repeat(16),
+            nonce: "A".repeat(16),
+            revision: 1,
+            version: 2,
+            wrapped_key: "A".repeat(64),
+        };
+        let mut items = vec![];
+        let mut used = 0;
+        while used + item_wire_cost(&synthetic(0, 30_000)).unwrap() <= INVENTORY_WIRE_LIMIT {
+            let next = synthetic(items.len() as u128, 30_000);
+            used += item_wire_cost(&next).unwrap();
+            items.push(next);
+        }
+        assert!(items.len() < MAX_ITEMS);
+        e.state.as_mut().unwrap().items = items;
+        assert!(matches!(
+            e.fits_wire(&[synthetic(9_000, 30_000)]),
+            Err(Error::Limit)
+        ));
+        assert!(e.fits_wire(&[synthetic(0, 30_000)]).is_ok()); // same-size edit
+        // A real small item still fits an inventory with free room.
+        let small = sealed(&mut e, &mut entropy, 9);
+        e.state.as_mut().unwrap().items.truncate(10);
+        assert!(e.fits_wire(&[small]).is_ok());
     }
 }

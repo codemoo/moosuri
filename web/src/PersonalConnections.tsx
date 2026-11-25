@@ -194,6 +194,7 @@ export function PersonalConnections({
   const workspaceService = selected && isWorkspaceGoogleService(selected.id) ? selected.id : null;
   const gmailRead = selected?.id === gmail.id && Boolean(props.readIntent);
   const memberFlow = selected?.id === gmail.id ? google : workspace;
+  const googleActionBusy = memberFlow.busy || vaultStatus.busy;
   const mailbox = selected ? mailboxFor(selected) : undefined;
   const notice = selected?.id === gmail.id ? google.notice
     : workspaceService && workspace.notice?.service === workspaceService ? workspace.notice.message : undefined;
@@ -229,7 +230,7 @@ export function PersonalConnections({
               {memberFlow.status === "ready" && (
                 <>
                   {gmailRead && (
-                    <button type="button" className="member-page-action connector-primary" disabled={google.busy} onClick={() => void google.action("read", matchMember)}>
+                    <button type="button" className="member-page-action connector-primary" disabled={googleActionBusy} onClick={() => void google.action("read", matchMember)}>
                       {mailbox ? "메일 확인" : "Google로 연결하고 이 대화에서 메일 확인"}
                     </button>
                   )}
@@ -240,13 +241,13 @@ export function PersonalConnections({
                     }}>연결 해제</button>
                   ) : (
                     <button type="button" className={gmailRead ? "member-page-action" : "member-page-action connector-primary"}
-                      disabled={memberFlow.busy} onClick={() => {
+                      disabled={googleActionBusy} onClick={() => {
                         if (workspaceService) void workspace.action(workspaceService, "connect", matchMember);
                         else void google.action("connect", matchMember);
                       }}>{matchMember ? props.session.user.email + " 연결" : gmailRead ? "Google 연결만" : "Google 연결"}</button>
                   )}
                   {matchMember && !mailbox && <button type="button" className="member-page-action"
-                    disabled={memberFlow.busy} onClick={() => setVaultService(null)}>다른 Google 계정 선택</button>}
+                    disabled={googleActionBusy} onClick={() => setVaultService(null)}>다른 Google 계정 선택</button>}
                 </>
               )}
               {(memberFlow.status === "error" || (memberFlow.status === "disabled" && !(installationAdmin && installation === "required"))) && !memberFlow.busy && (
@@ -255,9 +256,7 @@ export function PersonalConnections({
               {setupAction}
               {vaultStatus.status === "ready" && !mailbox && (
                 <button type="button" className="member-page-action" disabled={vaultStatus.busy}
-                  onClick={async () => {
-                    if (await vaultStatus.open(props.session.user.email)) setVaultService(selected.id);
-                  }}>볼트에서 내 Google 로그인 찾기</button>
+                  onClick={() => void vaultStatus.open(props.session.user.email, () => setVaultService(selected.id))}>볼트에서 내 Google 로그인 찾기</button>
               )}
               {vaultStatus.failure && <p className="connector-notice" role="status">{vaultStatus.failure}</p>}
             </>
@@ -374,7 +373,7 @@ function useVaultConnection(account: string, expired: () => void) {
   }, [scope, expired]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  async function open(googleEmail?: string) {
+  async function open(googleEmail?: string, onHandoff?: () => void) {
     if (connection.status !== "ready" || busy) return;
     const expected = connection.siteOrigin;
     setBusy(true);
@@ -393,7 +392,7 @@ function useVaultConnection(account: string, expired: () => void) {
         throw new Error("vault_unavailable");
       }
       postVaultForm(popup, target, { token: handoff.token, vault_origin: expected }, account, googleEmail);
-      return true;
+      onHandoff?.();
     } catch (error) {
       popup.close();
       if (isAborted(error)) return;

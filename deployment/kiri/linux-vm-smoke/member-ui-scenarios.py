@@ -430,6 +430,10 @@ class World:
         if parts == ["workspace"]:
             return 200, dict(connections=[dict(grant, service=service) for service, grant in self.google_grants.items()
                                           if service != "gmail"])
+        if parts == ["mail-work", "list"]:
+            assert method == "POST" and set(body) == {"thread_id"}
+            assert any(thread["id"] == body["thread_id"] for thread in self.threads)
+            return 200, dict(items=[])
         if parts == ["history"]:
             return 200, dict(reads=[entry for entry in self.mail_reads if entry["thread_id"] == body["thread_id"]])
         if parts == ["inbox"]:
@@ -773,6 +777,54 @@ def consent_history_from_task(page, world):
     assert not posts(world, "/personal/google/inbox")
 
 
+def vault_consent(page, world, service, outcome="matched"):
+    world.vault = dict(state="ready", site_origin=VAULT)
+    nav(page, "연결").click()
+    button(page, re.compile("^" + GOOGLE[service])).click()
+    picker = button(page, "볼트에서 내 Google 로그인 찾기")
+    handoff_url = world.base + "/api/v1/personal/vault/handoff"
+    start = "/personal/google/start" if service == "gmail" else f"/personal/google/{service}/start"
+    generic = button(page, "Google 연결")
+    held = []
+    page.route(handoff_url, lambda route: held.append(route))
+    page.context.route(VAULT + "/session", lambda route: route.fulfill(
+        content_type="text/html", body="<h1>Synthetic vault</h1>"))
+
+    if outcome == "popup_blocked":
+        page.evaluate("window.open = () => null")
+        picker.click()
+        expect(page.get_by_text("새 창을 허용한 뒤 다시 열어 주세요.", exact=True)).to_be_visible()
+        assert not held
+    else:
+        with page.expect_request(handoff_url):
+            picker.click()
+        expect(picker).to_be_disabled()
+        expect(generic).to_be_disabled()
+        assert not posts(world, start) and len(held) == 1
+        if outcome == "handoff_failed":
+            held.pop().fulfill(status=503, json={})
+            expect(page.get_by_text("볼트 연결을 확인하지 못했습니다. 다시 열어 주세요.", exact=True)).to_be_visible()
+        else:
+            held.pop().fulfill(json={"token": "ab" * 32, "vault_origin": VAULT})
+            expect(button(page, "member@example.test 연결")).to_be_enabled()
+            if outcome == "another_account":
+                button(page, "다른 Google 계정 선택").click()
+            if outcome == "retry_failed":
+                with page.expect_request(handoff_url):
+                    picker.click()
+                expect(button(page, "member@example.test 연결")).to_be_disabled()
+                held.pop().fulfill(status=503, json={})
+                expect(page.get_by_text("볼트 연결을 확인하지 못했습니다. 다시 열어 주세요.", exact=True)).to_be_visible()
+    matched = outcome in ("matched", "retry_failed")
+    action = button(page, "member@example.test 연결") if matched else generic
+    expect(action).to_be_enabled()
+    action.click()
+    expect(heading(page, "Synthetic Google consent")).to_be_visible()
+    assert posts(world, start) == ([{"match_member_account": True}] if matched else [{}])
+    hint = parse_qs(urlsplit(page.url).query).get("login_hint")
+    assert hint == (["member@example.test"] if matched else None)
+
+
 def vault_tab(page, world):
     nav(page, "연결").click()
     button(page, re.compile("^볼트")).click()
@@ -1086,6 +1138,12 @@ SCENARIOS = {
     "B-NAV-01": (False, browser_history),
     "B-NAV-02": (False, consent_history_from_task),
     "B-VAULT-01": (False, vault_tab),
+    "B-VAULT-02": (False, partial(vault_consent, service="gmail")),
+    "B-VAULT-03": (False, partial(vault_consent, service="drive")),
+    "B-VAULT-04": (False, partial(vault_consent, service="gmail", outcome="another_account")),
+    "B-VAULT-05": (False, partial(vault_consent, service="gmail", outcome="handoff_failed")),
+    "B-VAULT-06": (False, partial(vault_consent, service="drive", outcome="popup_blocked")),
+    "B-VAULT-07": (False, partial(vault_consent, service="gmail", outcome="retry_failed")),
     "B-ADM-01": (True, admin_invite),
     "B-ADM-02": (True, admin_change),
     "B-ADM-03": (False, admin_bookmark_member),

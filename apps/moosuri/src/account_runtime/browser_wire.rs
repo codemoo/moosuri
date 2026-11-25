@@ -166,7 +166,7 @@ async fn once<T: DeserializeOwned>(
         "open" | "follow" => 80,
         "frame" | "tabs" => 8,
         // Longer than the relay's own bridge deadline, so its typed answer arrives before this gives up.
-        "google_sign_in" => 130,
+        "google_sign_in" => 275,
         _ => 45,
     };
     let future = async {

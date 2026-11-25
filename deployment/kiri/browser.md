@@ -9,16 +9,24 @@
 일반 브라우저 업무는 공개 페이지를 읽는다. 명시적인 Google 로그인 요청은 등록된 회원의 새 Kiri Chrome 프로필에서 처리한다.
 
 - 채팅 전체 메시지가 “구글 로그인 해줘”, “Please sign in to Google”처럼 명시적인 요청일 때만 형식이 정해진 `google_sign_in` 작업이 된다. 주소가 있거나 “열어”, 설명·방법 질문, 로그인을 언급하는 공개 문서 요청은 해당하지 않으며 일반 공개 페이지 읽기로 남는다. 이 작업은 `POST /api/v1/threads/{id}/browser/google-sign-in`, 본문은 `{"request_id"}`뿐이다(URL·이메일·텍스트 없음). 같은 `request_id`는 같은 기록을 돌려주고 시도를 다시 하지 않는다. 일반 `start`는 여전히 로그인·OAuth 주소를 열지 않는다(409 `browser_auth_unsupported`).
-- 결과는 채팅과 업무 기록에 `browser_google_ready`(로그인 확인됨), `browser_google_needs_human`, `browser_google_blocked`, `browser_google_unavailable`, `browser_google_unknown` 중 하나로 남는다. `ready`는 브릿지의 형식화된 `ready/verified` 응답뿐이다. 사람 확인·차단이면 **본인 기기에서** 여는 `https://accounts.google.com/` 링크를 함께 보이지만, 링크를 열었다는 사실로 성공을 표시하지 않는다. 결과가 불확실하면(`unknown`) 자동으로 다시 시도하지 않고 회원이 새로 요청해야 한다. 이 기록에는 화면 미리보기·직접 조작·입력이 없다.
+- 결과는 채팅과 업무 기록에 `browser_google_ready`(로그인 확인됨), `browser_google_needs_human`, `browser_google_blocked`, `browser_google_unavailable`, `browser_google_unknown` 중 하나로 남는다. `ready`는 브릿지의 형식화된 `ready/verified` 응답뿐이다. 사람 확인·차단이면 등록된 Kiri에서 받은 결과와 해당 회원의 Workspace 연결 상태를 볼 수 있다. 결과가 불확실하면(`unknown`) 자동으로 다시 시도하지 않고 회원이 새로 요청해야 한다. 이 기록에는 화면 미리보기·직접 조작·입력이 없다.
 - 설치된 회원 Google Workspace 연결 동의는 별개이며 회원이 요청할 때만 진행한다.
 - 로그인·OAuth 주소는 열지 않는다(409 `browser_auth_unsupported`). 공개 요청이 리다이렉트로 로그인, 사람 확인(보안문자·추가 인증), 차단 화면에 닿으면 읽기를 멈추고 `browser_auth_required`, `browser_auth_google`, `browser_auth_human_verification`, `browser_auth_blocked` 중 하나를 명시한다. 이때 화면 내용·제목·링크·질의문자열은 모델에 보내거나 작업 기록·페이지 저장소에 남기지 않고 출처 주소만 남긴다. 직접 조작 후 “무수리에게 넘기기”로 닿은 경우도 같다. 이 상태에서는 화면 미리보기, 직접 조작, 입력을 제공하지 않는다.
 - 신뢰하는 Google 출처는 정확히 `https://accounts.google.com`이다. 비슷한 호스트는 일반 로그인 화면으로 취급한다.
-- 선택 기능인 **회원 한 명 전용 Google 로그인 브릿지**: 설치자가 root 소유 디렉터리(그 상위도 root 소유·쓰기 불가)에 소유자 전용 Unix 소켓을 두고, 브라우저 릴레이에 `--google-signin-account <회원 계정 UUID> --google-signin-socket <절대 경로> --google-signin-peer-uid <수신 소켓 소유 UID>`를 함께 준다. 셋 다 없으면 기능이 꺼지고(`unavailable/not_configured`), 일부만 있으면 릴레이가 시작되지 않는다. 릴레이는 그 회원의 현재 레지스트리 바인딩·세대·epoch가 유효할 때만 브릿지에 접속하며(Linux peer uid 확인, 소켓 소유자·권한·nlink 확인), 다른 회원 요청은 브릿지에 닿지 않는다(`not_enrolled`). 시도는 설치 전체에서 한 번에 하나, 작업(workspace) UUID당 한 번이며 제한 시간은 110초다. 응답이 없거나 형식이 틀리면 `unavailable/bridge_error|timeout`이며 다시 실행하지 않는다.
+- 선택 기능인 **회원 한 명 전용 Google 로그인 브릿지**: 설치자가 root 소유 디렉터리(그 상위도 root 소유·쓰기 불가)에 소유자 전용 Unix 소켓을 두고, 브라우저 릴레이에 `--google-signin-account <회원 계정 UUID> --google-signin-socket <절대 경로> --google-signin-peer-uid <수신 소켓 소유 UID>`를 함께 준다. 셋 다 없으면 기능이 꺼지고(`unavailable/not_configured`), 일부만 있으면 릴레이가 시작되지 않는다. 릴레이는 그 회원의 현재 레지스트리 바인딩·세대·epoch가 유효할 때만 브릿지에 접속하며(Linux peer uid 확인, 소켓 소유자·권한·nlink 확인), 다른 회원 요청은 브릿지에 닿지 않는다(`not_enrolled`). 시도는 설치 전체에서 한 번에 하나, 작업(workspace) UUID당 한 번이며 릴레이 제한 시간은 255초다. 응답이 없거나 형식이 틀리면 `unavailable/bridge_error|timeout`이며 다시 실행하지 않는다.
 - systemd 소켓 활성화를 쓰면 수신 소켓과 연결 상대의 UID는 0이고, 접속을 넘겨받는 작업 서비스는 전용 일반 사용자로 실행한다.
 - 등록 전에 해당 회원 VM의 로그인 도우미를 설치된 `kiri-chrome`과 맞춘다. 기존 v2 VM에서는 스킬 디렉터리에서 `KIRI_CHROME_VM=v2 bash scripts/provision-vm.sh --signin-only`를 실행한다. VM의 `secure_google.py`와 `fresh_browser.py` 해시가 스킬의 두 파일과 같고 사용자 타이머 `kiri-fresh-cleanup.timer`가 활성인지 확인한다. 이전 도우미는 비밀번호 입력 프레임을 요청할 수 있어 이메일만 전달하는 브릿지와 호환되지 않는다.
 - 회원 런타임→릴레이(회원 소켓): `{"v":1,"generation":g,"workspace_id":uuid,"op":"google_sign_in"}`(다른 키는 거부). 릴레이→브릿지(한 줄 JSON): `{"v":1,"operation":"google_sign_in","request_id":"<workspace uuid>"}`. 브릿지→릴레이: `{"v":1,"status":"ready|needs_human|blocked|unavailable","reason":...}`. 허용 조합은 `ready/verified`, `needs_human/sign_in_required|human_verification`, `blocked/account_mismatch|browser_rejected`, `unavailable/not_configured|not_enrolled|busy|timeout|bridge_error|already_attempted`뿐이며 그 밖의 응답은 거부한다. 브릿지는 고정 계정으로 원래 로그인 도우미를 실행하고 `myaccount.google.com`에서 기대한 이메일을 직접 확인한 뒤에만 `ready`를 낸다. 이메일·URL·인자·비밀값은 브라우저나 회원이 제공하지 않으며 이 경로에 흐르지 않는다.
 - 운영자 전용 Kiri CDP, 개인 VM, 공유 프로필을 회원 브라우저 작업공간에 연결하지 않는다. 위 브릿지는 별도의 고정된 소유자 도우미일 뿐이며 일반 URL 열기·리다이렉트·안내 요청에는 실행되지 않는다. 비밀번호, 인증 코드, 쿠키를 채팅이나 모델에 붙여넣지 않도록 안내한다.
 - 알려진 한계: 직접 조작 중 회원이 로그인 화면으로 이동하면 다음 화면 요청과 넘기기에서 차단되지만, 그 전 입력은 워커 수준 차단이 없다.
+
+### 같은 Kiri에서 Google Workspace 열기
+
+등록한 회원의 Google 로그인이 확인되면 같은 Linux Kiri에 Workspace 연결 화면을 열 수 있다. 설치자는 그 회원의 Kiri 게스트에 [연결 도우미](moosuri_workspace.py)를 기존 `secure_google.py` 옆에 설치한다. 같은 디렉터리의 소유자 전용 파일 `moosuri-workspace-origin`에 무수리 회원 게이트웨이의 HTTPS origin을 한 줄로 기록한다. 두 파일과 상위 디렉터리는 Kiri 소유자가 관리한다. 로그인 브리지의 `kiri-chrome-signin` 명령에 `--workspace-continuation`을 추가한다.
+
+Google 계정 홈에서 등록된 이메일을 확인하면 해당 프로필의 새 탭에서 회원의 `/#connections/gmail`을 연다. 게스트 소유자는 `python3 -B moosuri_workspace.py status <작업 UUID>`로 탭을 확인한다. `resume`의 세션과 탭은 해당 작업의 `kiri-chrome --session` 명령에서만 사용하고, 작업을 마치면 `finish <작업 UUID>`로 프로필을 정리한다. 게스트 정리 타이머도 만료된 프로필을 정리한다. 설치 origin에는 포트 번호가 없는 HTTPS 호스트를 사용한다. 회원 대화에는 로그인 결과만 남는다.
+
+처음 연 회원 화면에서는 무수리 로그인이 필요할 수 있다. 볼트 사용에는 회원 세션과 볼트 잠금 해제가 필요하다. Google이 비밀번호나 추가 인증을 요구하면 브리지는 그 단계에서 얻은 결과를 기록한다. Google 로그인 확인, 회원의 OAuth 권한 저장, 실제 Google API 조회는 각각 해당 서비스의 응답으로 확인한다.
 
 ## 맡긴 일 다시 보기
 

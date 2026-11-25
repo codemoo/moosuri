@@ -51,18 +51,18 @@ describe("member browser sign-in handling", () => {
     expect(browserIntent("https://accounts.google.com 열어줘")).toBeNull();
     expect(googleSignInEndpoint("t 1")).toBe("/threads/t%201/browser/google-sign-in");
   });
-  it("shows only a typed ready as signed in, and an official link only for a human step", () => {
-    expect(browserGoogleSignIn(workspace("browser_google_ready"))).toEqual({ status: "ready", officialUrl: null });
-    expect(browserGoogleSignIn(workspace("browser_google_needs_human"))?.officialUrl).toBe("https://accounts.google.com/");
-    expect(browserGoogleSignIn(workspace("browser_google_blocked"))?.officialUrl).toBe("https://accounts.google.com/");
-    expect(browserGoogleSignIn(workspace("browser_google_unavailable"))?.officialUrl).toBeNull();
+  it("keeps an enrolled Kiri sign-in attempt in Kiri, including a provider challenge", () => {
+    expect(browserGoogleSignIn(workspace("browser_google_ready"))).toEqual({ status: "ready" });
+    expect(browserGoogleSignIn(workspace("browser_google_needs_human"))?.status).toBe("needs_human");
+    expect(browserGoogleSignIn(workspace("browser_google_blocked"))?.status).toBe("blocked");
+    expect(browserGoogleSignIn(workspace("browser_google_unavailable"))?.status).toBe("unavailable");
     expect(browserGoogleSignIn(workspace("browser_google_unknown"))?.status).toBe("unknown");
     expect(browserGoogleSignIn(workspace("browser_auth_google"))).toBeNull();
     expect(browserCanWatch(workspace("browser_google_ready"))).toBe(false);
     const { container } = render(<PersonalBrowserCard pending={false} onOpen={() => {}}
       browser={{ status: { configured: true, workspace: workspace("browser_google_needs_human") }, preview: null } as unknown as PersonalBrowser} />);
     expect(screen.getByRole("status").textContent).toContain("로그인되지 않음");
-    expect(screen.getByRole("link").getAttribute("href")).toBe("https://accounts.google.com/");
+    expect(screen.queryByRole("link")).toBeNull();
     expect(container.querySelector("button, input, img")).toBeNull();
   });
   it("never opens authentication addresses", () => {

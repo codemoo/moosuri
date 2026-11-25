@@ -34,6 +34,9 @@ pub struct Options {
     /// Absolute, owner-controlled Kiri VM SSH launcher installed by kiri-chrome.
     #[arg(long)]
     vm_ssh: PathBuf,
+    /// Continue in the same Kiri profile using its enrolled member Workspace origin.
+    #[arg(long)]
+    workspace_continuation: bool,
     /// Unix UID of the installation browser relay.
     #[arg(long, default_value_t = 0)]
     relay_uid: u32,
@@ -82,9 +85,15 @@ async fn frame<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> Option<Value>
     serde_json::from_slice(&bytes).ok()
 }
 
+const WORKSPACE_GUEST: &str = r#"exec /usr/bin/python3 -B "$HOME/.local/share/codex-kiri-chrome/moosuri_workspace.py" signin"#;
+
 fn guest(options: &Options, mode: &str) -> Option<Child> {
     Command::new(&options.vm_ssh)
-        .arg(format!("{GUEST} {mode}"))
+        .arg(if options.workspace_continuation && mode == "signin" {
+            WORKSPACE_GUEST.to_owned()
+        } else {
+            format!("{GUEST} {mode}")
+        })
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -128,14 +137,19 @@ fn hex32(value: &Value) -> Option<&str> {
         .as_str()
         .filter(|v| v.len() == 32 && v.bytes().all(|b| b.is_ascii_hexdigit()))
 }
-async fn signin(options: &Options, email: &str) -> Option<Receipt> {
+async fn signin(options: &Options, email: &str, request: Uuid) -> Option<Receipt> {
     let mut child = guest(options, "signin")?;
     let mut reader = BufReader::new(child.stdout.take()?);
     let opening = frame(&mut reader).await?;
     if opening != json!({"prompt":"identifier","origin":ORIGIN}) {
         return provider_result(&opening["result"]);
     }
-    send(&mut child, json!({"value":email})).await?;
+    let identifier = if options.workspace_continuation {
+        json!({"value":email,"workspace":request})
+    } else {
+        json!({"value":email})
+    };
+    send(&mut child, identifier).await?;
     let mut response = frame(&mut reader).await?;
     if let Some(notice) = response["notice"].as_str() {
         if !matches!(notice, "phone_approval" | "verification_pending")
@@ -145,6 +159,17 @@ async fn signin(options: &Options, email: &str) -> Option<Receipt> {
         }
         response = frame(&mut reader).await?;
     }
+    let retained = options.workspace_continuation
+        && response == json!({"result":{"status":"ready","continuation":"member_workspace"}});
+    if retained {
+        // Commit the observation before allowing the guest to retain its profile.
+        // Without our ACK the profile stays private and unpublished.
+        save_receipt(options, request, &Receipt::new("ready", "verified")).ok()?;
+        send(&mut child, json!({"retain":request})).await?;
+        if frame(&mut reader).await? != json!({"retained":true}) {
+            return None;
+        }
+    }
     drop(child.stdin.take());
     if !child.wait().await.ok()?.success() {
         return None;
@@ -152,6 +177,11 @@ async fn signin(options: &Options, email: &str) -> Option<Receipt> {
     let result = &response["result"];
     if let Some(status) = provider_result(result) {
         return Some(status);
+    }
+    if options.workspace_continuation {
+        // The enrolled guest verifies the account and opens the connector before
+        // acknowledging. The guest retains the session reference until expiry.
+        return retained.then(|| Receipt::new("ready", "verified"));
     }
     if result["status"] != "ready"
         || result["profile"] != "fresh"
@@ -192,6 +222,14 @@ fn owner_path(path: &Path, uid: u32, directory: bool) -> bool {
         }
 }
 
+fn save_receipt(options: &Options, id: Uuid, result: &Receipt) -> io::Result<()> {
+    let mut file = tempfile::NamedTempFile::new_in(&options.state_directory)?;
+    serde_json::to_writer(&mut file, result)?;
+    file.as_file().sync_all()?;
+    file.persist(options.state_directory.join(id.to_string()))?;
+    File::open(&options.state_directory)?.sync_all()
+}
+
 async fn attempt(
     options: &Options,
     email: &str,
@@ -226,14 +264,18 @@ async fn attempt(
     let result = tokio::select! {
         biased;
         _ = socket.read(&mut extra) => Receipt::unknown(),
-        result = timeout(Duration::from_secs(105), signin(options,email)) =>
+        result = timeout(Duration::from_secs(240), signin(options,email,id)) =>
             result.ok().flatten().unwrap_or_else(Receipt::unknown),
     };
-    let mut file = tempfile::NamedTempFile::new_in(&options.state_directory)?;
-    serde_json::to_writer(&mut file, &result)?;
-    file.as_file().sync_all()?;
-    file.persist(path)?;
-    directory.sync_all()?;
+    if options.workspace_continuation && result.status == "unavailable" {
+        // A socket loss after the durable observation cannot undo the Google
+        // identity check. Guest status remains authoritative for resumability.
+        let observed: Receipt = serde_json::from_slice(&fs::read(&path)?)?;
+        if observed.status == "ready" && observed.reason == "verified" {
+            return Ok(observed);
+        }
+    }
+    save_receipt(options, id, &result)?;
     Ok(result)
 }
 

@@ -201,7 +201,6 @@ pub(super) fn is_google_reason(reason: &str) -> bool {
     reason.starts_with(GOOGLE_PREFIX)
 }
 /// The member-facing official link: opened by the member on their own device, never proof of success.
-const OFFICIAL: &str = "https://accounts.google.com/";
 
 /// What the record shows for one attempt. `None` means the answer never arrived: uncertain, never retried.
 pub(super) struct GoogleView {
@@ -212,9 +211,6 @@ pub(super) struct GoogleView {
 /// Success is only the bridge's typed `ready/verified`; every other answer says plainly that nobody is signed in.
 pub(super) fn google_view(outcome: Option<Outcome>) -> GoogleView {
     use Reason::*;
-    let handoff = format!(
-        "본인 기기에서 Google 공식 페이지({OFFICIAL})를 직접 열어 진행해 주세요. 링크를 여는 것만으로는 로그인 완료로 표시하지 않습니다."
-    );
     let uncertain = || {
         GoogleView {
         state: "outcome_unknown",
@@ -230,13 +226,17 @@ pub(super) fn google_view(outcome: Option<Outcome>) -> GoogleView {
             "browser_google_ready",
             "Kiri Chrome에서 지정된 Google 계정 로그인을 확인했습니다. 비밀번호나 인증 코드는 채팅과 모델에 전달되지 않았습니다.".to_owned(),
         ),
-        (Status::NeedsHuman, _) => (
+        (Status::NeedsHuman, SignInRequired) => (
             "browser_google_needs_human",
-            format!("Google 로그인을 마치려면 사람의 확인이 필요합니다. 로그인은 완료되지 않았습니다. {handoff}"),
+            "Kiri의 Google 로그인 화면에서 추가 입력을 요청해 로그인되지 않았습니다. 저장된 계정을 사용하려면 Kiri에서 무수리 회원 볼트를 열어 주세요.".to_owned(),
+        ),
+        (Status::NeedsHuman, HumanVerification) => (
+            "browser_google_needs_human",
+            "Google이 Kiri 로그인에 본인 확인을 요청했습니다. 이번 시도에서는 로그인되지 않았습니다.".to_owned(),
         ),
         (Status::Blocked, _) => (
             "browser_google_blocked",
-            format!("Google이 이 브라우저의 로그인을 거부했거나 계정이 일치하지 않습니다. 로그인되지 않았습니다. {handoff}"),
+            "Google이 Kiri 로그인을 거절했거나 계정이 일치하지 않아 로그인되지 않았습니다.".to_owned(),
         ),
         (Status::Unavailable, Timeout | BridgeError | AlreadyAttempted) => return uncertain(),
         (Status::Unavailable, reason) => (
@@ -394,7 +394,7 @@ mod tests {
         assert!(
             google_view(o(Status::NeedsHuman, Reason::SignInRequired))
                 .note
-                .contains("https://accounts.google.com/")
+                .contains("Kiri에서 무수리 회원 볼트")
         );
         for uncertain in [
             None,

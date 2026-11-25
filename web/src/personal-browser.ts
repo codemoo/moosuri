@@ -62,15 +62,13 @@ const googleStatusReasons: Record<string, GoogleSignInStatus> = {
   browser_google_unknown: "unknown",
 };
 export function browserGoogleSignIn(workspace: PersonalBrowserWorkspace | null):
-  { status: GoogleSignInStatus; officialUrl: string | null } | null {
+  { status: GoogleSignInStatus } | null {
   const status = workspace?.reason ? googleStatusReasons[workspace.reason] : undefined;
-  if (!status) return null;
-  // The official page is a user-device handoff for a human step; opening it never proves a sign-in.
-  return { status, officialUrl: status === "needs_human" || status === "blocked" ? officialGoogleAccountUrl : null };
+  return status ? { status } : null;
 }
 export const googleStatusLabel: Record<GoogleSignInStatus, string> = {
   ready: "Google 로그인 확인됨",
-  needs_human: "Google 로그인에 사람의 확인 필요 · 로그인되지 않음",
+  needs_human: "Kiri에서 Google이 본인 확인을 요청함 · 로그인되지 않음",
   blocked: "Google 로그인 차단 · 로그인되지 않음",
   unavailable: "Google 로그인을 시도하지 못함 · 로그인되지 않음",
   unknown: "Google 로그인 결과 확인 불가 · 자동 재시도 없음",

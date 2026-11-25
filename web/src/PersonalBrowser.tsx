@@ -39,10 +39,7 @@ export function PersonalBrowserCard({ browser, pending, onOpen, onConnections }:
           {google ? googleStatusLabel[google.status]
             : workspace ? browserStateLabel[workspace.state] : "브라우저 작업 요청 중"}
         </strong>
-        {google?.officialUrl && (
-          <a href={google.officialUrl} target="_blank" rel="noopener noreferrer">내 기기에서 Google 공식 페이지 열기</a>
-        )}
-        {google && onConnections && <button type="button" onClick={onConnections}>Google Workspace 연결 열기</button>}
+        {google && onConnections && <button type="button" onClick={onConnections}>내 Google Workspace 연결 상태 보기</button>}
         {workspace?.title && <span>{workspace.title}</span>}
         {workspace?.state === "ready" && workspace.reason === noProgress &&
           <span data-reason={noProgress}>진행이 없어 일시 중지됨</span>}

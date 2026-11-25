@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 pub const OP: &str = "google_sign_in";
 /// Whole attempt, including a slow human-free Google page flow. The member-side call waits slightly longer.
-pub const DEADLINE: Duration = Duration::from_secs(110);
+pub const DEADLINE: Duration = Duration::from_secs(255);
 const REPLY_BYTES: u64 = 1024;
 const REMEMBERED: usize = 64;
 

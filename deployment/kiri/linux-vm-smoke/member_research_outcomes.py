@@ -104,7 +104,8 @@ class Broker:
     OPS = {"open", "tabs", "frame", "stop"}
 
     def __init__(self, path, documents):
-        self.path, self.documents = path, dict(documents)
+        self.path = path
+        self.documents = {url: (html, url, False) for url, html in documents.items()}
         self.ops, self.rejected, self.tabs = [], 0, {}
         self.rejection_kinds = []
         self.opened_documents = []
@@ -123,9 +124,9 @@ class Broker:
         self._thread.join(timeout=2)
         self._listener.close()
 
-    def set_document(self, url, html):
+    def set_document(self, url, html, *, final_url=None, truncated=False):
         with self._lock:
-            self.documents[url] = html
+            self.documents[url] = (html, final_url or url, truncated)
 
     def count(self, op):
         with self._lock:
@@ -179,17 +180,18 @@ class Broker:
             self.ops.append(op)
             tabs = self.tabs.setdefault(workspace, [])
             if op == "open":
-                html = self.documents.get(request.get("url"))
-                if html is None:  # never fetch anything that is not a fixed fixture
+                document = self.documents.get(request.get("url"))
+                if document is None:  # never fetch anything that is not a fixed fixture
                     self.rejection_kinds.append("unregistered fixture URL")
                     self.rejected += 1
                     self._reply(connection, False, code="invalid")
                     return
                 self.opened_documents.append(request["url"])
+                html, final_url, truncated = document
                 title, text = project(html)
                 tab = str(uuid4())
-                tabs[:] = [(tab, request["url"])]
-                page = {"url": request["url"], "title": title, "text": text, "links": [], "truncated": False,
+                tabs[:] = [(tab, final_url)]
+                page = {"url": final_url, "title": title, "text": text, "links": [], "truncated": truncated,
                         "warning": "", "retrieved_at_unix_ms": int(time.time() * 1000)}
                 self._reply(connection, True, {"tab_id": tab, "observation": {"page": page}})
             elif op == "frame":

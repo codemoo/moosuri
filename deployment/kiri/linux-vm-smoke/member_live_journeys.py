@@ -385,6 +385,7 @@ def boundaries(j):
 
 # One registry for the CLI choices, implementation and expected completed cases.
 SUITES = {
+    "groceries": ("member_live_grocery", "exercise", 8), "timetable": ("member_live_timetable", "exercise", 6),
     "daily": (__name__, "daily", 5), "continuity": ("member_live_trip", "exercise", 4),
     "privacy": (__name__, "privacy", 5), "library": (__name__, "library", 4),
     "work": ("member_live_work", "exercise", 4), "boundaries": (__name__, "boundaries", 3),

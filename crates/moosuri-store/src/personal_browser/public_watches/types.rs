@@ -18,6 +18,25 @@ pub struct PublicWatchRequest {
     pub every_seconds: i64,
     /// Lifetime in days, 1..=90 (the UI defaults to 7). The watch expires on its own.
     pub days: i64,
+    /// Optional: alert when the one displayed KRW room/item price on the same page is at or below `won`
+    /// (`inclusive`) or strictly below it. Omitted for an ordinary content-change watch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_condition: Option<PublicWatchPrice>,
+}
+
+/// Price threshold: `won` is a positive safe integer <= 999999999999.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PublicWatchPrice {
+    pub won: i64,
+    /// `true`: price <= won qualifies. `false`: price < won.
+    pub inclusive: bool,
+}
+
+impl PublicWatchPrice {
+    pub fn valid(&self) -> bool {
+        (1..=super::price::MAX_WON).contains(&self.won)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,6 +68,8 @@ pub struct PublicWatchView {
     /// active, stopped, expired or revoked.
     pub state: String,
     pub revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_condition: Option<PublicWatchPrice>,
     /// Newest first, at most 10.
     pub checks: Vec<PublicWatchCheck>,
 }
@@ -67,6 +88,7 @@ pub struct PublicPage {
     pub title: String,
     /// Visible text as the broker projected it. Bounded and normalized before use.
     pub text: String,
+    pub truncated: bool,
     /// Unix seconds at which the broker read the page.
     pub observed_at: i64,
 }

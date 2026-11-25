@@ -1,0 +1,591 @@
+{
+  "project": "Kiri member runtime",
+  "date": "2026-11-25",
+  "baseline_commit": "c6918e1",
+  "baseline_binary_sha256": "66bbd08672e09787bb0cc42f639efe9aac28c4683c786b693640dccd411ef480",
+  "integrated_binary_sha256": "ff74cc0b9962b6bbeb044b09216ff7b037f6109cb4822a62da0c014f9059225e",
+  "environment": "Linux 5.15 x86_64 / Chromium, isolated member services, browser and SQLite",
+  "scopes": {
+    "groceries": "member chat, correction, new conversation and member-local source lookup",
+    "timetable": "member-pasted synthetic mail and timetable; decisions verified against those excerpts",
+    "prices": "synthetic hotel pages via private fixture broker; real grant, timer, per-slot read, notices and worklog"
+  },
+  "sources_doc": "docs/reviews/2026-11-25-everyday-muse.md",
+  "new_scenarios": {
+    "total": 24,
+    "passed": 24,
+    "groceries": {
+      "group": "groceries",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 8,
+      "planned": 8,
+      "messages": 13,
+      "cases": [
+        {
+          "id": "GROC-01",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "GROC-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "GROC-03",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "GROC-04",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "GROC-05",
+          "messages": 2,
+          "interpretations": 2,
+          "answers": 2
+        },
+        {
+          "id": "GROC-06",
+          "messages": 3,
+          "interpretations": 3,
+          "answers": 3
+        },
+        {
+          "id": "GROC-08",
+          "messages": 2,
+          "interpretations": 1,
+          "answers": 2
+        },
+        {
+          "id": "GROC-07",
+          "messages": 1,
+          "interpretations": 0,
+          "answers": 0
+        }
+      ],
+      "interpretations": 11,
+      "answers": 12
+    },
+    "timetable": {
+      "group": "timetable",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "passed": 6,
+      "planned": 6,
+      "messages": 7,
+      "cases": [
+        {
+          "id": "SLOT-01",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "SLOT-02",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "SLOT-03",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "SLOT-04",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "SLOT-05",
+          "messages": 1,
+          "interpretations": 1,
+          "answers": 1
+        },
+        {
+          "id": "SLOT-06",
+          "messages": 2,
+          "interpretations": 1,
+          "answers": 2
+        }
+      ],
+      "interpretations": 6,
+      "answers": 7
+    },
+    "price": {
+      "cases": [
+        {
+          "condition": {
+            "inclusive": true,
+            "won": 100000
+          },
+          "displayed": true,
+          "id": "PRICE-01",
+          "reading": [
+            "baseline",
+            0
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-02",
+          "reading": [
+            "unchanged",
+            0
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-03",
+          "rate_visible": true,
+          "reading": [
+            "changed",
+            1
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-04",
+          "readings": [
+            [
+              "unchanged",
+              1
+            ],
+            [
+              "unchanged",
+              1
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-05",
+          "readings": [
+            [
+              "failed",
+              1
+            ],
+            [
+              "failed",
+              1
+            ],
+            [
+              "failed",
+              1
+            ],
+            [
+              "failed",
+              1
+            ],
+            [
+              "unchanged",
+              1
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-06",
+          "readings": [
+            [
+              "unchanged",
+              1
+            ],
+            [
+              "changed",
+              2
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-07",
+          "readings": [
+            [
+              "baseline",
+              0
+            ],
+            [
+              "changed",
+              1
+            ]
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-08",
+          "reading": [
+            "changed",
+            1
+          ],
+          "passed": true
+        },
+        {
+          "created": 0,
+          "id": "PRICE-09",
+          "retained": [
+            true,
+            true,
+            true
+          ],
+          "passed": true
+        },
+        {
+          "id": "PRICE-10",
+          "readings": [
+            [
+              "failed",
+              2
+            ],
+            [
+              "failed",
+              2
+            ],
+            [
+              "unchanged",
+              2
+            ]
+          ],
+          "passed": true
+        }
+      ],
+      "ledger": {
+        "reads": 18,
+        "closed": 18,
+        "answers": 0,
+        "interpretations": 0
+      }
+    }
+  },
+  "baseline_observations": {
+    "groceries": {
+      "first_six_passed": [
+        "GROC-01",
+        "GROC-02",
+        "GROC-03",
+        "GROC-04",
+        "GROC-05",
+        "GROC-06"
+      ],
+      "second_run_passed": [
+        "GROC-01",
+        "GROC-02",
+        "GROC-03",
+        "GROC-04",
+        "GROC-05"
+      ],
+      "second_run_stop": "GROC-06 received clarify instead of chat; GROC-07 was not reached. GROC-08 was added later."
+    },
+    "timetable": {
+      "passed": [
+        "SLOT-01",
+        "SLOT-02",
+        "SLOT-03",
+        "SLOT-04"
+      ],
+      "stop": "SLOT-05 omitted the timetable end time from the conflicting evidence"
+    },
+    "price": {
+      "cases": [
+        {
+          "condition": null,
+          "displayed": false,
+          "id": "PRICE-01",
+          "reading": [
+            "baseline",
+            0
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-02",
+          "reading": [
+            "changed",
+            1
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-03",
+          "rate_visible": true,
+          "reading": [
+            "changed",
+            2
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-04",
+          "readings": [
+            [
+              "changed",
+              3
+            ],
+            [
+              "unchanged",
+              3
+            ]
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-05",
+          "readings": [
+            [
+              "changed",
+              4
+            ],
+            [
+              "changed",
+              5
+            ],
+            [
+              "changed",
+              6
+            ],
+            [
+              "changed",
+              7
+            ],
+            [
+              "changed",
+              8
+            ]
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-06",
+          "readings": [
+            [
+              "changed",
+              9
+            ],
+            [
+              "changed",
+              10
+            ]
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-07",
+          "readings": [
+            [
+              "baseline",
+              0
+            ],
+            [
+              "changed",
+              1
+            ]
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-08",
+          "reading": null,
+          "passed": false
+        },
+        {
+          "created": 3,
+          "id": "PRICE-09",
+          "retained": [
+            false,
+            false,
+            false
+          ],
+          "passed": false
+        },
+        {
+          "id": "PRICE-10",
+          "readings": [
+            [
+              "changed",
+              11
+            ],
+            [
+              "changed",
+              12
+            ],
+            [
+              "changed",
+              13
+            ]
+          ],
+          "passed": false
+        }
+      ],
+      "ledger": {
+        "reads": 20,
+        "closed": 20,
+        "answers": 1,
+        "interpretations": 1
+      }
+    }
+  },
+  "intermediate_observations": [
+    {
+      "binary_sha256": "3c1cfaa3d679da2ba1becbc19ed8304bba113adbd4ca3af87fed2be7a71c5479",
+      "additional_grocery_case": "After a terse quantity change, the recap in GROC-08 was routed to a work clarification.",
+      "timetable_cases_passed": 6,
+      "harness": "The GROC-07 browser lost its POST body on navigation. With the same binary, matching the submitted request ID to the durable work record passed all 7 earlier grocery cases."
+    },
+    {
+      "binary_sha256": "3ecafa0418488efe64bbf89601c4ae6cb12bb54d3c2aecb5032c1403b36421c2",
+      "groceries_passed": 8,
+      "timetable_stop": "SLOT-04 returned unconfirmed for the new course but omitted the code of the earlier choice."
+    },
+    {
+      "binary_sha256": "02395208f54440f31d447c7be0076884f7ba1db48c6b6b6a30df23708a88ede9",
+      "groceries_stop": "The work-interpret request returned 422 on a simple GROC-08 recap.",
+      "timetable_stop": "The previous checker could not identify the adviser's time. Raw answer text was not retained. The final checker also accepts an afternoon time stated without an explicit PM marker.",
+      "previous_choice": "CHOICE-02 did not return the usual coffee choice alone."
+    },
+    {
+      "binary_sha256": "7c5293835987789bc7c252bd2c0b63efc4c609ecc68fd8cf8ef37e8d65e0cecb",
+      "timetable_runs": [
+        {
+          "passed": 4,
+          "stop": "The check did not find the timetable source label in the conflicting answer."
+        },
+        {
+          "passed": 6
+        },
+        {
+          "passed": 5,
+          "stop": "The follow-up identifying the later source was routed to a work clarification."
+        }
+      ]
+    },
+    {
+      "binary_sha256": "a0fc9584204563140cff377005b4cecbd85f6c418e68726fac0ddaf3d0ea40f5",
+      "group": "timetable",
+      "passed": 5,
+      "planned": 6,
+      "stop": "SLOT-06 wrong source"
+    },
+    {
+      "binary_sha256": "20bc660fe234d1dba8716a533a4548152979e35240687ca08ff2d210af25c52b",
+      "group": "timetable",
+      "passed": 4,
+      "planned": 6,
+      "stop": "SLOT-05 adviser end time"
+    },
+    {
+      "binary_sha256": "caee7c74dab4de8b027a6eca34afc342820e91bc126afd5d04818fc73fe5c903",
+      "group": "timetable",
+      "passed": 4,
+      "planned": 6,
+      "stop": "SLOT-05 timetable source"
+    },
+    {
+      "binary_sha256": "dec0183d43a05fd56c9dffb83cb3e315211c085a8b49844fe6644638b32c4644",
+      "group": "timetable",
+      "passed": 5,
+      "planned": 6,
+      "stop": "SLOT-06 updated time"
+    }
+  ],
+  "repeated_timetable": {
+    "group": "timetable",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "passed": 6,
+    "planned": 6,
+    "messages": 7,
+    "cases": [
+      {
+        "id": "SLOT-01",
+        "messages": 1,
+        "interpretations": 1,
+        "answers": 1
+      },
+      {
+        "id": "SLOT-02",
+        "messages": 1,
+        "interpretations": 1,
+        "answers": 1
+      },
+      {
+        "id": "SLOT-03",
+        "messages": 1,
+        "interpretations": 1,
+        "answers": 1
+      },
+      {
+        "id": "SLOT-04",
+        "messages": 1,
+        "interpretations": 1,
+        "answers": 1
+      },
+      {
+        "id": "SLOT-05",
+        "messages": 1,
+        "interpretations": 1,
+        "answers": 1
+      },
+      {
+        "id": "SLOT-06",
+        "messages": 2,
+        "interpretations": 1,
+        "answers": 2
+      }
+    ],
+    "interpretations": 6,
+    "answers": 7
+  },
+  "regressions": [
+    {
+      "binary_sha256": "ff74cc0b9962b6bbeb044b09216ff7b037f6109cb4822a62da0c014f9059225e",
+      "groups": {
+        "choices": 5
+      }
+    },
+    {
+      "binary_sha256": "3ecafa0418488efe64bbf89601c4ae6cb12bb54d3c2aecb5032c1403b36421c2",
+      "groups": {
+        "routing": 8,
+        "continuity": 4
+      }
+    },
+    {
+      "binary_sha256": "75acc7dca85ab9f30cbe33939a365f1a98ec7aeb631fa1bfc3cf503cb0d1d630",
+      "groups": {
+        "timing": 10,
+        "work": 4,
+        "existing_public_watch_reads": 3
+      }
+    }
+  ],
+  "focused_linux_tests": {
+    "watch_store_and_legacy_grant_upgrade": 14,
+    "schema_89_member_reopen": 1,
+    "schema_92_member_reopen": 1,
+    "interpreter": 11,
+    "watch_transport": 1,
+    "watch_reader_and_gateway": 3,
+    "text_preview": 23,
+    "schema_registry": 4
+  },
+  "web": {
+    "complete_suite_on_final_source": 894,
+    "affected_watch_suite_on_final_source": 9
+  },
+  "schema_inventory": {
+    "schema": 101,
+    "tables": 241,
+    "owner_relations": 247
+  },
+  "external_coverage": "No connection to a real mailbox, registrar, hotel, payment service or physical push device in these scenarios."
+}

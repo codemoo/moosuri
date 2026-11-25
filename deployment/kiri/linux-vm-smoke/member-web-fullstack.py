@@ -566,6 +566,7 @@ def main():
                       help="exercise multi-task chat, its timer, evidence and member boundaries")
     mode.add_argument("--workflows", action="store_true", help="exercise task evidence and the installation schedule timer")
     mode.add_argument("--public-watch-read", action="store_true", help="compare four fresh public-page observations with actual alerts")
+    mode.add_argument("--price-watch", action="store_true", help="exercise member price alerts against changing synthetic hotel rates")
     mode.add_argument("--public-watch", action="store_true", help="verify recurring public-page checks and their worklog in chat")
     mode.add_argument("--brief-work", action="store_true", help="verify connected brief requests through the normal member chat")
     mode.add_argument("--research-journey", action="store_true", help="verify shopping and application results through the member interface")
@@ -580,7 +581,7 @@ def main():
     mode.add_argument("--history-budget", action="store_true",
                       help="exercise the real broker reservation with a synthetic deterministic provider")
     args = parser.parse_args()
-    if args.live_journey:
+    if args.live_journey or args.price_watch:
         if args.supplemental_work or args.semantic_work or args.preference_recall:
             parser.error("--live-journey runs one independent scenario group")
         args.claude = True
@@ -616,13 +617,13 @@ def main():
         provider.interpretations = 0
         provider.work_intents = {}
         provider.semantic = args.semantic_work or args.supplemental_work
-        provider.public_watch_read = args.public_watch_read
+        provider.public_watch_read = args.public_watch_read or args.price_watch
         provider.research = args.research_work or args.research_journey
         provider.browser_reads = 0 if provider.research else None
         provider.turns = [] if args.claude or args.preference_recall else provider_turns(args.history_budget)
         provider.recall = None
         provider.live = None
-        if args.live_journey:
+        if args.live_journey or args.price_watch:
             provider.live = member_live_journeys.Receipts()
         if args.preference_recall:
             import member_preference_recall
@@ -664,12 +665,14 @@ def main():
                 elif args.preference_recall:
                     member_preference_recall.exercise(page, members, origin, provider, login=login, logout=logout,
                                                       rows=rows, passed=passed)
-                elif args.public_watch_read:
+                elif args.public_watch_read or args.price_watch:
                     import member_public_watch_journey
+                    import member_price_watch_journey
                     from member_research_outcomes import Broker
                     broker = Broker(provider.browser_socket, {})
                     stack.callback(broker.close)
-                    member_public_watch_journey.exercise_read(page, members, origin, provider, broker, login=login, rows=rows, passed=passed)
+                    read = member_price_watch_journey.exercise if args.price_watch else member_public_watch_journey.exercise_read
+                    read(page, members, origin, provider, broker, login=login, rows=rows, passed=passed)
                 elif args.public_watch:
                     import member_public_watch_journey
                     member_public_watch_journey.exercise(page, members, origin, provider, login=login, rows=rows, passed=passed)

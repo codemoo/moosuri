@@ -14,7 +14,7 @@ mod reports;
 mod public_watches;
 pub use public_watches::{
     PublicPage, PublicRead, PublicReadOutcome, PublicWatchCheck, PublicWatchLease, PublicWatchPage,
-    PublicWatchRequest, PublicWatchStop, PublicWatchView,
+    PublicWatchPrice, PublicWatchRequest, PublicWatchStop, PublicWatchView,
 };
 pub(crate) use public_watches::{
     notice_current as public_watch_notice_current, restart as public_watch_restart,

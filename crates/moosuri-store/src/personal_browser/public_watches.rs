@@ -11,12 +11,11 @@
 //!   workspace is never addressed: ids are minted here and checked against every browser workspace id.
 //! * **Reading** – through the existing verified member browser broker (see the app's `public_watch`
 //!   reader). No generic network client, no member cookies, no model, no actions other than read/close.
-//! * **Change** – `changed` only when a *fresh, verified* observation (pinned host, https, observed after
-//!   the slot was claimed, non-empty bounded visible text) has a different fingerprint from the last
-//!   verified one. The first verified read is the `baseline` and never alerts. Any read failure is
-//!   `failed`, never a change, and leaves the last fingerprint untouched.
+//! * **Change** – a content watch compares verified observations with its initial baseline. A price
+//!   watch compares a single displayed KRW price on the pinned page with its stored condition and
+//!   alerts on entry, including an already qualifying first read. Failed reads keep the last state.
 //! * **Evidence** – only a SHA-256 and a <=200 character excerpt, encrypted with the provider key and shown
-//!   only while the grant is live. Notifications carry the host only, never page text.
+//!   only while the grant is live. A price notice includes the observed amount and the requested limit.
 //!
 //! ## Narrow extension point
 //! The module exposes four timer calls ([`Store::public_watch_orphans`], [`Store::ack_public_watch_workspace`],
@@ -24,6 +23,7 @@
 //! stop) and two hooks (`restart`, `notice_current`). Reading is behind the server's `PublicReads` trait.
 use super::*;
 
+mod price;
 mod types;
 pub use types::*;
 
@@ -113,7 +113,7 @@ fn same_host(pinned: &str, observed: &str) -> bool {
 }
 
 /// Visible text only: control characters dropped, whitespace collapsed, bounded.
-fn normalize(text: &str) -> String {
+fn normalize(text: &str, limit: usize) -> String {
     text.chars()
         .filter(|c| !c.is_control() || c.is_whitespace())
         .collect::<String>()
@@ -121,7 +121,7 @@ fn normalize(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
-        .take(MAX_TEXT)
+        .take(limit)
         .collect()
 }
 
@@ -147,17 +147,51 @@ fn fingerprint(url: &str, text: &str) -> String {
     hex(Sha256::digest(&input).as_slice())
 }
 
+/// Ordinary requests keep their original digest byte for byte (replays stay valid); a price condition
+/// is part of the identity of a request, so the same id with another condition conflicts.
 fn request_digest(r: &PublicWatchRequest, url: &str) -> Result<Vec<u8>> {
-    let bytes = serde_json::to_vec(&(
-        "moosuri/public-watch/request/v1",
-        &r.thread_id,
-        &r.message,
-        url,
-        r.every_seconds,
-        r.days,
-    ))
+    let bytes = match r.price_condition {
+        None => serde_json::to_vec(&(
+            "moosuri/public-watch/request/v1",
+            &r.thread_id,
+            &r.message,
+            url,
+            r.every_seconds,
+            r.days,
+        )),
+        Some(p) => serde_json::to_vec(&(
+            "moosuri/public-watch/request/price/v1",
+            &r.thread_id,
+            &r.message,
+            url,
+            r.every_seconds,
+            r.days,
+            p.won,
+            p.inclusive,
+        )),
+    }
     .map_err(|_| StoreError::InvalidInput)?;
     Ok(Sha256::digest(bytes).to_vec())
+}
+
+/// Band state of a price watch, kept in the `fingerprint` column (same atomic commit as the check).
+fn band(url: &str, inside: bool) -> String {
+    fingerprint(
+        url,
+        if inside {
+            "price-band:in"
+        } else {
+            "price-band:out"
+        },
+    )
+}
+
+fn condition_text(p: PublicWatchPrice) -> String {
+    format!(
+        "{} {}",
+        price::display(p.won),
+        if p.inclusive { "이하" } else { "미만" }
+    )
 }
 
 fn notice_id(watch: &str, due: i64) -> String {
@@ -199,10 +233,13 @@ struct Watch {
     fingerprint: Option<String>,
     last_due: Option<i64>,
     host_epoch: i64,
+    price: Option<PublicWatchPrice>,
 }
 
-const WATCH: &str = "SELECT w.id,w.auth_epoch,w.thread_id,w.url,w.host,w.every_seconds,w.days,w.state,w.end_reason,
- w.revision,w.expires_at,w.next_due,w.request_digest,w.fingerprint,w.last_due,w.host_epoch FROM member_public_watches w";
+const WATCH: &str =
+    "SELECT w.id,w.auth_epoch,w.thread_id,w.url,w.host,w.every_seconds,w.days,w.state,w.end_reason,
+ w.revision,w.expires_at,w.next_due,w.request_digest,w.fingerprint,w.last_due,w.host_epoch,
+ w.price_won,w.price_inclusive FROM member_public_watches w";
 const OWNED: &str = "w.tenant_id=?1 AND w.account_id=?2 AND w.volume_id=?3 AND w.generation=?4";
 const AUTHORIZED: &str = "EXISTS(SELECT 1 FROM accounts a WHERE a.id=w.account_id AND a.tenant_id=w.tenant_id
     AND a.auth_epoch=w.auth_epoch AND a.status='active' AND a.must_change_password=0 AND a.recovery_required=0)";
@@ -228,6 +265,13 @@ fn watch_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
         fingerprint: r.get(13)?,
         last_due: r.get(14)?,
         host_epoch: r.get(15)?,
+        price: match (r.get::<_, Option<i64>>(16)?, r.get::<_, Option<bool>>(17)?) {
+            (None, None) => None,
+            (Some(won), Some(inclusive)) if (1..=price::MAX_WON).contains(&won) => {
+                Some(PublicWatchPrice { won, inclusive })
+            }
+            _ => return Err(rusqlite::Error::InvalidQuery),
+        },
     })
 }
 
@@ -451,6 +495,7 @@ fn view(
             w.state.clone()
         },
         revision: w.revision,
+        price_condition: w.price,
         checks,
     })
 }
@@ -493,6 +538,9 @@ impl Store {
         {
             return Err(StoreError::InvalidInput);
         }
+        if request.price_condition.is_some_and(|p| !p.valid()) {
+            return Err(StoreError::InvalidInput);
+        }
         let (url, host) = public_url(&request.url)?;
         let digest = request_digest(&request, &url)?;
         self.call(move |db| {
@@ -522,8 +570,9 @@ impl Store {
             }
             tx.execute(
                 "INSERT INTO member_public_watches(tenant_id,account_id,id,volume_id,generation,auth_epoch,host_epoch,thread_id,
-                    url,host,every_seconds,days,state,revision,created_at,expires_at,next_due,request_digest)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'active',1,?13,?14,?13,?15)",
+                    url,host,every_seconds,days,state,revision,created_at,expires_at,next_due,request_digest,
+                    price_won,price_inclusive)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'active',1,?13,?14,?13,?15,?16,?17)",
                 params![
                     t,
                     a,
@@ -539,7 +588,9 @@ impl Store {
                     request.days,
                     time,
                     time + request.days * 86400,
-                    digest
+                    digest,
+                    request.price_condition.map(|p| p.won),
+                    request.price_condition.map(|p| p.inclusive)
                 ],
             )?;
             member_work_turn(
@@ -550,15 +601,24 @@ impl Store {
                 &request.request_id,
                 &request.message,
                 "member-public-watch",
-                format!(
-                    "{host} 페이지를 {} {}일 동안 확인하고, 보이는 내용이 바뀔 때만 알려드릴게요. 로그인 없이 공개 페이지를 읽기만 해요. 확인 기록은 이 대화의 감시 기록에서 볼 수 있어요.",
-                    match request.every_seconds {
+                {
+                    let every = match request.every_seconds {
                         1800 => "30분마다",
                         3600 => "1시간마다",
                         _ => "하루마다",
-                    },
-                    request.days
-                ),
+                    };
+                    match request.price_condition {
+                        None => format!(
+                            "{host} 페이지를 {every} {}일 동안 확인하고, 보이는 내용이 바뀔 때만 알려드릴게요. 로그인 없이 공개 페이지를 읽기만 해요. 확인 기록은 이 대화의 감시 기록에서 볼 수 있어요.",
+                            request.days
+                        ),
+                        Some(p) => format!(
+                            "{host} 페이지를 {every} {}일 동안 확인하고, 표시된 객실·상품 가격이 {}일 때 알려드릴게요. 가격이 분명하지 않으면 추측하지 않고 확인 실패로 기록해요. 로그인 없이 공개 페이지를 읽기만 해요. 확인 기록은 이 대화의 감시 기록에서 볼 수 있어요.",
+                            request.days,
+                            condition_text(p)
+                        ),
+                    }
+                },
             )?;
             let out = view(&tx, &db.provider_key, owner, &load(&tx, owner, &request.request_id)?, time)?;
             tx.commit()?;
@@ -899,19 +959,33 @@ impl Store {
             let verified = match read.outcome {
                 PublicReadOutcome::Failed(code) => Err(code),
                 PublicReadOutcome::Page(page) => {
-                    let text = normalize(&page.text);
+                    let price_watch = w.price.is_some();
+                    let text = normalize(&page.text, MAX_TEXT + usize::from(price_watch));
                     if !same_host(&w.host, &page.url) {
                         Err("redirected_off_host")
+                    } else if price_watch && !public_url(&page.url).is_ok_and(|(url, _)| url == w.url) {
+                        Err("different_price_page")
+                    } else if price_watch && (page.truncated || text.chars().count() > MAX_TEXT) {
+                        Err("incomplete_price_page")
                     } else if page.observed_at < lease.claimed_at - SKEW || page.observed_at > time + SKEW {
                         Err("stale_observation")
                     } else if text.is_empty() {
                         Err("empty_page")
                     } else {
-                        Ok((text, page.observed_at))
+                        // A price watch needs one unambiguous displayed price; otherwise the read is
+                        // `failed` (the band state is untouched), never a guess.
+                        match w
+                            .price
+                            .map(|cond| price::parse(&text).map(|won| (cond, won)))
+                            .transpose()
+                        {
+                            Ok(seen) => Ok((text, page.observed_at, seen)),
+                            Err(code) => Err(code),
+                        }
                     }
                 }
             };
-            let (text, observed) = match verified {
+            let (text, observed, seen) = match verified {
                 Ok(v) => v,
                 Err(code) => {
                     // A failed read is never a change and never touches the last fingerprint.
@@ -921,17 +995,40 @@ impl Store {
                     return Ok(());
                 }
             };
-            let digest = fingerprint(&w.url, &text);
-            let state = match w.fingerprint.as_deref() {
-                None => "baseline",
-                Some(previous) if previous == digest => "unchanged",
-                Some(_) => "changed",
+            // Ordinary watch: the content fingerprint. Price watch: the in/out-of-band predicate, so that
+            // only (re-)entering the band alerts; the first qualifying sample already counts as entering.
+            let (digest, state, shown) = match seen {
+                None => {
+                    let digest = fingerprint(&w.url, &text);
+                    let state = match w.fingerprint.as_deref() {
+                        None => "baseline",
+                        Some(previous) if previous == digest => "unchanged",
+                        Some(_) => "changed",
+                    };
+                    (digest, state, excerpt(&text))
+                }
+                Some((cond, won)) => {
+                    let inside = price::qualifies(won, cond.won, cond.inclusive);
+                    let digest = band(&w.url, inside);
+                    let state = match w.fingerprint.as_deref() {
+                        None if !inside => "baseline",
+                        Some(previous) if previous == digest => "unchanged",
+                        // Leaving the band is silent (it rearms); entering or first seeing it alerts.
+                        Some(_) if !inside => "unchanged",
+                        _ => "changed",
+                    };
+                    (
+                        digest,
+                        state,
+                        excerpt(&format!("가격 {} · {text}", price::display(won))),
+                    )
+                }
             };
             let cipher = (state != "unchanged")
                 .then(|| {
                     providers::encrypt(
                         &db.provider_key,
-                        excerpt(&text).as_bytes(),
+                        shown.as_bytes(),
                         &aad(owner, &id, &w.host, lease.due_at),
                     )
                 })
@@ -951,11 +1048,22 @@ impl Store {
                     &a,
                     &id,
                     notice,
-                    "지켜보던 페이지가 바뀌었어요",
-                    &format!(
-                        "{} 페이지의 보이는 내용이 바뀌었어요. 대화의 감시 기록에서 확인하세요.",
-                        w.host
-                    ),
+                    match seen {
+                        None => "지켜보던 페이지가 바뀌었어요",
+                        Some(_) => "지켜보던 가격이 조건에 맞아요",
+                    },
+                    &match seen {
+                        None => format!(
+                            "{} 페이지의 보이는 내용이 바뀌었어요. 대화의 감시 기록에서 확인하세요.",
+                            w.host
+                        ),
+                        Some((cond, won)) => format!(
+                            "{} 페이지에 표시된 가격이 {}이에요. 조건: {}. 대화의 감시 기록에서 확인하세요.",
+                            w.host,
+                            price::display(won),
+                            condition_text(cond)
+                        ),
+                    },
                 )?;
             }
             tx.commit()?;

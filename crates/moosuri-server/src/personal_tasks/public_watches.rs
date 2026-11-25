@@ -226,6 +226,7 @@ mod tests {
         );
         assert!(serde_json::from_str::<ThreadFilter>(r#"{"thread_id":"x"}"#).is_err());
         let item = |excerpt: Option<&str>| PublicWatchView {
+            price_condition: None,
             id: Uuid::new_v4().to_string(),
             thread_id: Uuid::new_v4().to_string(),
             url: "https://status.example.test/service".into(),

@@ -54,6 +54,26 @@ pub enum Progress {
 }
 
 impl Store {
+    /// The router needs only the kind of the preceding turn. Text and memories stay with the answerer.
+    pub async fn last_turn_is_chat_answer(&self, scope: Scope) -> Result<bool> {
+        self.call(move |db| {
+            let tx = db.conn.transaction()?;
+            scope.authorize(&tx)?;
+            Ok(tx.query_row(
+                "SELECT coalesce((SELECT r.state='completed' AND o.run_id IS NOT NULL
+                    FROM chat_runs r
+                    LEFT JOIN personal_text_previews p ON p.tenant_id=r.tenant_id AND p.run_id=r.id
+                    LEFT JOIN chat_output o ON o.tenant_id=p.tenant_id AND o.run_id=p.run_id
+                        AND o.item='personal-text-preview-answer'
+                    WHERE r.tenant_id=?1 AND r.account_id=?2 AND r.thread_id=?3
+                    ORDER BY r.sequence DESC LIMIT 1),0)",
+                params![scope.user.tenant.0, scope.user.account.id, scope.thread],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+    }
+
     pub async fn interpretation_progress(&self, request: Request, claim: bool) -> Result<Progress> {
         self.call(move |db| {
             let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;

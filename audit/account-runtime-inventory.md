@@ -28,6 +28,8 @@ Schema 92 has 223 application tables. Conversation groups, tasks, actions, event
 
 Schemas 93–100 extend the same member volume with interpreted work, combined reports, recurring checks, scoped Gmail and Calendar actions, research outcomes, linked task history, connected briefs and public watches. Schema 100 classifies 241 application tables. The briefing and public-watch ledgers pin their source authority and scheduled occurrence; encrypted excerpts are bound to the member and grant. [Schema 100 classification](account-runtime-schema100.json) · [Ciphertext bindings](account-runtime-artifacts.json)
 
+Schema 101 adds the optional won limit and its inclusive or exclusive comparison to the member's public watch. Existing content watches keep both fields empty. The inventory covers 241 application tables and 247 cross-owner foreign-key relationships. [Schema 101 classification](account-runtime-schema101.json)
+
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,

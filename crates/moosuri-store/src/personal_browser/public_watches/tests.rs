@@ -1,7 +1,7 @@
 //! Actual SQLite path with explicit clocks. The reader is the typed `PublicRead` hand-off, so these tests
 //! exercise the store's grant, claim, verification and settlement; the broker is covered by the app tests.
 use super::*;
-use crate::personal_browser::tasks::tests::{Member, member};
+use crate::personal_browser::tasks::tests::{Member, member, reopen_predecessor};
 
 const URL: &str = "https://status.example.test/service";
 const NOTICES: &str = "SELECT count(*) FROM local_notifications";
@@ -14,6 +14,13 @@ fn request(thread: &str, id: Uuid) -> PublicWatchRequest {
         url: URL.into(),
         every_seconds: 3600,
         days: 7,
+        price_condition: None,
+    }
+}
+fn priced(thread: &str, id: Uuid, won: i64, inclusive: bool) -> PublicWatchRequest {
+    PublicWatchRequest {
+        price_condition: Some(PublicWatchPrice { won, inclusive }),
+        ..request(thread, id)
     }
 }
 async fn grant(store: &Store, m: &Scope, request: PublicWatchRequest) -> Result<PublicWatchView> {
@@ -59,6 +66,7 @@ fn page(url: &str, text: &str, observed_at: i64) -> PublicReadOutcome {
         url: url.into(),
         title: "Status".into(),
         text: text.into(),
+        truncated: false,
         observed_at,
     })
 }
@@ -890,4 +898,340 @@ async fn restored_watch_keeps_the_worklog_and_retires_evidence_and_pending_reads
         .await,
         1
     );
+}
+
+/// Slot `k` of a watch created at `t0`, reading `객실 요금 {amount}` (or any other text).
+async fn price_step(store: &Store, m: &Scope, t0: i64, k: i64, text: &str) -> String {
+    let time = t0 + 3600 * k;
+    step(store, m, time, |_| page(URL, text, time)).await
+}
+fn room(won: &str) -> String {
+    format!("Deluxe 객실 요금 {won}원 조식 포함")
+}
+
+#[tokio::test]
+async fn price_condition_is_validated_replayed_shown_and_ordinary_digests_are_unchanged() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member {
+        store,
+        scope,
+        root: _root,
+    } = member().await;
+    // Ordinary requests: no price in the view or the JSON, and the original digest byte for byte.
+    let ordinary = Uuid::new_v4();
+    let plain = grant(&store, &scope, request(&scope.thread, ordinary))
+        .await
+        .unwrap();
+    assert_eq!(plain.price_condition, None);
+    assert!(!serde_json::to_string(&plain).unwrap().contains("price"));
+    let legacy = Sha256::digest(
+        serde_json::to_vec(&(
+            "moosuri/public-watch/request/v1",
+            &scope.thread,
+            &request(&scope.thread, ordinary).message,
+            URL,
+            3600,
+            7,
+        ))
+        .unwrap(),
+    )
+    .to_vec();
+    let stored: Vec<u8> = scalar(&store, "SELECT request_digest FROM member_public_watches").await;
+    assert_eq!(stored, legacy);
+    assert_eq!(
+        scalar::<Option<i64>>(&store, "SELECT price_won FROM member_public_watches").await,
+        None
+    );
+    // A priced request is pinned, shown and replayed; another condition under the same id conflicts.
+    let id = Uuid::new_v4();
+    let first = grant(&store, &scope, priced(&scope.thread, id, 100_000, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        first.price_condition,
+        Some(PublicWatchPrice {
+            won: 100_000,
+            inclusive: true
+        })
+    );
+    assert_eq!(
+        grant(&store, &scope, priced(&scope.thread, id, 100_000, true))
+            .await
+            .unwrap(),
+        first
+    );
+    for other in [
+        priced(&scope.thread, id, 100_000, false),
+        priced(&scope.thread, id, 99_999, true),
+        request(&scope.thread, id),
+    ] {
+        assert!(matches!(
+            grant(&store, &scope, other).await,
+            Err(StoreError::Conflict)
+        ));
+    }
+    for won in [0, -5, price::MAX_WON + 1] {
+        assert!(matches!(
+            grant(
+                &store,
+                &scope,
+                priced(&scope.thread, Uuid::new_v4(), won, true)
+            )
+            .await,
+            Err(StoreError::InvalidInput)
+        ));
+    }
+    assert!(
+        grant(
+            &store,
+            &scope,
+            priced(&scope.thread, Uuid::new_v4(), price::MAX_WON, false)
+        )
+        .await
+        .is_ok()
+    );
+    assert_eq!(
+        scalar::<i64>(&store, "SELECT count(*) FROM member_public_watches").await,
+        3
+    );
+    // The wire contract refuses unknown or malformed condition fields.
+    for bad in [
+        r#"{"won":1,"inclusive":true,"x":1}"#,
+        r#"{"won":1}"#,
+        r#"{"won":"1","inclusive":true}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<PublicWatchPrice>(bad).is_err(),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        condition_text(first.price_condition.unwrap()),
+        "100,000원 이하"
+    );
+}
+
+#[tokio::test]
+async fn price_band_alerts_on_first_qualifying_sample_and_reentry_only() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member {
+        store,
+        scope,
+        root: _root,
+    } = member().await;
+    grant(
+        &store,
+        &scope,
+        priced(&scope.thread, Uuid::new_v4(), 100_000, true),
+    )
+    .await
+    .unwrap();
+    let t0: i64 = scalar(&store, "SELECT created_at FROM member_public_watches").await;
+    // Already affordable at the first sample: one alert, price in the notice and the excerpt.
+    assert_eq!(
+        price_step(&store, &scope, t0, 0, &room("90,000")).await,
+        "changed"
+    );
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+    let message: String = scalar(&store, "SELECT message FROM local_notifications").await;
+    assert!(message.contains("90,000원") && message.contains("100,000원 이하"));
+    assert!(!message.contains("Deluxe"));
+    let shown = listed(&store, &scope).await.remove(0);
+    assert!(
+        shown.checks[0]
+            .excerpt
+            .as_deref()
+            .is_some_and(|e| e.starts_with("가격 90,000원"))
+    );
+    // Staying inside the band, even at another amount or exactly on the inclusive edge: silent.
+    for (k, won) in [(1, "80,000"), (2, "100,000")] {
+        assert_eq!(
+            price_step(&store, &scope, t0, k, &room(won)).await,
+            "unchanged"
+        );
+        assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+    }
+    // A failed read (ambiguous, missing, malformed) keeps the band: no reset, no alert.
+    for (k, text) in [
+        (3, "객실 요금 99,000원 판매가 88,000원".to_string()),
+        (4, "객실 이용 안내".to_string()),
+        (5, "객실 요금 99,000.5원".to_string()),
+    ] {
+        assert_eq!(price_step(&store, &scope, t0, k, &text).await, "failed");
+    }
+    let reasons: Vec<String> = store
+        .call(|db| {
+            Ok(db
+                .conn
+                .prepare("SELECT reason FROM member_public_watch_checks WHERE state='failed' ORDER BY due_at")?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        reasons,
+        ["price_ambiguous", "price_missing", "price_unclear"]
+    );
+    assert_eq!(
+        price_step(&store, &scope, t0, 6, &room("95,000")).await,
+        "unchanged",
+        "still inside after the failures"
+    );
+    // Leaving is silent and rearms; staying out is silent too.
+    for (k, won) in [(7, "100,001"), (8, "150,000")] {
+        assert_eq!(
+            price_step(&store, &scope, t0, k, &room(won)).await,
+            "unchanged"
+        );
+    }
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+    // A failed read while outside does not rearm or alert either; the valid re-entry is one alert.
+    assert_eq!(price_step(&store, &scope, t0, 9, "문의").await, "failed");
+    assert_eq!(
+        price_step(&store, &scope, t0, 10, &room("99,000")).await,
+        "changed"
+    );
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 2);
+    assert_eq!(
+        scalar::<i64>(&store, "SELECT alerts FROM member_public_watches").await,
+        2
+    );
+    assert_eq!(
+        price_step(&store, &scope, t0, 11, &room("98,000")).await,
+        "unchanged"
+    );
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 2);
+    // Failed reads never recorded a price or a band.
+    assert_eq!(
+        scalar::<i64>(
+            &store,
+            "SELECT count(*) FROM member_public_watch_checks WHERE state='failed' AND (fingerprint IS NOT NULL OR cipher IS NOT NULL)"
+        )
+        .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn strict_threshold_baseline_outside_and_duplicate_settlement_is_idempotent() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let Member {
+        store,
+        scope,
+        root: _root,
+    } = member().await;
+    grant(
+        &store,
+        &scope,
+        priced(&scope.thread, Uuid::new_v4(), 100_000, false),
+    )
+    .await
+    .unwrap();
+    let t0: i64 = scalar(&store, "SELECT created_at FROM member_public_watches").await;
+    // Strict: exactly the limit is outside, so the first sample is only the baseline.
+    assert_eq!(
+        price_step(&store, &scope, t0, 0, "판매가 10만원").await,
+        "baseline"
+    );
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 0);
+    // Staying outside (another amount) is silent; one won below the limit enters once.
+    assert_eq!(
+        price_step(&store, &scope, t0, 1, "판매가 120,000원").await,
+        "unchanged"
+    );
+    let mut leases = claim_at(&store, &scope, t0 + 7200, 1).await;
+    let lease = leases.remove(0);
+    let entering = || page(URL, "1박 요금: 99,999원", t0 + 7200);
+    settle(&store, &lease, entering(), true, t0 + 7201).await;
+    assert_eq!(listed(&store, &scope).await[0].checks[0].state, "changed");
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+    // A duplicate settlement of the same slot (retry, lost reply) is a no-op.
+    settle(&store, &lease, entering(), true, t0 + 7202).await;
+    settle(
+        &store,
+        &lease,
+        page(URL, "판매가 500,000원", t0 + 7203),
+        true,
+        t0 + 7204,
+    )
+    .await;
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+    assert_eq!(
+        scalar::<i64>(&store, "SELECT alerts FROM member_public_watches").await,
+        1
+    );
+    // The next valid read compares against the entry, not against the discarded duplicate.
+    assert_eq!(
+        price_step(&store, &scope, t0, 3, "판매가 99,998원").await,
+        "unchanged"
+    );
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+    // A price watch stopped while a read is in flight is withdrawn without alert or band change.
+    let id: String = scalar(&store, "SELECT id FROM member_public_watches").await;
+    let before: String = scalar(&store, "SELECT fingerprint FROM member_public_watches").await;
+    let inflight = claim_at(&store, &scope, t0 + 3600 * 4, 1).await.remove(0);
+    store
+        .stop_public_watch(
+            scope.owner,
+            scope.user.clone(),
+            1,
+            id.parse().unwrap(),
+            PublicWatchStop {
+                request_id: Uuid::new_v4().to_string(),
+                revision: 1,
+            },
+        )
+        .await
+        .unwrap();
+    settle(
+        &store,
+        &inflight,
+        page(URL, "판매가 200,000원", t0 + 3600 * 4),
+        true,
+        t0 + 3600 * 4 + 1,
+    )
+    .await;
+    assert_eq!(
+        scalar::<String>(&store, "SELECT fingerprint FROM member_public_watches").await,
+        before
+    );
+    assert_eq!(scalar::<i64>(&store, NOTICES).await, 1);
+}
+
+#[tokio::test]
+async fn price_migration_reopens_an_existing_ordinary_watch_without_changing_its_grant() {
+    let _guard = crate::tests::TEST_LOCK.lock().await;
+    let member = member().await;
+    let request = request(&member.scope.thread, Uuid::new_v4());
+    let original = grant(&member.store, &member.scope, request.clone())
+        .await
+        .unwrap();
+    let member = reopen_predecessor(member, 100).await;
+    assert_eq!(
+        listed(&member.store, &member.scope).await,
+        vec![original.clone()]
+    );
+    assert_eq!(
+        grant(&member.store, &member.scope, request).await.unwrap(),
+        original
+    );
+    assert_eq!(
+        scalar::<i64>(&member.store, "SELECT count(*) FROM member_public_watches").await,
+        1
+    );
+    member
+        .store
+        .call(|db| {
+            for sql in [
+                "UPDATE member_public_watches SET price_won=0,price_inclusive=1",
+                "UPDATE member_public_watches SET price_won=100",
+                "UPDATE member_public_watches SET price_inclusive=0",
+            ] {
+                assert!(db.conn.execute(sql, []).is_err());
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
 }

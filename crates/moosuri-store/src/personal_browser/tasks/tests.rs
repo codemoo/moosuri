@@ -69,6 +69,42 @@ async fn start(store: &Store, scope: &Scope, title: &str) -> (Uuid, Workspace) {
     (request, job.view)
 }
 
+pub(in crate::personal_browser) async fn reopen_predecessor(
+    member: Member,
+    version: i64,
+) -> Member {
+    let Member { store, root, scope } = member;
+    let owner = scope.owner;
+    store
+        .call(move |db| {
+            let identity: String = db.conn.query_row(
+                "SELECT sql FROM sqlite_schema WHERE name='personal_runtime_identity'",
+                [],
+                |r| r.get(0),
+            )?;
+            crate::schema::tests::replace_with_predecessor(&mut db.conn, version);
+            db.conn.execute_batch(&identity)?;
+            db.conn.execute(
+                "INSERT INTO personal_runtime_identity VALUES(1,?1,?2)",
+                params![owner.volume.to_string(), owner.generation as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let reopened = scope
+        .owner
+        .open_verified(&root.path().canonicalize().unwrap())
+        .await
+        .unwrap();
+    Member {
+        store: reopened,
+        scope,
+        root,
+    }
+}
+
 #[tokio::test]
 async fn personal_tasks_releases_expired_direct_control_once_without_reopening_chat() {
     let _guard = crate::tests::TEST_LOCK.lock().await;
@@ -309,30 +345,11 @@ async fn personal_tasks_schema_89_preserves_existing_result_and_marks_unknown_ev
         )
         .await
         .unwrap();
-    let owner = scope.owner;
-    store
-        .call(move |db| {
-            let identity: String = db.conn.query_row(
-                "SELECT sql FROM sqlite_schema WHERE name='personal_runtime_identity'",
-                [],
-                |r| r.get(0),
-            )?;
-            crate::schema::tests::replace_with_predecessor(&mut db.conn, 89);
-            db.conn.execute_batch(&identity)?;
-            db.conn.execute(
-                "INSERT INTO personal_runtime_identity VALUES(1,?1,?2)",
-                params![owner.volume.to_string(), owner.generation as i64],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    drop(store);
-    let reopened = scope
-        .owner
-        .open_verified(&root.path().canonicalize().unwrap())
-        .await
-        .unwrap();
+    let Member {
+        store: reopened,
+        scope,
+        root: _root,
+    } = reopen_predecessor(Member { root, store, scope }, 89).await;
     let detail = reopened
         .personal_task_detail(scope.owner, scope.user, id)
         .await
@@ -813,7 +830,7 @@ async fn schema_92_member_reopens_with_its_original_thread_and_empty_new_grants(
             assert_eq!(
                 db.conn
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                100
+                crate::schema::CURRENT_VERSION
             );
             assert_eq!(
                 db.conn

@@ -13,6 +13,38 @@ const THREAD = "11111111-1111-4111-8111-111111111111";
 const intent = (): PublicWatchIntent => { const p = parsePublicWatchChat(PHRASE); if (!p || !p.ok) throw new Error("not parsed"); return p.intent; };
 const ROUTE = "/api/v1/personal/tasks/public-watches";
 
+it("keeps the member's exact upper price, comparison and watch interval", () => {
+  for (const [words, won, inclusive] of [
+    ["객실 요금이 12만 5천 원 아래로 떨어지면 알려줘", 125000, false],
+    ["예약하지 말고 10만 원 이하가 되면 알려줄래?", 100000, true],
+    ["매시간 확인해서 가격이 바뀌어도 99,999원 미만일 때만 알려줘", 99999, false],
+    ["현재 가격은 13만원이고 10.5만 원 이하가 되면 알려줘", 105000, true],
+    ["매시간 가격이 1.1만원 이하면 알려줘", 11000, true],
+    ["가격이 3천만원 아래로 내려가면 알려줘", 30000000, false],
+    ["가격이 ‘9만원 이하’가 되면 알려줘", 90000, true],
+  ] as const) {
+    const match = parsePublicWatchChat(`${URL_} ${words}`);
+    expect(match).toMatchObject({ ok: true, intent: { every_seconds: 3600, price_condition: { won, inclusive } } });
+    if (match?.ok) expect(toPublicWatchRequest(match.intent, "id", THREAD).price_condition).toEqual({ won, inclusive });
+  }
+  for (const bound of ["10만원 이하 또는 12만원 미만", "100달러 이하", "1,00원 이하", "-50원 이하",
+    "8만원 이상", "10만원 미만이면서 20% 할인", "1000000000000원 이하"]) {
+    expect(parsePublicWatchChat(`${URL_} 매시간 가격이 바뀌면 ${bound}일 때 알려줘`), bound)
+      .toMatchObject({ ok: false, reason: "unsupported_price" });
+  }
+  for (const words of ["현재 가격이 8만원 이하인지 알려줘", "가격이 9만원 미만일 때 알려주지 마",
+    "‘9만원 미만이 되면 알려줘’라는 요청을 어떻게 쓰나요?"]) {
+    expect(parsePublicWatchChat(`${URL_} ${words}`)).toBeNull();
+  }
+  for (const words of ["10만원 이하로 안 내려가면", "10.000원 이하가 되면", "10만원 이하이고 무료 취소 가능하면",
+    "10만원 이하일 때만 예약해 주고", "‘디럭스룸’이 10만원 이하가 되면", "2인 기준으로 10만원 미만이면"]) {
+    expect(parsePublicWatchChat(URL_ + " 매일 " + words + " 알려줘"), words).toMatchObject({ ok: false, reason: "unsupported_price" });
+  }
+  expect(parsePublicWatchChat(URL_ + " 매일 가격표 페이지가 바뀌면 알려줘")).toMatchObject({ ok: true });
+  expect(parsePublicWatchChat(URL_ + " 매시간 바뀌어도 ‘조식 포함 9만원 이하’일 때만 알려줘")).toMatchObject({ ok: false, reason: "unsupported_price" });
+  expect(parsePublicWatchChat("객실 요금이 9만원 이하가 되면 알려줘")).toMatchObject({ ok: false, reason: "missing_url" });
+});
+
 it("parses only an explicit recurring change-only request with one exact public address", () => {
   expect(intent()).toEqual({ url: URL_, every_seconds: 3600, days: 7, assumed: ["days"], message: PHRASE });
   expect(parsePublicWatchChat(`${URL_}를 30분마다 확인해서 변하면 알려줘 3일 동안`)).toMatchObject({ ok: true, intent: { url: URL_, every_seconds: 1800, days: 3, assumed: [] } });

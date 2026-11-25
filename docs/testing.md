@@ -14,7 +14,7 @@
 python3 audit/verify-feature-journeys.py --vitest-json web-results.json --vitest-json vault-results.json --rust-log workspace-tests.log --rust-log focused-reruns.log
 ```
 
-채팅에서 맡기는 업무는 일반 입력창과 같은 회원의 원래 요청, SQLite 회차, 읽은 출처 또는 공급자가 돌려준 ID를 함께 확인한다. 정상 요청·다른 표현·후속 수정·재전송·철회·회원 간 격리를 기능당 3~10개로 묶는다. 실제 사용에서 관찰한 표현은 합성 자료로 재구성한다. [업무별 시나리오와 결과](reviews/2026-11-25-member-work-from-chat.md) · [실제 Claude 회원 화면 25개 사례](reviews/2026-11-25-live-member-journeys.md) · [입력창·감시·재시도·대화 전환·선호 회상 32개 사례](reviews/2026-11-25-composer-routing-and-recovery.md) · [Linux 실행 방법](../deployment/kiri/linux-vm-smoke/README.md#chat-work)
+채팅에서 맡기는 업무는 일반 입력창과 같은 회원의 원래 요청, SQLite 회차, 읽은 출처 또는 공급자가 돌려준 ID를 함께 확인한다. 정상 요청·다른 표현·후속 수정·재전송·철회·회원 간 격리를 기능당 3~10개로 묶는다. 실제 사용에서 관찰한 표현은 합성 자료로 재구성한다. [업무별 시나리오와 결과](reviews/2026-11-25-member-work-from-chat.md) · [실제 Claude 회원 화면 25개 사례](reviews/2026-11-25-live-member-journeys.md) · [입력창·감시·재시도·대화 전환·선호 회상 32개 사례](reviews/2026-11-25-composer-routing-and-recovery.md) · [장보기·시간표·가격 알림 실사용 시나리오](reviews/2026-11-25-everyday-muse.md) · [Linux 실행 방법](../deployment/kiri/linux-vm-smoke/README.md#chat-work)
 
 ## 기능별 안정화
 

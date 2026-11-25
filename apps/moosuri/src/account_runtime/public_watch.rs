@@ -134,6 +134,7 @@ impl Reader {
                     url: page.url,
                     title: page.title,
                     text: visible_text(&page.text),
+                    truncated: page.truncated,
                     observed_at: i64::try_from(page.retrieved_at_unix_ms / 1000).unwrap_or(0),
                 })
             }

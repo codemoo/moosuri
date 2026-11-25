@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import { parseWatchTiming } from "./member-watch-timing";
+import { parsePriceCondition, priceLabel, samePriceCondition, validPriceCondition, type PriceCondition } from "./member-watch-price";
 
 // Member chat control for "watch one public status page and tell me only when it changes".
 // Pure parser (no network/model) + a start handler + the in-thread worklog.
@@ -14,16 +15,18 @@ import { parseWatchTiming } from "./member-watch-timing";
 export type PublicWatchCheck = { due_at: number; state: string; excerpt?: string | null };
 export type PublicWatchView = {
   id: string; thread_id: string; url: string; every_seconds: number; days: number; state: string; revision: number; checks: PublicWatchCheck[];
+  price_condition?: PriceCondition;
 };
 export type PublicWatchEvery = 1800 | 3600 | 86400;
-export type PublicWatchIntent = { url: string; every_seconds: PublicWatchEvery; days: number; assumed: string[]; message: string };
-export type PublicWatchRefusal = "unsafe_url" | "many_urls" | "unsupported_interval" | "unsupported_duration";
+export type PublicWatchIntent = { url: string; every_seconds: PublicWatchEvery; days: number; assumed: string[]; message: string; price_condition?: PriceCondition };
+export type PublicWatchRefusal = "unsafe_url" | "many_urls" | "missing_url" | "unsupported_interval" | "unsupported_duration" | "unsupported_price";
 export type PublicWatchParse =
   | { ok: true; intent: PublicWatchIntent }
   | { ok: false; reason: PublicWatchRefusal; message: string };
 
 const BASE = "/personal/tasks/public-watches";
 const QUOTED = /[‘'“"「『](.+?)[’'”"」』]/g;
+const QUOTED_VALUE = /^(?:https?:\/\/[^\s]+|[\d.,십백천만억\s]+\s*원\s*(?:이하|이내|미만|아래|밑))$/iu;
 // ASCII only, so Korean particles glued to the address ("…/service를") are never part of it.
 const URL_RE = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&()*+,;=%]+/gi;
 const CHANGE = /(바뀌|바뀔|변하|변경|달라지|변화)/;
@@ -31,6 +34,8 @@ const NOTIFY = /(알려|알림|통지|말해)/;
 const DECLINED = /(?:하|주|보내|만들|시작하|켜|알리|읽|보|해주|멈추|취소하)지\s*(?:마|말|않)|(?:안\s*해도|필요\s*없|말고)/;
 const QUESTION = /(\?|？|(?:나요|까요|ㄹ까|을까)\s*[.!]*$)/;
 const ONE_OFF = /(한\s*번만|1\s*회만?|딱\s*한\s*번|지금\s*(?:바로\s*)?(?:한\s*번\s*)?(?:확인|봐))/;
+const PRICE_WHEN = /(?:이하|이내|미만|아래|밑)(?:이?면|일\s*때)|(?:내려가|떨어지|낮아지|싸지|되)면|(?:내려갈|떨어질|낮아질|쌀|될)\s*때/u;
+const READ_ONLY_PRICE = /(?:예약|결제|구매|주문|판매자(?:에게)?\s*연락)(?:은|는|을|를)?\s*하지\s*(?:말고|말아\s*줘|마(?:세요)?)/gu;
 const LOCAL_HOST = /(^|\.)(localhost|local|localdomain|internal|intranet|lan|home|corp|private|invalid|home\.arpa)$/;
 
 const refuse = (reason: PublicWatchRefusal, message: string): PublicWatchParse => ({ ok: false, reason, message });
@@ -61,45 +66,59 @@ export function unsafePublicUrl(raw: string): string | null {
 export function parsePublicWatchChat(raw: string): PublicWatchParse | null {
   const text = raw.normalize("NFC").trim();
   if (!text || text.length > 400) return null;
-  const outside = text.replace(QUOTED, (_quote, contents: string) => /^https?:\/\/[^\s]+$/i.test(contents) ? contents : " ");
-  if (DECLINED.test(outside) || QUESTION.test(outside.replace(URL_RE, " ")) || ONE_OFF.test(outside)) return null;
-  if (!CHANGE.test(outside) || !NOTIFY.test(outside)) return null;
-  const when = parseWatchTiming(outside.replace(URL_RE, " "));
-  const ongoing = /(?:바뀌|변하|달라지)면|(?:바뀔|변할|달라질)\s*때|변경(?:되면|될\s*때)/.test(outside);
+  const hiddenQuotes: string[] = [];
+  const outside = text.replace(QUOTED, (_quote, contents: string) => {
+    if (QUOTED_VALUE.test(contents.trim())) return contents;
+    hiddenQuotes.push(contents);
+    return " ";
+  });
+  const stripped = outside.replace(URL_RE, " ");
+  if (!NOTIFY.test(stripped) || ONE_OFF.test(stripped)) return null;
+  const priceWords = stripped.replace(READ_ONLY_PRICE, " ");
+  const price = parsePriceCondition(priceWords) ?? (hiddenQuotes.some(q => parsePriceCondition(q) !== null) ? "unsupported" : null);
+  const politePriceRequest = price && /알려\s*(?:줄래(?:요)?|주세요|줘)\s*[?？]$/u.test(stripped);
+  if (DECLINED.test(price ? priceWords : stripped) || (QUESTION.test(stripped) && !politePriceRequest)) return null;
+  if (!CHANGE.test(stripped) && !price) return null;
+  const when = parseWatchTiming(stripped);
+  const ongoing = /(?:바뀌|변하|달라지)면|(?:바뀔|변할|달라질)\s*때|변경(?:되면|될\s*때)/.test(stripped) || (price && PRICE_WHEN.test(stripped));
   if (!when.cadence && !ongoing) return null;
   const urls = [...new Set([...outside.matchAll(URL_RE)].map(m => m[0].replace(/[.,;:!?)\]]+$/, "")))];
-  if (!urls.length) return null;
+  if (!urls.length) return price ? refuse("missing_url", "확인할 객실이나 상품 하나의 공개 주소를 함께 적어 주세요.") : null;
   if (urls.length > 1) return refuse("many_urls", "한 번에 공개 주소 하나만 감시할 수 있어요. 감시를 만들지 않았어요.");
   const unsafe = unsafePublicUrl(urls[0]);
   if (unsafe) return refuse("unsafe_url", `${unsafe} 로그인 없이 열리는 공개 주소만 확인해요. 감시를 만들지 않았어요.`);
-  const stripped = outside.replace(URL_RE, " ");
+  if (price === "unsupported" || (price && hiddenQuotes.length)) return refuse("unsupported_price", "가격 기준을 하나 정해 주세요. 객실이나 상품 하나의 공개 주소에 ‘10만 원 이하가 되면 알려줘’처럼 원화 상한을 붙여 주세요.");
   const conflict = !when.ok && when.conflict ? " 서로 다른 값이 함께 들어 있어요." : "";
   if (!when.ok && when.reason === "unsupported_interval" || when.ok && when.every_seconds === null && /(?:마다|간격)/.test(stripped)) return refuse("unsupported_interval", `확인 간격은 30분, 1시간, 하루만 지원해요.${conflict} 감시를 만들지 않았어요.`);
   if (!when.ok) return refuse("unsupported_duration", `감시 기간은 1일에서 90일까지만 정할 수 있어요.${conflict} 감시를 만들지 않았어요.`);
   const assumed = [];
   if (when.every_seconds === null) assumed.push("every_seconds");
   if (when.days === null) assumed.push("days");
-  return { ok: true, intent: { url: urls[0], every_seconds: when.every_seconds ?? 3600, days: when.days ?? 7, assumed, message: text } };
+  return { ok: true, intent: { url: urls[0], every_seconds: when.every_seconds ?? 3600, days: when.days ?? 7, assumed, message: text,
+    ...(price && { price_condition: price }) } };
 }
 
 const EVERY: Record<number, string> = { 1800: "30분", 3600: "1시간", 86400: "하루" };
 export function describePublicWatch(intent: PublicWatchIntent): string {
   const defaults = [intent.assumed.includes("every_seconds") && "간격은 1시간", intent.assumed.includes("days") && "기간은 7일"].filter(Boolean);
   const assumed = defaults.length ? ` (${defaults.join(", ")}로 정했어요)` : "";
-  return `${intent.url} 주소를 ${EVERY[intent.every_seconds]}마다 확인하고, 바뀐 경우에만 알려 드려요. ${intent.days}일 동안 이어져요.${assumed} `
+  const trigger = intent.price_condition ? `가격이 ${priceLabel(intent.price_condition)}일 때` : "바뀐 경우에만";
+  return `${intent.url} 주소를 ${EVERY[intent.every_seconds]}마다 확인하고, ${trigger} 알려 드려요. ${intent.days}일 동안 이어져요.${assumed} `
     + "로그인 없이 열리는 공개 페이지만 읽고, 아무것도 보내거나 바꾸지 않아요.";
 }
 /** Reply for a refused explicit request (null when the text is not a public-watch request or was accepted). */
 export const publicWatchChatReply = (parse: PublicWatchParse | null): string | null => parse && !parse.ok ? parse.message : null;
 
 export function toPublicWatchRequest(intent: PublicWatchIntent, requestId: string, threadId: string) {
-  return { thread_id: threadId, request_id: requestId, message: intent.message, url: intent.url, every_seconds: intent.every_seconds, days: intent.days };
+  return { thread_id: threadId, request_id: requestId, message: intent.message, url: intent.url, every_seconds: intent.every_seconds, days: intent.days,
+    ...(intent.price_condition && { price_condition: intent.price_condition }) };
 }
 
 const record = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const int = (v: unknown) => Number.isSafeInteger(v);
 export function isPublicWatch(v: unknown): v is PublicWatchView {
   return record(v) && [v.id, v.thread_id, v.url, v.state].every(x => typeof x === "string") && int(v.every_seconds) && int(v.days) && int(v.revision)
+    && (v.price_condition === undefined || validPriceCondition(v.price_condition))
     && Array.isArray(v.checks) && v.checks.length <= 100
     && v.checks.every(c => record(c) && int(c.due_at) && typeof c.state === "string" && (c.excerpt === undefined || c.excerpt === null || typeof c.excerpt === "string"));
 }
@@ -136,7 +155,7 @@ function Start({ accountId, threadId, intent, requestId, onDone, onExpired, onCa
     setPhase("busy"); setError("");
     try {
       const result = await scope.request<unknown>(BASE, "POST", body);
-      if (!isPublicWatch(result) || result.thread_id !== threadId || result.id !== id.current || new URL(result.url).href !== new URL(intent.url).href || result.every_seconds !== intent.every_seconds || result.days !== intent.days) throw new Error("Invalid public watch receipt");
+      if (!isPublicWatch(result) || result.thread_id !== threadId || result.id !== id.current || new URL(result.url).href !== new URL(intent.url).href || result.every_seconds !== intent.every_seconds || result.days !== intent.days || !samePriceCondition(result.price_condition, intent.price_condition)) throw new Error("Invalid public watch receipt");
       finished.current = true; id.current = null;
       if (alive.current) { setPhase("done"); onDone?.("시작했어요. 확인한 결과는 이 대화의 감시 기록에 남아요."); }
     } catch (e) {
@@ -158,6 +177,10 @@ const STATE: Record<string, string> = { active: "진행 중", stopped: "중지�
 const CHECK: Record<string, string> = {
   baseline: "처음 상태를 저장했어요", unchanged: "바뀐 게 없어요", changed: "바뀌었어요", failed: "확인하지 못했어요",
   unavailable: "지금 읽을 수 없어 확인하지 못했어요. 바뀐 것으로 보지 않아요", missed: "시간이 지나 건너뜀", pending: "확인 중", claimed: "확인 중", unknown: "결과 확인 대기", withdrawn: "권한 철회",
+};
+const PRICE_CHECK: Record<string, string> = {
+  baseline: "아직 가격 조건에 들지 않았어요", unchanged: "가격을 확인했어요 · 새 알림 없음",
+  changed: "가격 조건을 충족해 알렸어요", failed: "가격을 확인하지 못했어요",
 };
 const time = (v: number) => new Date(v * 1000).toLocaleString();
 const clip = (s: string) => (s.length > 280 ? s.slice(0, 280) + "…" : s);
@@ -211,11 +234,11 @@ function Log({ accountId, threadId, onExpired, refreshKey }: LogProps) {
   return <section className="member-public-watches" aria-label="이 대화의 공개 페이지 감시">
     {error && <p role="alert">{error}</p>}
     {items.map(w => <article className="member-public-watch" key={w.id}>
-      <p className="member-public-watch-state">{STATE[w.state] ?? "상태 확인 필요"} · 공개 페이지 · 바뀐 경우에만 알림</p>
+      <p className="member-public-watch-state">{STATE[w.state] ?? "상태 확인 필요"} · 공개 페이지 · {w.price_condition ? `${priceLabel(w.price_condition)}일 때 알림` : "바뀐 경우에만 알림"}</p>
       <h3>{w.url}</h3>
       <p>{EVERY[w.every_seconds] ?? `${w.every_seconds}초`}마다 확인 · {w.days}일 동안</p>
       {w.checks.length > 0 && <ul>{[...w.checks].sort((a, b) => b.due_at - a.due_at).map(c => <li key={c.due_at}>
-        <p>{time(c.due_at)} · {CHECK[c.state] ?? "상태 확인 필요"}</p>
+        <p>{time(c.due_at)} · {(w.price_condition && PRICE_CHECK[c.state]) || CHECK[c.state] || "상태 확인 필요"}</p>
         {c.excerpt && (c.state === "changed" || c.state === "unchanged" || c.state === "baseline") && <p>읽은 내용: {clip(c.excerpt)}</p>}
       </li>)}</ul>}
       {w.state === "active" && <button disabled={busy} onClick={() => void stop(w)}>멈추기</button>}

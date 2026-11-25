@@ -37,6 +37,7 @@ fn view_valid(v: &PublicWatchView) -> bool {
         && text(&v.url, 2048)
         && matches!(v.every_seconds, 1800 | 3600 | 86400)
         && (1..=90).contains(&v.days)
+        && v.price_condition.is_none_or(|p| p.valid())
         && v.revision > 0
         && STATES.contains(&v.state.as_str())
         && v.checks.len() <= CHECK_LIMIT
@@ -126,6 +127,7 @@ pub(super) async fn forward(
                 result.thread_id != r.thread_id
                     || result.every_seconds != r.every_seconds
                     || result.days != r.days
+                    || result.price_condition != r.price_condition
             })
         {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -159,6 +161,7 @@ mod tests {
             url: "https://status.example.test/service".into(),
             every_seconds: 3600,
             days: 7,
+            price_condition: None,
             state: state.into(),
             revision: 1,
             checks: vec![PublicWatchCheck {

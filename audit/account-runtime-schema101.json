@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "schema": 101,
+  "base_schema": 100,
+  "migrations": [
+    {
+      "name": "0101_member_public_watch_prices.sql",
+      "sha256": "e675b4b838fc1e2e0d8ee8c127c5c2dd4b1ece17c69b1ed5818caa22fedefde6"
+    }
+  ],
+  "tables": [],
+  "updated_tables": [
+    {
+      "name": "member_public_watches",
+      "kind": "table",
+      "scope": "personal",
+      "owner_query": "SELECT rowid AS rid,account_id,tenant_id FROM member_public_watches",
+      "key_transition": "Keep the originating member, volume generation, and work reference. Quarantine pending dispatches on restore.",
+      "verification": "Verify ownership, parent references, current access and the exact schema.",
+      "on_failure": "Quarantine unresolved work. An unverified external receipt cannot authorize a retry.",
+      "columns": [
+        "tenant_id",
+        "account_id",
+        "id",
+        "volume_id",
+        "generation",
+        "auth_epoch",
+        "host_epoch",
+        "thread_id",
+        "url",
+        "host",
+        "every_seconds",
+        "days",
+        "state",
+        "end_reason",
+        "revision",
+        "created_at",
+        "expires_at",
+        "next_due",
+        "ended_at",
+        "request_digest",
+        "stop_request_id",
+        "fingerprint",
+        "last_due",
+        "last_observed_at",
+        "last_changed_at",
+        "alerts",
+        "price_won",
+        "price_inclusive"
+      ],
+      "sql_sha256": "f25bef158b01a3eac7865b8c42bac84cae71372f65e08b4d3319d4c7cc33b80d"
+    }
+  ],
+  "schema_sha256": "431870c9d81a0a4f47e576361870ddc5565bb726092307aad833e832949e2301"
+}

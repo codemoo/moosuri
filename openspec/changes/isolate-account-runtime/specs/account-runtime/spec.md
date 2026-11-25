@@ -246,3 +246,8 @@ The member workspace SHALL show dated work receipts for text, browser, thread-bo
 
 - **WHEN** a source is forgotten, a schedule is retired, a grant epoch changes, or a restore completes
 - **THEN** historical task details respect current source visibility, retired schedules keep their earlier receipts, and automatic execution requires a current active grant.
+
+#### Scenario: Notify when a public price meets the member's limit
+
+- **WHEN** a member gives one public page and an inclusive or exclusive upper price in Korean won
+- **THEN** the original conversation shows the limit and the check history. A verified price satisfying the limit generates one notice, including on the first read. It can generate another after a verified price outside the limit. A change in surrounding text, a missing price or an ambiguous price generates no notice. An unreadable observation preserves the last verified condition.

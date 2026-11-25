@@ -8,9 +8,9 @@ The default, --expect-output-limit and --history-budget need no model login.
 binary built with `cargo build -p moosuri --features test-fixtures`; --short-corrections needs no model login.
 --preference-recall checks automatic recall of a stated standing preference (no model login; add --claude for the
 pinned model on the critical path, scored on its visible answer). Counts only are reported.
-Both print only aggregate PASS/SKIP/FAIL lines and one AGGREGATE JSON line.
-Every invocation creates and removes a private fixture. Only the first member
-has a model binding because both synthetic member processes run as this UID.
+--live-journey GROUP uses real Claude for every interpretation and answer, with per-case PASS and a JOURNEY total.
+Every invocation creates and removes a private fixture. A single OS peer UID can have one active model binding.
+Live journeys switch the test broker on member login while preserving the gateway, member volumes and per-owner ledger.
 """
 import argparse
 import base64
@@ -116,7 +116,7 @@ class Provider(QuietHandler):
             armed_chat = any(turn and turn[-1] == ("user", request) for turn, _ in self.server.turns)
             # --preference-recall only: the scenario module names the member messages it will send.
             armed_chat = armed_chat or (self.server.recall is not None and self.server.recall.knows(request))
-            if request not in known and not armed_chat:
+            if request not in known and not armed_chat and self.server.live is None:
                 self.send_error(400)
                 return
             answer = json.dumps(known.get(request, {"intent": "chat"}), ensure_ascii=False)
@@ -133,9 +133,9 @@ class Provider(QuietHandler):
             answer = json.dumps({"answer": seen, "needs_user": False}, ensure_ascii=False)
             self.server.browser_reads += 1
             prompt = messages[1][1]
-        elif self.server.recall is not None:
+        elif self.server.recall is not None or self.server.live is not None:
             # Mode-scoped wire expectations live in member_preference_recall.py; answer None means "ask the model".
-            answer = self.server.recall.chat(messages)
+            answer = self.server.recall.chat(messages) if self.server.recall is not None else None
             if answer is False:
                 self.send_error(400)
                 return
@@ -166,6 +166,8 @@ class Provider(QuietHandler):
                 return
             usage = {"prompt_tokens": sum(metrics[k] for k in claude_cli.USAGE if k != "output_tokens"),
                      "completion_tokens": metrics["output_tokens"]}
+            if self.server.live is not None:
+                self.server.live.record(classifier, messages, metrics)
         frames = [
             {"choices": [{"index": 0, "delta": {"role": "assistant", "content": answer or ""},
                           "finish_reason": None}]},
@@ -263,6 +265,17 @@ def provision(stack, binary, root, provider, output_tokens):
     provider.browser_socket = browser_root / "first.sock" if browser_root else None
     registry_cmd = [binary, "account-runtime", "--registry", registry]
     members = []
+    brokers = []
+    broker_stack = stack.enter_context(ExitStack())
+    connection_revision = str(uuid4())
+
+    def select_member(index):
+        broker_stack.close()
+        command, ready = brokers[index]
+        start(broker_stack, command, ready, env)
+
+    if provider.live is not None:
+        provider.live.select_member = select_member
     for index, label in enumerate(("first", "second")):
         email = f"{label}@example.invalid"
         result = subprocess.run([*registry_cmd, "reserve", "--request-id", str(uuid4()), "--email", email],
@@ -279,28 +292,35 @@ def provision(stack, binary, root, provider, output_tokens):
         command = [*member, "serve", "--socket", sock]
         if browser_root:  # the second member gets a path nobody listens on: its browser stays unavailable
             command.extend(["--browser-test-socket", browser_root / f"{label}.sock"])
-        if index == 0:
+        if index == 0 or provider.live is not None:
+            # A separate fixture broker and ledger per member keeps each same-UID
+            # test process bound to exactly one owner, as in the installed runtime.
+            config_root = directory(root, "engine-" + label) if provider.live is not None else root
+            sockets = directory(model_root, label) if provider.live is not None else model_root
+            member_ledger = directory(ledger, label) if provider.live is not None else ledger
             binding = {k: owner[k] for k in ("account_id", "tenant_id", "volume_id", "generation")}
-            call_limit = 40 if provider.recall is not None else 32 if provider.semantic or provider.research else 2 * (sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5)
+            call_limit = 80 if provider.live is not None else 40 if provider.recall is not None else 32 if provider.semantic or provider.research else 2 * (sum(map(len, CLAUDE_DIALOGUES)) if provider.model == claude_cli.MODEL else 5)
             reserve = 8192 if provider.recall is not None or provider.semantic or provider.research or provider.model == claude_cli.MODEL else 4096
             binding.update(peer_uid=os.geteuid(),
                            budget={"max_calls": call_limit, "max_tokens": reserve * call_limit, "reservation_tokens": reserve})
-            fixture_key = root / "provider.key"
+            fixture_key = config_root / "provider.key"
             fixture_key.write_text(provider.fixture_key)
-            config = root / "model.json"
+            config = config_root / "model.json"
             config.write_text(json.dumps({
-                "version": 1, "connection_revision": str(uuid4()), "model": provider.model,
+                "version": 1, "connection_revision": connection_revision, "model": provider.model,
                 "provider": {"kind": "compatible", "base_url": f"http://127.0.0.1:{provider.server_port}/v1",
                              "allowed_ips": ["127.0.0.1"], "router_providers": [], "zero_data_retention": False},
                 "bindings": [binding], "key_file": str(fixture_key),
             }))
-            fingerprint = root / "fingerprint"
+            fingerprint = config_root / "fingerprint"
             fingerprint.write_bytes(secrets.token_bytes(32))
-            model_socket = model_root / owner["account_id"] / "model.sock"
-            start(stack, [binary, "runtime-model", "--registry", registry, "--ledger", ledger,
-                          "--config", config, "--fingerprint-key", fingerprint, "--socket-dir", model_root],
-                  model_socket, env)
-            preview = root / "preview.json"
+            model_socket = sockets / owner["account_id"] / "model.sock"
+            brokers.append(([binary, "runtime-model", "--registry", registry, "--ledger", member_ledger,
+                             "--config", config, "--fingerprint-key", fingerprint, "--socket-dir", sockets],
+                            model_socket))
+            if index == 0:
+                select_member(0)
+            preview = config_root / "preview.json"
             preview.write_text(json.dumps({"socket": str(model_socket), "broker_uid": os.geteuid(),
                                            "max_output_tokens": output_tokens}))
             command.extend(["--text-preview-config", preview])
@@ -528,6 +548,8 @@ def main():
     parser.add_argument("--channel", choices=("chrome", "chromium", "webkit"), default="chrome",
                         help="installed Chrome stable or a Playwright browser")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--live-journey", choices=("daily", "continuity", "privacy", "library", "work", "boundaries"),
+                      help="run an end-to-end member journey with real Claude for every classifier and chat call")
     parser.add_argument("--supplemental-work", action="store_true", help="exercise preference changes, follow-ups and source withdrawal in chat")
     parser.add_argument("--semantic-work", action="store_true", help="submit everyday work and reopen its source-backed results")
     parser.add_argument("--preference-recall", action="store_true",
@@ -551,6 +573,10 @@ def main():
     mode.add_argument("--history-budget", action="store_true",
                       help="exercise the real broker reservation with a synthetic deterministic provider")
     args = parser.parse_args()
+    if args.live_journey:
+        if args.supplemental_work or args.semantic_work or args.preference_recall:
+            parser.error("--live-journey runs one independent scenario group")
+        args.claude = True
     if args.preference_recall and (args.supplemental_work or args.semantic_work or args.conversation_work
                                    or args.workflows or args.public_watch_read or args.public_watch
                                    or args.brief_work or args.research_journey or args.research_work
@@ -588,6 +614,10 @@ def main():
         provider.browser_reads = 0 if provider.research else None
         provider.turns = [] if args.claude or args.preference_recall else provider_turns(args.history_budget)
         provider.recall = None
+        provider.live = None
+        if args.live_journey:
+            import member_live_journeys
+            provider.live = member_live_journeys.Receipts()
         if args.preference_recall:
             import member_preference_recall
             provider.recall = member_preference_recall.Recall(real=args.claude)
@@ -621,7 +651,10 @@ def main():
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/")
                               else route.abort())
                 page = context.new_page()
-                if args.preference_recall:
+                if args.live_journey:
+                    member_live_journeys.exercise(args.live_journey, page, members, origin, provider,
+                                                  login=login, logout=logout, rows=rows)
+                elif args.preference_recall:
                     member_preference_recall.exercise(page, members, origin, provider, login=login, logout=logout,
                                                       rows=rows, passed=passed)
                 elif args.public_watch_read:

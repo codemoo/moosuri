@@ -23,6 +23,9 @@ const QUOTED = /[‘'“"「『](.+?)[’'”"」』]/g;
 const EXTERNAL = /(https?:\/\/|www\.|웹\s?사이트|사이트|홈페이지|도메인|메일|이메일|gmail|지메일|캘린더|구글|드라이브|슬랙|slack|github|깃허브)/i;
 const CLOCK = /(오전|아침|새벽|오후|저녁|밤)?\s*(\d{1,2})\s*(?:시(?!간)\s*(?:(\d{1,2})\s*분|(반))?|:(\d{2}))\s*에?/g;
 const WATCH_VERB = /(바뀌|바뀔|변하|변경|달라지|변화|새로\s?(?:생기|추가|올라))/;
+// A notification about a future change is recurring. Asking what already changed is ordinary chat.
+const WHEN_CHANGED = /(?:바뀌|변하|달라지|변경되|추가되|생기|올라오)(?:면|는\s*대로)|(?:바뀔|변할|달라질|변경될|추가될|생길|올라올)\s*때|(?:변화|변경|변동)(?:\s*사항)?(?:가|이)?\s*(?:있으면|있을\s*때|시(?=\s|$))/;
+const NOTIFY_AFTER_CONDITION = /^(?:마다|에만|만)?[\s,]*(?:(?:그때|바로|즉시|꼭|좀|나한테|저한테|나에게|저에게|내게)\s*)*(?:알려|알림|통지|말해)/;
 const NOTIFY = /(알려|알림|통지|말해)/;
 const DECLINED = /(?:하|주|보내|만들|시작하|켜|알리|읽|보|해주|멈추|취소하)지\s*(?:마|말|않)|(?:안\s*해도|필요\s*없)/;
 const STOP = /(그만|중지|멈춰|멈추|해제|취소|중단|꺼\s?줘|끄)/;
@@ -183,7 +186,11 @@ export function parseMonitorChat(raw: string): MonitorParse {
       : refuse("ambiguous_time", connected.message);
   }
   const brief = (/브리핑/.test(outside) || /요약/.test(outside) && NOTIFY.test(outside)) && /(매일|하루에\s*한\s*번)/.test(outside);
-  const watch = !brief && (WATCH_VERB.test(outside) && NOTIFY.test(outside) || /(감시|지켜봐|모니터)/.test(outside));
+  const every = interval(text);
+  const condition = WHEN_CHANGED.exec(outside);
+  const notifyOnChange = condition && NOTIFY_AFTER_CONDITION.test(outside.slice(condition.index + condition[0].length));
+  const periodicChange = every !== null && WATCH_VERB.test(outside) && NOTIFY.test(outside);
+  const watch = !brief && (notifyOnChange || periodicChange || /(감시|지켜봐|모니터)/.test(outside));
   if (!brief && !watch) return { ok: false, reason: "not_monitor" };
   if (EXTERNAL.test(outside)) {
     return refuse("unsupported_source", "지금은 내 기억과 대화 기록의 변화만 확인할 수 있어요. 외부 사이트, 메일, 캘린더는 읽지 않아요.");
@@ -205,7 +212,6 @@ export function parseMonitorChat(raw: string): MonitorParse {
   if (/\d\s*시(?!간)|\d:\d{2}/.test(outside)) {
     return refuse("unsupported_interval", "변화 감시는 30분, 1시간, 하루 간격만 지원해요. 정해진 시각에 받으려면 ‘매일 아침 9시에 ○○ 브리핑’이라고 말해 주세요.");
   }
-  const every = interval(text);
   if (every === "unsupported") return refuse("unsupported_interval", "변화 감시는 30분, 1시간, 하루 간격만 지원해요.");
   if (every === null) assumed.push("every_seconds");
   return { ok: true, intent: { kind: "watch", scope, query: q, every_seconds: every ?? 3600, days, assumed } };

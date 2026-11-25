@@ -28,3 +28,8 @@ A Kiri member SHALL be able to state a lasting personal preference in ordinary c
 
 - **WHEN** the query is unrelated, belongs to another member, or has no matching current evidence
 - **THEN** the answer receives no such preference. A hypothetical, reported, quoted or temporary choice does not create a lasting preference.
+
+#### Scenario: Liking an option in ordinary speech
+
+- **WHEN** a member says “난 커피는 따뜻하게 마시는 게 좋아” and later asks for a coffee temperature
+- **THEN** the new conversation uses the standing preference. A question asking which option is better, even without a question mark, or advice conditional on a particular situation leaves the member's stored preferences unchanged.

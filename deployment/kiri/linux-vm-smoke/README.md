@@ -115,10 +115,13 @@ Build the member web assets first, then build the Linux binary with `cargo build
 | --- | --- |
 | `--semantic-work` or `--semantic-work --claude` | Everyday research, combined report, quoted evidence, local watches and briefs |
 | `--supplemental-work` or `--conversation-work` | Preferences, separate tasks and their follow-ups, recovery and source withdrawal |
+| `--live-journey daily`, `continuity`, `privacy`, `library`, `work` or `boundaries` | Coffee and meeting preferences, a long trip conversation, two members with opposite preferences, memory editing and deletion, a delegated report, and distinguishing questions from lasting preferences or watches. Every interpretation and ordinary reply uses the signed-in Claude CLI. |
 | `--preference-recall` or `--preference-recall --claude` | Stated preferences, same-thread and cross-thread advice, one-time choices, corrections, forgetting and account isolation. Both modes drive the member composer. |
 | `--research-work` or `--research-journey` | Shopping, applications, actual source reads, mobile navigation and manual browser handoff with a synthetic broker |
 | `--brief-work`, `--public-watch` or `--public-watch-read` | Recurring requests from chat, connection requirements, check history and stop |
 | `--claude` or `--short-corrections` | Ten real Claude turns including three game follow-ups, or three synthetic correction turns |
+
+Run each journey in its own process. `PASS` counts submitted messages, interpretations and answers for each completed case. `JOURNEY` gives the group total. Reopening a stored report is expected to add zero model calls. All six groups use synthetic accounts and records on Linux. [Scenario steps and results](../../../docs/reviews/2026-11-25-live-member-journeys.md)
 
 The real model runs require a logged-in first-party Claude CLI. For Gmail and Calendar the Linux Rust route suites use isolated provider doubles and check returned identifiers, current grant, final approval, cancellation and recovery. [Scenario mapping](../../../docs/reviews/2026-11-25-member-work-from-chat.md)
 

@@ -14,6 +14,11 @@ The member service SHALL route a reworded request to the same permitted outcome 
 - **WHEN** two tasks are visible and the member narrows only the second one
 - **THEN** that task alone receives the new condition and a later question can refer to its current authorized evidence.
 
+#### Scenario: Continue a plan after a correction
+
+- **WHEN** a member corrects the day of a meeting or changes the headcount for a fare calculation and asks for the updated result
+- **THEN** ordinary chat uses the earlier time or fare and answers in the same conversation without creating a recurring watch. An explicit request for notification when a saved item changes can start a watch.
+
 ### Requirement: Member input and external effects keep their identity
 
 The runtime SHALL preserve the member, task, current source versions, input question and approved external action across reconnects. A provider receipt SHALL distinguish a completed external action from a draft, a handoff and an unknown outcome.

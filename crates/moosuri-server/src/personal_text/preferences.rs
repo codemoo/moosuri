@@ -383,25 +383,32 @@ fn stated_preference(text: &str, subject: &str) -> bool {
         }
         _ => false,
     };
-    topic
-        && !subject.is_empty()
-        && !rest.trim().is_empty()
-        && [
-            "편해",
-            "편해요",
-            "편합니다",
-            "편하다",
-            "선호해",
-            "선호해요",
-            "선호합니다",
-            "선호한다",
-            "좋아해",
-            "좋아해요",
-            "좋아합니다",
-            "좋아한다",
-        ]
-        .iter()
-        .any(|ending| words.ends_with(ending))
+    let mut ending = rest.split_whitespace().rev();
+    let likes_option = matches!(ending.next(), Some("좋아" | "좋아요" | "좋습니다" | "좋다"))
+        && matches!(ending.next(), Some("게" | "것이"))
+        // Without punctuation the same ending also asks which option is better.
+        // A conditional describes when a choice applies, not a standing choice.
+        && !ending.any(|word| {
+            word.ends_with('면') || ["어떤", "어느", "무슨", "뭐", "뭘", "무엇", "누가", "누구", "언제", "어디", "몇"]
+                .iter().any(|question| word.starts_with(question))
+        });
+    let preference_verb = [
+        "편해",
+        "편해요",
+        "편합니다",
+        "편하다",
+        "선호해",
+        "선호해요",
+        "선호합니다",
+        "선호한다",
+        "좋아해",
+        "좋아해요",
+        "좋아합니다",
+        "좋아한다",
+    ]
+    .iter()
+    .any(|suffix| words.ends_with(suffix));
+    topic && !subject.is_empty() && !rest.trim().is_empty() && (likes_option || preference_verb)
 }
 /// Deterministic checks that run after the model's proposal and before any lookup or write.
 fn gate(

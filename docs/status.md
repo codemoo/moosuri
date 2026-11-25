@@ -7,10 +7,10 @@
 | 영역 | 확인한 동작 | 남은 일 |
 | --- | --- | --- |
 | 계정과 개인 데이터 | 로그인·대화·수동 기억·Google 권한은 회원 볼륨에 저장한다. 회원은 기억을 여러 페이지에 걸쳐 검색하고 같은 로그인 세션에서 화면을 오가며 초안을 이어 쓸 수 있다. 설치 관리자는 회원을 초대·정지하고 사용량을 확인한다. [관리 안내](../deployment/kiri/admin.md) | 현재 운영은 새 볼륨으로 시작했다. 기존 데이터와 키를 보존하는 전환 및 독립 복구는 일부 합성 자료로만 검증했다. [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md) |
-| 모델 | 설치 관리자만 모델과 추론 강도를 지정한다. 운영 회원 소켓에서 Claude Sonnet 5.5 / medium으로 산술 응답, 다음 문서 선택, 시간표의 출발 시각과 승강장 답변을 확인했다. 게이트웨이·모델 브로커·회원 컨테이너에서 같은 배포본을 확인했다. [엔진 설정](../deployment/kiri/admin.md) | 운영 ChatGPT 연결에는 별도 인증이 필요하다. [구독 연결](../deployment/kiri/subscriptions.md) |
-| 작업 브라우저 | 대화에서 공개 페이지를 읽고 같은 탭에서 조건을 바꾼 후 작업을 재개한다. 등록한 회원의 명시적인 Google 로그인은 새 Kiri Chrome에서 시도하고 결과를 대화에 남긴다. [사용 안내](../deployment/kiri/browser.md) | 첫 운영 시도의 Google 인증 결과는 미확인이다. 전용 VM 도우미를 갱신했다. 실물 iOS·Android 재진입과 동시 사용 지연 측정도 남아 있다. [운영 기록](reviews/2026-11-25-member-vault.md) |
-| Google Workspace | 관리자가 운영 커넥터 목록과 Google 서비스 상세에서 Cloud 프로젝트·API 5개 준비와 웹 클라이언트 등록을 시작할 수 있다. Linux 격리 시험에서 합성 클라이언트를 등록한 뒤 기존·신규 회원이 각각 별도 Google 동의를 시작했다. [회원별 연결 절차](../deployment/kiri/google.md) | 운영 설치에는 Google 웹 클라이언트가 아직 등록되지 않았다. 실제 Cloud 프로젝트 준비, 첫 회원 동의와 조회는 미검증이다. |
-| 볼트 | 등록한 운영 회원이 별도 볼트 창을 열 수 있다. Apple 암호 CSV에서 사용자 이름을 골라 저장한 뒤 잠금 암호와 복구 키로 다시 열었다. 전 항목과 두 시각의 TOTP를 대조했고 재가져오기에서 추가 대상은 0개였다. [회원 볼트 운영](../deployment/kiri/README.md#개인-암호-볼트-연결) · [검증 기록](reviews/2026-11-25-member-vault.md) | 다른 회원 등록과 별도 기기 복원은 개별 확인이 필요하다. |
+| 모델 | 설치 관리자만 모델과 추론 강도를 지정한다. 11월 21일 운영 회원 소켓에서 Claude Sonnet 5.5 / medium으로 산술 응답, 다음 문서 선택, 시간표의 출발 시각과 승강장 답변을 확인했다. [엔진 설정](../deployment/kiri/admin.md) | 운영 ChatGPT 연결에는 별도 인증이 필요하다. [구독 연결](../deployment/kiri/subscriptions.md) |
+| 작업 브라우저 | 대화에서 공개 페이지를 읽고 같은 탭에서 조건을 바꾼 후 작업을 재개한다. 등록한 회원이 대화에서 Google 로그인을 요청하면 새 Kiri Chrome을 열고 작업에 결과를 남긴다. 운영 계정은 Google 비밀번호 화면에 도달했다. [사용 안내](../deployment/kiri/browser.md) | 배포 후 새 Kiri 프로필에서도 Google이 추가 로그인을 요구했다. 실계정 로그인 완료, 실물 iOS·Android 재진입, 동시 사용 지연 측정이 남았다. [운영 워크로그](reviews/2026-11-25-google-vault-connection.md) |
+| Google Workspace | 대화에서 GWS나 개별 서비스를 요청하면 연결 화면이 열린다. 설치 관리자는 웹 OAuth 클라이언트를 등록하고, 회원은 자기 볼트의 Google 항목으로 연결을 시작할 수 있다. Linux에서는 공급자가 확인한 계정이 지정한 회원과 일치할 때만 권한을 저장하는 동작을 검증했다. [회원별 연결 절차](../deployment/kiri/google.md) | 운영 설치의 웹 클라이언트와 회원의 Google 권한은 미등록이다. 실제 Google 동의와 회원 API 조회가 남았다. [운영 확인](reviews/2026-11-25-google-vault-connection.md) |
+| 볼트 | 등록 회원은 별도 볼트 창에서 가져온 암호와 TOTP를 열 수 있다. Google 연결 화면에서 본인 이메일과 공식 로그인 주소에 맞는 항목을 찾고, 기기에서 쓸 Chrome 확장을 내려받을 수 있다. 배포 후 기존 저장 항목과 운영 확장 패키지를 대조했다. [볼트 운영](../deployment/kiri/README.md#개인-암호-볼트-연결) · [가져오기 검증](reviews/2026-11-25-member-vault.md) | 운영 회원 기기에서 실계정 자동 입력과 Google 비밀번호 제출 확인이 남았다. 다른 회원 등록과 별도 기기 복원은 개별 확인이 필요하다. [로그인 검증](reviews/2026-11-25-google-vault-connection.md) |
 
 ## 회원 UI 개편과 검증 범위
 

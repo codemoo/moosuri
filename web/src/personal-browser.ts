@@ -90,6 +90,22 @@ export function explicitGoogleSignIn(text: string) {
   return !/https?:\/\//iu.test(text) && (googleKorean.test(text) || googleEnglish.test(text));
 }
 
+// Opening the connector is navigation. It never grants a scope or starts a browser login.
+export function googleConnectionRequest(text: string): { service?: string } | null {
+  const name = "(gws|google workspace|구글 워크스페이스|gmail|지메일|google drive|구글 드라이브|google docs|구글 문서|google slides|구글 슬라이드|google sheets|구글 시트)";
+  const message = text.trim().toLowerCase().replace(/\s+/gu, " ").replace(/[.!]$/u, "").trimEnd();
+  const korean = new RegExp("^(?:(?:구글|google)(?: 계정)?(?:에|으로)? 로그인(?:하고|해서|한 뒤) )?" + name + "(?:까지|을|를|도)?\\s*(?:연결|연동|등록)(?:을|을 좀| 좀)?\\s*(?:해\\s*(?:줘|주세요|줘요)|하기)$", "u");
+  const english = new RegExp("^(?:please )?(?:sign in to google and )?connect (?:my )?" + name + "$", "u");
+  const match = korean.exec(message) ?? english.exec(message);
+  if (!match) return null;
+  const services: Record<string, string> = {
+    gmail: "gmail", "지메일": "gmail", "google drive": "drive", "구글 드라이브": "drive",
+    "google docs": "docs", "구글 문서": "docs", "google slides": "slides", "구글 슬라이드": "slides",
+    "google sheets": "sheets", "구글 시트": "sheets",
+  };
+  return { service: services[match[1]] };
+}
+
 /**
  * A sign-in request is never a general browser task. Google gets the typed `google_sign_in` operation
  * (see `browserIntent`); other sites get a truthful handoff. URLs are stripped first for the handoff.

@@ -34,7 +34,7 @@ fn scalar(c: &Connection, query: &str) -> Check<i64> {
 }
 pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
     ensure(
-        (81..=101).contains(&schema),
+        (81..=102).contains(&schema),
         "unsupported inventory schema; regenerate and review classification first",
     )?;
     let mut v: Value = serde_json::from_str(&read(
@@ -94,6 +94,7 @@ pub(super) fn load(root: &Path, schema: i64) -> Check<Value> {
                 98 => 237,
                 99 => 239,
                 100 | 101 => 241,
+                102 => 242,
 
                 _ => unreachable!(),
             },
@@ -606,9 +607,9 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             "--schema" if selected.is_none() => {
                 selected = Some(
                     iter.next()
-                        .ok_or("--schema requires 81 through 101")?
+                        .ok_or("--schema requires 81 through 102")?
                         .parse::<i64>()
-                        .map_err(|_| "--schema requires 81 through 101")?,
+                        .map_err(|_| "--schema requires 81 through 102")?,
                 );
             }
             "--snapshot" if snapshot.is_none() => {
@@ -619,7 +620,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
             }
             _ => {
                 return Err(
-                    "usage: account-runtime-inventory [--schema 81..101] [--snapshot DIRECTORY]"
+                    "usage: account-runtime-inventory [--schema 81..102] [--snapshot DIRECTORY]"
                         .into(),
                 );
             }
@@ -717,6 +718,16 @@ mod tests {
           INSERT INTO personal_compatible_providers VALUES('private-b','tenant-b','account-b');
           COMMIT;").unwrap();
     }
+    #[test]
+    fn newest_migration_has_a_complete_owner_inventory() {
+        let root = root();
+        let migrations = migration_files(&root).unwrap();
+        let schema = *migrations.keys().next_back().unwrap();
+        let manifest = load(&root, schema).unwrap();
+        let db = replay(&root, &manifest).unwrap();
+        inspect(&db, &manifest).unwrap();
+    }
+
     #[test]
     fn actual_schema81_enumerates_all_202_tables_and_excludes_only_fts_shadows() {
         let (c, m) = fixture();

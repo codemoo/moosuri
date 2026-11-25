@@ -25,8 +25,8 @@ const browserReasons: Partial<Record<string, string>> = {
 };
 const noProgress = "browser_no_progress";
 
-export function PersonalBrowserCard({ browser, pending, onOpen }: {
-  browser: PersonalBrowser; pending: boolean; onOpen: (trigger: HTMLButtonElement) => void;
+export function PersonalBrowserCard({ browser, pending, onOpen, onConnections }: {
+  browser: PersonalBrowser; pending: boolean; onOpen: (trigger: HTMLButtonElement) => void; onConnections?: () => void;
 }) {
   const workspace = browser.status?.workspace;
   if (!workspace && !pending) return null;
@@ -42,6 +42,7 @@ export function PersonalBrowserCard({ browser, pending, onOpen }: {
         {google?.officialUrl && (
           <a href={google.officialUrl} target="_blank" rel="noopener noreferrer">내 기기에서 Google 공식 페이지 열기</a>
         )}
+        {google && onConnections && <button type="button" onClick={onConnections}>Google Workspace 연결 열기</button>}
         {workspace?.title && <span>{workspace.title}</span>}
         {workspace?.state === "ready" && workspace.reason === noProgress &&
           <span data-reason={noProgress}>진행이 없어 일시 중지됨</span>}

@@ -206,6 +206,21 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
     try {
       const web_client_json = await file.text();
       if (controller.signal.aborted) return;
+      let client;
+      try { client = JSON.parse(web_client_json); } catch { /* handled below */ }
+      if (client?.installed) {
+        setError("데스크톱용 OAuth 파일입니다. 같은 프로젝트에서 웹 애플리케이션을 선택하고 아래 콜백 주소를 등록해 주세요.");
+        return;
+      }
+      if (!client?.web || typeof client.web.client_id !== "string" || !client.web.client_id ||
+          typeof client.web.client_secret !== "string" || !client.web.client_secret) {
+        setError("Google에서 다운로드한 웹 애플리케이션 클라이언트의 JSON 파일을 선택해 주세요.");
+        return;
+      }
+      if (!Array.isArray(client.web.redirect_uris) || !client.web.redirect_uris.includes(status.redirect_uri)) {
+        setError("콜백 주소가 다릅니다. 아래 주소를 웹 클라이언트의 승인된 리디렉션 URI에 등록하고 JSON을 다시 다운로드해 주세요.");
+        return;
+      }
       const result = await scope.request<Status>(installationGoogleSetupPath, "POST", { web_client_json }, controller.signal, { timeoutMs: 20000 });
       setStatus(result);
       setSaved(result.configured);

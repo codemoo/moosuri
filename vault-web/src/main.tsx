@@ -3,6 +3,7 @@ import {createRoot} from "react-dom/client";
 import {WorkerClient,VaultFailure} from "./worker-client";
 import type {Draft,EntryDetails,Owner,Preview,Receipt,Summary,Command,CurrentSession} from "./types";
 import {VaultField,VaultIcon,VaultList,itemName} from "./workspace";
+import {GoogleAutofill} from "./GoogleAutofill";
 import {MAX_ITEMS,MAX_TERMS,formatMiB,initialSelection,scopeLabel,selectable,selectionState,selector} from "./import-filter";
 import type {FilterMode} from "./import-filter";
 import "./style.css";
@@ -20,6 +21,8 @@ function App(){
   const searchOwner=useRef(0),importCancel=useRef(false),busyRef=useRef(false);
   const client=useRef<WorkerClient|null>(null),generation=useRef(0),ownerRef=useRef<Owner|null>(null),pendingStartup=useRef<Promise<unknown>|null>(null);
   const [assistant,setAssistant]=useState(""),[connected,setConnected]=useState(false),[initialized,setInitialized]=useState(true),[unlocked,setUnlocked]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
+  const [googleEmail,setGoogleEmail]=useState("");
+  const [googleSelection,setGoogleSelection]=useState<{ email: string; items: Summary[] } | null>(null);
   const [password,setPassword]=useState(""),[useRecovery,setUseRecovery]=useState(false),[recovery,setRecovery]=useState<string|null>(null),[verify,setVerify]=useState("");
   const [items,setItems]=useState<Summary[]>([]),[query,setQuery]=useState(""),[selected,setSelected]=useState<string|null>(null),[draft,setDraft]=useState<Draft|null>(null),[editing,setEditing]=useState<string|null>(null);
   const [revealed,setRevealed]=useState<{value:string;until:number}|null>(null),[uncertain,setUncertain]=useState(false),[oldPending,setOldPending]=useState<Receipt[]>([]),[settings,setSettings]=useState(false),[newPassword,setNewPassword]=useState("");
@@ -29,7 +32,8 @@ function App(){
   const [searchOpen,setSearchOpen]=useState(false),[confirmDelete,setConfirmDelete]=useState(false);
   const [detail,setDetail]=useState<Detail|null>(null),[detailAttempt,setDetailAttempt]=useState(0);
   const listScroll=useRef(0),revealOwner=useRef(0);
-  const selectedItem=items.find(i=>i.id===selected),frozen=busy||recovery!==null||uncertain;
+  const visibleItems = googleEmail ? (googleSelection?.email === googleEmail ? googleSelection.items : []) : items;
+  const selectedItem=visibleItems.find(i=>i.id===selected),frozen=busy||recovery!==null||uncertain;
   const isWorkspace=connected&&unlocked&&recovery===null;
   const screen=draft?"editor":preview?"import":settings?"settings":selectedItem?"detail":"list";
   const showingDetail=isWorkspace&&screen==="detail";
@@ -37,6 +41,8 @@ function App(){
   function hideReveal(){revealOwner.current++;setRevealed(null)}
   function clearSelection(){setSelected(null);setDetail(null);setOtp(null);setConfirmDelete(false);hideReveal()}
   function lock(reason="vault_locked"){
+    setGoogleEmail("");
+    setGoogleSelection(null);
     generation.current++;client.current?.close();client.current=null;pendingStartup.current=null;busyRef.current=false;
     setUnlocked(false);setBusy(false);setScope("");setPassword("");setRecovery(null);setVerify("");setItems([]);setQuery("");clearSelection();setDraft(null);setEditing(null);
     setPreview(null);setRows([]);setImporting(false);setUsername("");setFilterMode("all");setTerms("");setImported(0);importCancel.current=true;
@@ -66,12 +72,40 @@ function App(){
     finally{if(epoch===generation.current){busyRef.current=false;setBusy(false)}}
   }
   async function list(text=query){const epoch=generation.current,sequence=++searchOwner.current;const result=await run<Summary[]>({op:"list",query:text});if(epoch===generation.current&&sequence===searchOwner.current)setItems(result)}
+  useEffect(() => {
+    if (!connected || !assistant || !window.opener || !ownerRef.current) return;
+    const account = ownerRef.current.account;
+    const receive = (event: MessageEvent) => {
+      if (event.origin === assistant && event.source === window.opener &&
+          event.data?.kind === "moosuri-vault-google-account" && event.data.account === account &&
+          ownerRef.current?.account === account && typeof event.data.email === "string" &&
+          event.data.email.length <= 254 && /^[^@\s]+@[^@\s]+$/u.test(event.data.email)) {
+        setGoogleEmail(event.data.email);
+      }
+    };
+    window.addEventListener("message", receive);
+    window.opener.postMessage({ kind: "moosuri-vault-google-context", account }, assistant);
+    return () => window.removeEventListener("message", receive);
+  }, [assistant, connected, unlocked]);
   useEffect(()=>{
     if(!unlocked||frozen)return;
     const epoch=generation.current;
-    const timer=setTimeout(()=>{if(epoch===generation.current)void list(query).catch(()=>{})},250);
+    const timer=setTimeout(()=>{
+      if (epoch !== generation.current) return;
+      if (!googleEmail) { void list(query).catch(()=>{}); return; }
+      const sequence = ++searchOwner.current;
+      void run<Summary[]>({ op: "google_logins", email: googleEmail }).then(matches => {
+        if (epoch !== generation.current || sequence !== searchOwner.current) return;
+        setGoogleSelection({ email: googleEmail, items: matches });
+      }).catch(() => {
+        if (epoch === generation.current && sequence === searchOwner.current) {
+          setGoogleSelection({ email: googleEmail, items: [] });
+          setNotice("저장된 Google 로그인을 확인하지 못했습니다.");
+        }
+      });
+    },250);
     return()=>{clearTimeout(timer);searchOwner.current++};
-  },[query,unlocked,frozen]);
+  },[query,unlocked,frozen,googleEmail]);
   async function saved(){const epoch=generation.current;await list();if(epoch!==generation.current)return;setInitialized(true);setUnlocked(true);setRecovery(null);setVerify("");setDraft(null);setEditing(null);setConfirmDelete(false);setUncertain(false);setOldPending([]);if(importing){const status=await run<{committed:number}>({op:"csv_status"});setImported(status.committed)}setNotice("저장했습니다.")}
   async function publish(){await run({op:"publish"});await saved()}
   useEffect(()=>{
@@ -275,13 +309,18 @@ function App(){
     {!connected?<section className="gate"><h2>볼트 인증이 필요합니다</h2><p>이 사이트를 열려면 무수리에서 발급한 볼트 세션이 필요합니다.</p>{assistant&&<a className="primary link-button" href={`${assistant}/app`}>무수리로 돌아가기</a>}</section>:
       recovery!==null?<section className="gate recovery"><h2>복구 키를 안전하게 보관하세요</h2><p>볼트 비밀번호를 잊었을 때 필요합니다. 기록한 키를 아래에 한 번 입력해 확인해 주세요.</p><textarea aria-label="새 복구 키" value={recovery} readOnly spellCheck={false}/><label>기록한 복구 키<input autoComplete="off" spellCheck={false} value={verify} onChange={e=>setVerify(e.target.value)}/></label><div className="actions"><button className="primary" disabled={busy||!verify} onClick={()=>void perform(async()=>{await run({op:"verify_recovery",recovery:verify.trim()});await publish()})}>저장하고 열기</button><button disabled={busy||uncertain} onClick={()=>void perform(async()=>{await run({op:"cancel"});setRecovery(null);setVerify("")})}>취소</button></div></section>:
       !unlocked?<section className="gate"><h2>{initialized?"볼트 열기":"내 볼트 만들기"}</h2><form onSubmit={e=>{e.preventDefault();void perform(async()=>{
-        if(initialized){await run({op:"unlock",secret:password,recovery:useRecovery});setPassword("");setUnlocked(true);await list()}
+        if(initialized){await run({op:"unlock",secret:password,recovery:useRecovery});setPassword("");setUnlocked(true);if(!googleEmail)await list()}
         else{const result=await run<{recovery:string}>({op:"setup",password});setPassword("");setRecovery(result.recovery)}
       })}}><label>{useRecovery?"복구 키":"볼트 비밀번호"}<input type="password" autoComplete={initialized?"current-password":"new-password"} value={password} onChange={e=>setPassword(e.target.value)} required minLength={initialized?undefined:12} maxLength={1024}/></label>{!initialized&&<p className="hint">기억하기 어려운 긴 비밀번호를 정하고 복구 키를 별도로 보관하세요. 관리자가 계정 비밀번호를 바꿔도 볼트는 열리지 않습니다.</p>}{initialized&&<label className="check"><input type="checkbox" checked={useRecovery} onChange={e=>{setUseRecovery(e.target.checked);setPassword("")}}/>복구 키로 열기</label>}<button className="primary" disabled={busy||!password}>{busy?"확인 중…":initialized?"열기":"만들기"}</button></form></section>:
       <>
         {screen==="list"&&<section className="vault-list" aria-label="보관한 항목">
+          {googleEmail && <div className="notice" role="status">
+            <strong>{googleEmail}의 Google 로그인</strong>
+            <p>accounts.google.com에 저장한 이 계정의 항목을 선택하세요.</p>
+            <button type="button" onClick={() => { setGoogleEmail(""); setQuery(""); }}>전체 보관함 보기</button>
+          </div>}
           <div className="vault-list-tools">
-            <button type="button" className="vault-icon-button" aria-label="항목 찾기" aria-expanded={searchOpen} disabled={frozen} onClick={()=>{
+            <button type="button" className="vault-icon-button" aria-label="항목 찾기" aria-expanded={searchOpen} disabled={frozen || !!googleEmail} onClick={()=>{
               setSearchOpen(v=>!v);
               if(searchOpen)setQuery("");
             }}><VaultIcon name="search"/></button>
@@ -290,7 +329,7 @@ function App(){
           {searchOpen&&<label className="vault-search"><span className="vault-sr">항목 찾기</span>
             <input type="search" value={query} disabled={frozen} onChange={e=>setQuery(e.target.value)} placeholder="이름, 사용자 이름, 주소" autoFocus/>
           </label>}
-          <VaultList items={items} query={query} disabled={frozen} onOpen={openItem}/>
+          <VaultList items={visibleItems} query={googleEmail || query} disabled={frozen} onOpen={openItem}/>
         </section>}
         {screen==="editor"&&draft&&<section aria-label={titles.editor}>
           <form onSubmit={e=>{e.preventDefault();void perform(async()=>{await run({op:"put",item:editing,fields:draft});await publish()})}} className="editor">
@@ -312,6 +351,8 @@ function App(){
           </form>
         </section>}
         {showingDetail&&selectedItem&&<section className="vault-detail" aria-label="보관 항목 상세">
+          {googleEmail && !frozen && <GoogleAutofill key={selectedItem.id + ":" + selectedItem.revision + ":" + googleEmail}
+            email={googleEmail} item={selectedItem} run={run} />}
           {(fields?.has_url||selectedItem.kind==="login")&&<div className="vault-card">
             <VaultField name="주소" disabled={frozen} onReveal={fields?.has_url?()=>void reveal("url"):undefined} onCopy={fields?.has_url?()=>void copy("url"):undefined}>
               {fields?.has_url?fields.host||"저장된 주소":fields&&!fields.failed?"주소 없음":itemName(selectedItem)}

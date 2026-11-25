@@ -631,6 +631,8 @@ impl Google {
 struct StartInput {
     #[serde(default)]
     read: Option<moosuri_store::MemberGoogleReadIntent>,
+    #[serde(default)]
+    match_member_account: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -812,7 +814,13 @@ async fn start(
     }
     let pending = g
         .store
-        .start_member_service_oauth(&user, g.owner, g.service, app.app_revision)
+        .start_member_service_oauth_for_account(
+            &user,
+            g.owner,
+            g.service,
+            app.app_revision,
+            input.match_member_account,
+        )
         .await?;
     if let Some(read) = input.read
         && let Err(e) = g
@@ -1359,18 +1367,20 @@ mod tests {
         serde_json::from_slice(&to_bytes(reply.into_body(), 131072).await.unwrap()).unwrap()
     }
     async fn connect(app: &Router, owner: VolumeOwner, token: &str) -> serde_json::Value {
-        let started = value(
-            request(
-                app,
-                owner,
-                token,
-                &format!("{BASE}/start"),
-                "POST",
-                json!({}),
-            )
-            .await,
-        )
-        .await;
+        let (flow, reply) = consent(app, owner, token, json!({})).await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        let result = value(reply).await;
+        assert_eq!(result["flow_id"], flow);
+        result
+    }
+    async fn consent(
+        app: &Router,
+        owner: VolumeOwner,
+        token: &str,
+        choice: serde_json::Value,
+    ) -> (serde_json::Value, Response) {
+        let started =
+            value(request(app, owner, token, &format!("{BASE}/start"), "POST", choice).await).await;
         let url = url::Url::parse(started["authorization_url"].as_str().unwrap()).unwrap();
         let state = url
             .query_pairs()
@@ -1399,10 +1409,49 @@ mod tests {
             json!({"handle":captured["handle"]}),
         )
         .await;
-        assert_eq!(reply.status(), StatusCode::OK);
-        let v = value(reply).await;
-        assert_eq!(v["flow_id"], started["flow_id"]);
-        v
+        (started["flow_id"].clone(), reply)
+    }
+    #[tokio::test]
+    async fn vault_selected_consent_checks_the_provider_account_before_saving() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        let (store, owner, token) = member(&temp.path().join("member")).await;
+        let revision = Uuid::new_v4();
+        let routes = |mailbox: &str| {
+            routes_with_test_transport(
+                store.clone(),
+                owner,
+                transport_for(
+                    Arc::new(Fake::default()),
+                    revision,
+                    mailbox.into(),
+                    "https://assistant.example.test/api/v1/mail/oauth/callback".into(),
+                ),
+            )
+        };
+        let original = routes("a@example.test");
+        let (_, ok) = consent(
+            &original,
+            owner,
+            &token,
+            json!({"match_member_account":true}),
+        )
+        .await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        let original_id = value(ok).await["connection_id"].clone();
+        let different = routes("other@example.test");
+        let (_, rejected) = consent(
+            &different,
+            owner,
+            &token,
+            json!({"match_member_account":true}),
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::CONFLICT);
+        let current = value(request(&original, owner, &token, BASE, "GET", json!({})).await).await;
+        assert_eq!(current["connection"]["connection_id"], original_id);
+        let generic = connect(&different, owner, &token).await;
+        assert_eq!(generic["mailbox"], "other@example.test");
     }
     async fn thread_connect(
         app: &Router,

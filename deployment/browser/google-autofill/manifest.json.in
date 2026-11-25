@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Moosuri Vault",
+  "description": "Use a selected vault login on the Google password page you choose.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "114",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvO/1u83gvcBs3us6b3m/Fc0zVbVxObZ14ft1Iv2xcwI9nOgD/id1NqFZLL8cQvdM/KhRFLwWcrzNvDw5mNgLAeu2Al+gOof+sVOCO3Wzaiw8TWFMTa0DpYyWyO9bu5qzo1zK8uW7g7EFRCQGRW/bryU1oUs30NP/qADS+pZytiA+3hjGuX3AIGXpLP3u7REZsF3/oIJb9pgVMK2c6vZfQw9RrNi8zfR8OlBaF50HBydG5irLs9KiBomX0aRiy8iRWu11oSfdeKO5ZypgHDhJGiTFL0/ytHQLNFJ/fBPio0OTbWgGMuue77wm+zvkIP36b36fVsANR57TNcuVet/+hQIDAQAB",
+  "action": { "default_title": "이 Google 로그인 화면에 선택한 비밀번호 입력" },
+  "commands": { "_execute_action": { "suggested_key": { "default": "Alt+Shift+U" } } },
+  "permissions": ["activeTab", "scripting"],
+  "background": { "service_worker": "worker.js" },
+  "externally_connectable": { "matches": ["VAULT_ORIGIN/*"] }
+}

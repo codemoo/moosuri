@@ -411,6 +411,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 101,
         sql: include_str!("../../../migrations/assistant/0101_member_public_watch_prices.sql"),
     },
+    Migration {
+        version: 102,
+        sql: include_str!("../../../migrations/assistant/0102_member_google_account_choice.sql"),
+    },
 ];
 
 pub(crate) const CURRENT_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;

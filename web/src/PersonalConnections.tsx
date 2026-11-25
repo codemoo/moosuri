@@ -71,6 +71,8 @@ export function PersonalConnections({
       : props.readIntent || googleReturn() ? gmail : null,
   );
   const selected = navigation ? connectors.find(item => item.id === navigation.route.service) ?? null : localService;
+  const [vaultService, setVaultService] = useState<string | null>(null);
+  const matchMember = !!selected && selected.id === vaultService;
   const workspaceEnabled = selected !== gmail;
   const google = usePersonalGoogle(props, !workspaceReturn);
   const workspace = usePersonalGoogleWorkspace({ session: props.session, expired: props.expired, enabled: workspaceEnabled, returned: workspaceReturn });
@@ -227,7 +229,7 @@ export function PersonalConnections({
               {memberFlow.status === "ready" && (
                 <>
                   {gmailRead && (
-                    <button type="button" className="member-page-action connector-primary" disabled={google.busy} onClick={() => void google.action("read")}>
+                    <button type="button" className="member-page-action connector-primary" disabled={google.busy} onClick={() => void google.action("read", matchMember)}>
                       {mailbox ? "메일 확인" : "Google로 연결하고 이 대화에서 메일 확인"}
                     </button>
                   )}
@@ -239,16 +241,25 @@ export function PersonalConnections({
                   ) : (
                     <button type="button" className={gmailRead ? "member-page-action" : "member-page-action connector-primary"}
                       disabled={memberFlow.busy} onClick={() => {
-                        if (workspaceService) void workspace.action(workspaceService, "connect");
-                        else void google.action("connect");
-                      }}>{gmailRead ? "Google 연결만" : "Google 연결"}</button>
+                        if (workspaceService) void workspace.action(workspaceService, "connect", matchMember);
+                        else void google.action("connect", matchMember);
+                      }}>{matchMember ? props.session.user.email + " 연결" : gmailRead ? "Google 연결만" : "Google 연결"}</button>
                   )}
+                  {matchMember && !mailbox && <button type="button" className="member-page-action"
+                    disabled={memberFlow.busy} onClick={() => setVaultService(null)}>다른 Google 계정 선택</button>}
                 </>
               )}
               {(memberFlow.status === "error" || (memberFlow.status === "disabled" && !(installationAdmin && installation === "required"))) && !memberFlow.busy && (
                 <button type="button" className="member-page-action" onClick={() => void memberFlow.retry()}>다시 확인</button>
               )}
               {setupAction}
+              {vaultStatus.status === "ready" && !mailbox && (
+                <button type="button" className="member-page-action" disabled={vaultStatus.busy}
+                  onClick={async () => {
+                    if (await vaultStatus.open(props.session.user.email)) setVaultService(selected.id);
+                  }}>볼트에서 내 Google 로그인 찾기</button>
+              )}
+              {vaultStatus.failure && <p className="connector-notice" role="status">{vaultStatus.failure}</p>}
             </>
           )}
         </ConnectorDetail>
@@ -363,7 +374,7 @@ function useVaultConnection(account: string, expired: () => void) {
   }, [scope, expired]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  async function open() {
+  async function open(googleEmail?: string) {
     if (connection.status !== "ready" || busy) return;
     const expected = connection.siteOrigin;
     setBusy(true);
@@ -381,7 +392,8 @@ function useVaultConnection(account: string, expired: () => void) {
       if (typeof handoff.token !== "string" || !/^[0-9a-f]{64}$/i.test(handoff.token) || handoff.vault_origin !== expected) {
         throw new Error("vault_unavailable");
       }
-      postVaultForm(popup, target, { token: handoff.token, vault_origin: expected }, account);
+      postVaultForm(popup, target, { token: handoff.token, vault_origin: expected }, account, googleEmail);
+      return true;
     } catch (error) {
       popup.close();
       if (isAborted(error)) return;

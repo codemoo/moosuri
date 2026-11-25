@@ -860,6 +860,18 @@ def google_setup(page, world):
     assert world.google_configured
 
 
+def google_from_chat(page, world):
+    for text, title in (("구글 로그인하고 GWS까지 등록해줘", "커넥터"),
+                        ("지메일 연결해 주세요", "Gmail"), ("구글 드라이브 연동해줘", "Google Drive")):
+        composer(page).fill(text)
+        composer(page).press("Enter")
+        expect(heading(page, title)).to_be_visible()
+        assert not posts(world, "/personal/google/start") and not posts(world, "/personal/google/drive/start")
+        assert not posts(world, "/personal/google/inbox") and not chat_posts(world)
+        page.go_back()
+        expect(composer(page)).to_be_visible()
+
+
 def google_setup_to_catalog(page, world):
     nav(page, "관리").click()
     button(page, "Google Workspace 설정 열기").click()
@@ -1080,6 +1092,7 @@ SCENARIOS = {
     "B-GWS-01": (True, google_setup),
     "B-GWS-02": (True, google_setup_to_catalog),
     "B-GWS-03": (True, google_setup_from_connector),
+    "B-GWS-04": (True, google_from_chat),
     "B-ENG-01": (True, engine),
     "B-ENG-02": (True, read_openrouter_quota),
     "B-ENG-03": (True, retry_stale_openrouter_quota),

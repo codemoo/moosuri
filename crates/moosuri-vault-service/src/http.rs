@@ -475,6 +475,7 @@ async fn asset(uri: Uri) -> Response {
         Some("js") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("wasm") => "application/wasm",
+        Some("zip") if path == "/google-autofill.zip" => "application/zip",
         _ => "application/octet-stream",
     };
     let mut r = Response::new(Body::from(*bytes));

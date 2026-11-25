@@ -30,6 +30,8 @@ Schemas 93–100 extend the same member volume with interpreted work, combined r
 
 Schema 101 adds the optional won limit and its inclusive or exclusive comparison to the member's public watch. Existing content watches keep both fields empty. The inventory covers 241 application tables and 247 cross-owner foreign-key relationships. [Schema 101 classification](account-runtime-schema101.json)
 
+Schema 102 binds a vault-selected Google account choice to its pending OAuth request. Each choice inherits its owner from the original request and expires with it. The inventory covers 242 application tables and checks 248 foreign-key relationships for owner consistency. [Schema 102 classification](account-runtime-schema102.json)
+
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,

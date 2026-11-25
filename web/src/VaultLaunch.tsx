@@ -1,6 +1,18 @@
 import {useEffect,useState} from "react";
 import {useScope} from "./account-scope";
-const windows=new Set<{window:Window;origin:string;account:string}>();
+const windows=new Set<{window:Window;origin:string;account:string;googleEmail?:string}>();
+// A popup may request only its own non-secret account hint. A normal vault launch
+// has no hint and a different window or origin cannot consume it.
+window.addEventListener("message", event => {
+  if (event.data?.kind !== "moosuri-vault-google-context") return;
+  for (const entry of windows) {
+    if (entry.googleEmail && entry.window === event.source && event.origin === entry.origin &&
+        event.data.account === entry.account && !entry.window.closed) {
+      entry.window.postMessage({ kind: "moosuri-vault-google-account", account: entry.account, email: entry.googleEmail }, entry.origin);
+      break;
+    }
+  }
+});
 export function lockVaultWindows(account?:string|null){
   for(const value of windows){if(account&&value.account!==account)continue;try{value.window.postMessage({kind:"moosuri-vault-lock",account:value.account},value.origin)}catch{}windows.delete(value)}
 }
@@ -12,12 +24,12 @@ export function trustedVaultOrigin(raw:string,current:Location=window.location):
   return u.origin;
 }
 /** Shared by launch and tests: registers the popup for logout lock, then posts the one-time handoff. */
-export function postVaultForm(popup:Window,target:string,handoff:{token:string;vault_origin:string},accountId:string){
+export function postVaultForm(popup:Window,target:string,handoff:{token:string;vault_origin:string},accountId:string,googleEmail?:string){
   const origin=trustedVaultOrigin(handoff.vault_origin);
   if(!/^[0-9a-f]{64}$/.test(handoff.token))throw new Error("vault_unavailable");
   for(const w of windows)if(w.window.closed)windows.delete(w);
   if(windows.size>=16)throw new Error("vault_window_limit");
-  windows.add({window:popup,origin,account:accountId});
+  windows.add({window:popup,origin,account:accountId,googleEmail});
   const form=document.createElement("form");form.method="POST";form.action=`${origin}/session`;form.target=target;form.acceptCharset="UTF-8";
   const input=document.createElement("input");input.type="hidden";input.name="handoff";input.value=handoff.token;form.append(input);
   document.body.append(form);

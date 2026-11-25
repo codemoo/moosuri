@@ -14,3 +14,11 @@ regexes = [
   '''^kJGSk5SVlpeYmZqb$''',
   '''^kq4d4xQ3ZP64K/UEmCF7ts9LJnuEUjSq4UOBzqwLom5OjbpemWytJ9GcJD8VGuyo$''',
 ]
+
+# Public RSA SubjectPublicKeyInfo pins the installable Chrome extension ID.
+[[allowlists]]
+description = "Exact public Chrome extension identity key"
+condition = "AND"
+paths = ['''(^|/)deployment/browser/google-autofill/manifest\.json\.in$''']
+regexTarget = "secret"
+regexes = ['''^MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvO/1u83gvcBs3us6b3m/Fc0zVbVxObZ14ft1Iv2xcwI9nOgD/id1NqFZLL8cQvdM/KhRFLwWcrzNvDw5mNgLAeu2Al\+gOof\+sVOCO3Wzaiw8TWFMTa0DpYyWyO9bu5qzo1zK8uW7g7EFRCQGRW/bryU1oUs30NP/qADS\+pZytiA\+3hjGuX3AIGXpLP3u7REZsF3/oIJb9pgVMK2c6vZfQw9RrNi8zfR8OlBaF50HBydG5irLs9KiBomX0aRiy8iRWu11oSfdeKO5ZypgHDhJGiTFL0/ytHQLNFJ/fBPio0OTbWgGMuue77wm\+zvkIP36b36fVsANR57TNcuVet/\+hQIDAQAB$''']

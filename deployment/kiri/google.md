@@ -60,6 +60,12 @@ docker --host unix:///run/kiri/docker.sock exec -i --user "$MEMBER_UID:$MEMBER_U
 
 ## 회원이 보는 흐름
 
+대화에 **구글 로그인하고 GWS까지 등록해줘**라고 쓰면 사용할 서비스를 고르는 화면이 열린다. **지메일 연결해줘**처럼 서비스를 지정하면 해당 서비스로 바로 간다. 처음 준비하는 관리자는 이 화면에서 Google Workspace 설정을 연다. Google은 웹 OAuth 클라이언트 최초 발급을 Cloud 콘솔에서 진행하도록 한다. [Google의 클라이언트 등록 안내](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation)
+
+일반 Chrome에서 개인 볼트를 사용하려면 Google 서비스 상세에서 **볼트에서 내 Google 로그인 찾기**를 누른다. 열린 볼트의 잠금을 해제하면 회원 이메일과 `https://accounts.google.com`이 정확히 일치하는 로그인 항목이 나온다. 여러 개면 사용할 항목을 고른다. Chrome 확장 설치를 마친 기기에서 **Google 비밀번호 자동 입력**을 누르고, 무수리 탭에서 본인 이메일이 적힌 연결 버튼을 누른다. Google이 해당 계정의 비밀번호를 요청하면 그 탭에서 **무수리 볼트** 확장 버튼을 누른다. Google 화면에서 제출과 기기 승인, 서비스별 권한 동의를 마치면 무수리로 돌아온다. 서버는 이 경로로 시작된 동의의 계정을 확인한 후 연결을 저장한다. **다른 Google 계정 선택**은 일반 계정 선택 흐름을 연다.
+
+운영자는 회원이 받을 확장을 볼트의 정확한 HTTPS 주소로 패키징한다. `npm run build`로 볼트 정적 파일을 만든 뒤, 저장소 루트에서 `python3 deployment/browser/google-autofill/package.py "$VAULT_ORIGIN" vault-web/dist/google-autofill.zip`을 실행하고 볼트 서비스를 빌드한다. 이미 있는 출력 파일은 보존하므로 새 빌드 디렉터리를 사용한다. Chrome 114 이상에서 압축을 풀고 확장 프로그램 관리에서 로드한다. 확장은 사용자가 클릭한 탭의 최상위 문서에만 접근한다. 선택은 2분 뒤 만료되며 비밀번호는 기기 안에서 한 번만 전달된다. 새 Kiri 프로필의 로그인 작업은 기존 이메일 확인 절차를 사용한다. [Kiri 브라우저](browser.md)
+
 **연결**에서 사용할 서비스를 선택하고 Google 계정으로 동의한다. 설치 웹 클라이언트는 공용이고 서비스별 승인과 연결 해제는 회원의 개인 볼륨에서 처리한다. 각 카드에 해당 권한을 승인한 계정이 표시된다. Google 계정 선택 시 다른 계정을 선택할 수도 있다. 기존 Gmail 승인은 Gmail에만 적용된다.
 
 | 공식 커넥터 | 서비스 권한 | 구현한 GWS 읽기 |

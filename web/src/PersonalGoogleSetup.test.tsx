@@ -176,6 +176,22 @@ it("shows a repair message without rendering provider details when the callback 
   expect(document.body).not.toHaveTextContent(secret);
 });
 
+it.each([
+  [{ installed: { client_secret: secret } }, "데스크톱용 OAuth 파일"],
+  [{ web: { client_id: "test", client_secret: secret, redirect_uris: ["https://other.example.test/callback"] } }, "콜백 주소가 다릅니다"],
+  [{ web: { client_id: "test" } }, "웹 애플리케이션 클라이언트"],
+])("keeps an incompatible client file on the device", async (invalid, message) => {
+  const requests = setup();
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "이미 받은 JSON 가져오기" }));
+  await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), jsonFile(JSON.stringify(invalid)));
+  await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(String(message));
+  expect(requests.map(r => r.method)).toEqual(["GET"]);
+  expect(document.body).not.toHaveTextContent(secret);
+});
+
 it("does not transmit a pending file read after an account switch", async () => {
   const requests = setup();
   const user = userEvent.setup();

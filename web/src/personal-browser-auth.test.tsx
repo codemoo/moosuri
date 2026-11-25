@@ -1,6 +1,16 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { googleConnectionRequest } from "./personal-browser";
+
+it("opens the requested Workspace service without starting a login or mailbox read", () => {
+  expect(googleConnectionRequest("구글 로그인하고 GWS까지 등록해줘")).toEqual({service: undefined});
+  expect(googleConnectionRequest("지메일 연결해 주세요")).toEqual({service:"gmail"});
+  expect(googleConnectionRequest("Please sign in to Google and connect my Google Drive.")).toEqual({service:"drive"});
+  expect(googleConnectionRequest("GWS 연결하는 방법 알려줘")).toBeNull();
+  expect(googleConnectionRequest("지메일 연결해줘 https://example.test")).toBeNull();
+  expect(googleConnectionRequest("구글 로그인 해줘")).toBeNull();
+});
 import { AuthHandoffCard, PersonalBrowserCard } from "./PersonalBrowser";
 import type { PersonalBrowser } from "./usePersonalBrowser";
 import {

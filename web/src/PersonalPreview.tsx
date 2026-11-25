@@ -40,7 +40,7 @@ import { initialKnowledgeDrafts } from "./KnowledgeState";
 import { PersonalChatComposer } from "./PersonalChatComposer";
 import { PersonalWorkspaceChrome, threadDisplayTitle, type MemberView } from "./PersonalWorkspaceChrome";
 import { PersonalBrowserCard, PersonalBrowserViewer } from "./PersonalBrowser";
-import { browserEndpoint, googleSignInEndpoint, browserIntent, browserNeedsGuidance, browserStateLabel, type PersonalBrowserStatus } from "./personal-browser";
+import { browserEndpoint, googleConnectionRequest, googleSignInEndpoint, browserIntent, browserNeedsGuidance, browserStateLabel, type PersonalBrowserStatus } from "./personal-browser";
 import { usePersonalBrowser } from "./usePersonalBrowser";
 import { InstructionReceipts } from "./RunInstructions";
 import { PersonalTextFollowUp, clearSavedFollowUp, isTextFollowUp } from "./PersonalTextFollowUp";
@@ -1376,6 +1376,12 @@ function Workspace({
     if (!old && (!text.trim() || new TextEncoder().encode(text).length > 8192))
       return;
     const routeWork = !old && !followUp && !batch && !plain && browserMode === "chat";
+    const connection = routeWork ? googleConnectionRequest(text) : null;
+    if (connection) {
+      change(m => consumeDraft(m, thread ?? "new", text));
+      open({ view: "connections", service: connection.service });
+      return;
+    }
     if (routeWork && thread) {
       const control = parseWorkControl(text);
       if (control && runControl(control, text, thread)) return;
@@ -2023,7 +2029,8 @@ function Workspace({
                     )}
                     {(turn.run.model?.provider_id==="personal-browser" || turn.run.model?.provider_id==="member-workflow" || ["Deployment text-only preview","Deployment browser answer"].includes(turn.run.model?.provider_name)) && <button className="member-task-link" type="button" onClick={()=>open({view:"tasks",taskId:turn.run.id})}>업무 기록 보기</button>}
                     {browserWork?.run_id === turn.run.id && (
-                      <PersonalBrowserCard browser={browser} pending={false} onOpen={openBrowser} />
+                      <PersonalBrowserCard browser={browser} pending={false} onOpen={openBrowser}
+                        onConnections={() => open({ view: "connections" })} />
                     )}
                   </article>
                 ))}
@@ -2175,7 +2182,7 @@ function Workspace({
                 )}
                 {!turns.some((turn) => turn.run.id === browserWork?.run_id) && (
                   <PersonalBrowserCard browser={browser} pending={pending?.browser_request?.kind === "start"}
-                    onOpen={openBrowser} />
+                    onOpen={openBrowser} onConnections={() => open({ view: "connections" })} />
                 )}
               </div>
             </div>

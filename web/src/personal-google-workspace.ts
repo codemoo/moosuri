@@ -153,7 +153,7 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
     return () => clearTimeout(timer);
   }, [scope, enabled, returned]);
 
-  async function action(service: WorkspaceService, name: "connect" | "disconnect") {
+  async function action(service: WorkspaceService, name: "connect" | "disconnect", matchMember = false) {
     if (busy || lock.current || status !== "ready") return;
     const grant = connections[service];
     lock.current = true;
@@ -167,12 +167,14 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
         setConnections((current) => ({ ...current, [service]: undefined }));
       } else if (name === "connect" && !grant) {
         const origin = currentConnectorOrigin(session);
-        const started = await scope.request<{ flow_id: string; authorization_url: string }>(`${base}/${service}/start`, "POST", {}, undefined, { timeoutMs: 15000 });
+        const started = await scope.request<{ flow_id: string; authorization_url: string }>(`${base}/${service}/start`, "POST",
+          matchMember ? { match_member_account: true } : {}, undefined, { timeoutMs: 15000 });
         const url = new URL(started.authorization_url);
         if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" ||
             url.username || url.password || url.hash || !session.chat_draft_scope || !flowPattern.test(started.flow_id)) {
           throw Error("invalid consent");
         }
+        if (matchMember) url.searchParams.set("login_hint", session.user.email);
         const pending: Pending = {
           origin,
           account: session.user.id,

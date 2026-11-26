@@ -217,10 +217,14 @@ impl Group {
         }
         let _ = self.0.start_kill();
     }
-    /// Kill the group and reap the leader (bounded) so nothing can still be storing tokens.
-    async fn terminate(&mut self) {
+    /// Kill the group and reap the leader (bounded) so nothing can still be storing
+    /// tokens. `Ok` only when the leader's exit was actually observed.
+    async fn kill_and_reap(&mut self) -> Result<(), Error> {
         self.kill();
-        let _ = tokio::time::timeout(REAP_WAIT, self.0.wait()).await;
+        match tokio::time::timeout(REAP_WAIT, self.0.wait()).await {
+            Ok(Ok(_)) => Ok(()),
+            _ => Err(Error::Unavailable),
+        }
     }
 }
 impl Drop for Group {
@@ -241,6 +245,19 @@ impl LoginHandle {
     pub fn request(&self) -> &LoginRequest {
         &self.request
     }
+    /// Kills the login process group and awaits reaping of the leader, so a
+    /// caller can prove no login is running before `cleanup_login_credentials`
+    /// (e.g. when Chrome authorization fails). Drop alone does not prove reaping.
+    pub async fn stop(mut self) -> Result<(), Error> {
+        self.group.kill_and_reap().await
+    }
+}
+
+/// Result of an exact-id project probe (see `Sdk::probe_project`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ProjectPresence {
+    Absent,
+    Owned,
 }
 impl std::fmt::Debug for LoginHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -440,7 +457,7 @@ impl Sdk {
         if result.is_err() {
             // Child first, so it cannot store a token after cleanup; then clean this
             // private config. The original classification is preserved.
-            group.terminate().await;
+            let _ = group.kill_and_reap().await;
             let _ = self.cleanup_login_credentials().await;
         }
         result
@@ -534,6 +551,27 @@ impl Sdk {
             )
             .await?;
         verify_project(&out, id, setup)
+    }
+
+    /// Fixed `gcloud projects list --filter=projectId=<id>`. `Absent` only for a
+    /// successful command returning exactly `[]`; a command failure, malformed
+    /// output, a foreign project or multiple entries are errors, never Absent.
+    /// Does not check billing; the caller must separately `verify_unbilled`.
+    pub async fn probe_project(
+        &self,
+        id: &ProjectId,
+        setup: &SetupLabel,
+        cancel: &CancellationToken,
+    ) -> Result<ProjectPresence, Error> {
+        let filter = format!("--filter=projectId={}", id.as_str());
+        let out = self
+            .exec(
+                &["projects", "list", &filter, "--format=json"],
+                QUICK,
+                cancel,
+            )
+            .await?;
+        parse_project_presence(&out, id, setup)
     }
 
     /// One `gcloud projects create` attempt. Never retried here; after any
@@ -918,7 +956,28 @@ fn json(buf: &[u8]) -> Result<Value, Error> {
 }
 
 fn verify_project(buf: &[u8], id: &ProjectId, setup: &SetupLabel) -> Result<(), Error> {
+    verify_project_value(&json(buf)?, id, setup)
+}
+
+/// Strict `projects list` result for one exact id: `[]` is Absent; exactly one
+/// element proving our ownership is Owned. Anything else is never Absent.
+fn parse_project_presence(
+    buf: &[u8],
+    id: &ProjectId,
+    setup: &SetupLabel,
+) -> Result<ProjectPresence, Error> {
     let v = json(buf)?;
+    match v.as_array().ok_or(Error::Unavailable)?.as_slice() {
+        [] => Ok(ProjectPresence::Absent),
+        [one] if one.is_object() => {
+            verify_project_value(one, id, setup).map(|()| ProjectPresence::Owned)
+        }
+        [_] => Err(Error::Unavailable),
+        _ => Err(Error::Blocked),
+    }
+}
+
+fn verify_project_value(v: &Value, id: &ProjectId, setup: &SetupLabel) -> Result<(), Error> {
     let state = v.get("lifecycleState").or_else(|| v.get("state"));
     let labels = v.get("labels").and_then(Value::as_object);
     let labels_ok = labels.is_some_and(|l| {

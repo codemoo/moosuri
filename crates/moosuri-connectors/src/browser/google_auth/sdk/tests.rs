@@ -643,7 +643,7 @@ async fn account_mismatch_revokes_all_in_the_private_config_and_keeps_classifica
 async fn cancelled_login_kills_child_then_cleans_up_with_its_own_token() {
     let tools = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
-    let (script, log) = fake_gcloud(tools.path(), "sleep 30");
+    let (script, log) = fake_gcloud(tools.path(), "exec sleep 30");
     let proxy = private_proxy("10.42.17.2").unwrap();
     let sdk = Sdk::open(root.path(), script, proxy).unwrap();
     let handle = synthetic_login(&sdk);
@@ -696,6 +696,100 @@ async fn cleanup_skips_empty_configuration_but_never_accepts_failed_revocation()
     std::fs::write(&log, b"").unwrap();
     assert_eq!(sdk.cleanup_login_credentials().await, Ok(()));
     assert_eq!(calls(&log), ["auth list --format=json"]);
+}
+
+const PROJECT: &str = "moosuri-0123456789abcdef0123";
+
+fn project_json(name: &str, labels: &str) -> String {
+    format!(
+        r#"{{"projectId":"{PROJECT}","name":"{name}","lifecycleState":"ACTIVE","labels":{labels}}}"#
+    )
+}
+const OURS: &str = r#"{"moosuri-purpose":"oauth","moosuri-setup":"setup-0123abcd"}"#;
+
+/// Synthetic gcloud that logs its arguments and prints `stdout` (or fails).
+fn probe_gcloud(dir: &Path, stdout: &str, exit: i32) -> (PathBuf, PathBuf) {
+    let log = dir.join("calls.log");
+    let script = dir.join("gcloud");
+    let body = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\ncat <<'EOF'\n{stdout}\nEOF\nexit {exit}\n",
+        log.display()
+    );
+    std::fs::write(&script, body).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    (script, log)
+}
+
+async fn probe(stdout: &str, exit: i32) -> (Result<ProjectPresence, Error>, Vec<String>) {
+    let tools = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (script, log) = probe_gcloud(tools.path(), stdout, exit);
+    let sdk = Sdk::open(root.path(), script, private_proxy("10.42.17.2").unwrap()).unwrap();
+    let id = ProjectId::parse(PROJECT).unwrap();
+    let setup = SetupLabel::parse("setup-0123abcd").unwrap();
+    let result = sdk
+        .probe_project(&id, &setup, &CancellationToken::new())
+        .await;
+    (result, calls(&log))
+}
+
+#[tokio::test]
+async fn probe_absent_only_for_successful_empty_list_with_fixed_arguments() {
+    let (result, seen) = probe("[]", 0).await;
+    assert_eq!(result, Ok(ProjectPresence::Absent));
+    assert_eq!(
+        seen,
+        [format!(
+            "projects list --filter=projectId={PROJECT} --format=json"
+        )]
+    );
+}
+
+#[tokio::test]
+async fn probe_owned_requires_exact_single_verified_project() {
+    let (result, _) = probe(&format!("[{}]", project_json(PROJECT, OURS)), 0).await;
+    assert_eq!(result, Ok(ProjectPresence::Owned));
+}
+
+#[tokio::test]
+async fn probe_never_reports_absent_for_foreign_multiple_malformed_or_failed() {
+    let ours = project_json(PROJECT, OURS);
+    let foreign = project_json(PROJECT, r#"{"team":"x"}"#);
+    let cases = [
+        (format!("[{foreign}]"), Error::Blocked),
+        (
+            format!("[{}]", project_json("other-name", OURS)),
+            Error::Blocked,
+        ),
+        (format!("[{ours},{ours}]"), Error::Blocked),
+        (format!("[{ours},{foreign}]"), Error::Blocked),
+        ("{}".to_owned(), Error::Unavailable),
+        ("[1]".to_owned(), Error::Unavailable),
+        ("not json".to_owned(), Error::Unavailable),
+        (String::new(), Error::Unavailable),
+    ];
+    for (out, expected) in cases {
+        assert_eq!(probe(&out, 0).await.0, Err(expected), "{out}");
+    }
+    // Command failure is Unavailable even when it printed an empty list.
+    assert_eq!(probe("[]", 1).await.0, Err(Error::Unavailable));
+}
+
+#[tokio::test]
+async fn stop_kills_and_reaps_login_group_before_cleanup() {
+    let tools = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (script, log) = fake_gcloud(tools.path(), "exec sleep 30");
+    let sdk = Sdk::open(root.path(), script, private_proxy("10.42.17.2").unwrap()).unwrap();
+    let handle = synthetic_login(&sdk);
+    let pid = handle.group.0.id().unwrap() as i32;
+    let started = std::time::Instant::now();
+    assert_eq!(handle.stop().await, Ok(()));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    // SAFETY: signal 0 only probes for the process group.
+    assert_ne!(unsafe { libc::kill(-pid, 0) }, 0);
+    assert_eq!(sdk.cleanup_login_credentials().await, Ok(()));
+    assert!(calls(&log).contains(&"auth revoke --all --quiet".to_owned()));
 }
 
 #[tokio::test]

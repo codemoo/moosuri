@@ -458,3 +458,14 @@ at least 65 seconds for SDK cleanup before container removal, fresh administrato
 heartbeats, provider project reconciliation, Console branding/audience/client,
 private atomic client registration, member consent/GWS, and a real Gmail read.
 These component results do not establish an automatic Google setup or deployment.
+
+The SDK now probes the exact stable project ID with a fixed `projects list`
+filter: only a successful empty list means absent; transport errors, malformed
+results and foreign identities never permit a create. A login handle can also
+be explicitly killed and reaped before credential cleanup. Linux SDK checks:
+20 passed in a serial run. The initial stop fixture spawned a shell child rather
+than execing the login process and counted killed zombies as running; it now
+matches the SDK wrapper's exec behavior. One parallel run reported a transient
+spawn failure with no captured OS cause; the focused stop check and full serial
+suite passed. Actual provider creation/reconciliation remains untested in this
+new product path. Worker and capsule integration is the next implementation gate.

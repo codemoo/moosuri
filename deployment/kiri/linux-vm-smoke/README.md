@@ -102,6 +102,40 @@ sudo python3 guest-web-invitations.py "$MEMBER_IMAGE_ID" --recovery
 
 [November 26 results, cold-create correction and remaining integration](../../../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-member-engine-compatibility)
 
+## Matched image update after the source installer
+
+`guest-matched-rollout.py` uses the two synthetic members created by
+`clean-installed.py`. In that marked guest, provide a completed source bundle,
+its exact revision, and the `moosuri-connectors` example
+`browser_installation_probe`. The harness verifies all artifacts, admits both
+new browser images through real startup/confinement/cleanup, stops every registry
+consumer, and switches the host binaries and browser configs. Matching brokers
+must be stable before it replaces the two member images through `kiri-rollout`.
+It checks preserved identities, data and same-target replay, then resumes matching
+lifecycle/admission and requires stable processes plus HTTPS health. A new binary
+can migrate the registry on lookup; leaving older brokers running can remove
+their sockets and interrupt replacement. It is a test harness,
+not an updater for a production installation.
+
+```sh
+sudo python3 guest-matched-rollout.py --bundle "$BUNDLE" \
+  --revision "$BUNDLE_REVISION" --probe "$BROWSER_PROBE" \
+  --evidence-dir /root/matched-rollout-evidence
+```
+
+Failure retains the disposable guest and records its phase. Inspect the exact
+member images and matching configuration before restarting lifecycle; do not
+restart it blindly or rerun the entire script over partial state. The original
+installer receipt stays unchanged. This target assumes no Vault schema change;
+a release that intentionally migrates the Vault needs a corresponding data
+acceptance contract. Complete the update acceptance with
+`clean-installed-browser.py --matched-rollout-dir /root/matched-rollout-evidence
+--expected-revision "$BUNDLE_REVISION"` from the Linux VM host, using its normal
+`--vm-root` and `--output-dir`, then reboot and repeat member/Vault reopening.
+Optional `--check-model-rejection` exercises failed setup with one deliberately
+invalid synthetic key against the Anthropic catalog; it does not run inference
+or distinguish invalid credentials from a provider/network outage.
+
 ## Member task history and recurring searches on Linux
 
 Run this check as a regular Linux user with Python Playwright and its Chromium and WebKit browsers installed. From the repository root, build the web assets before the executable so that the gateway serves the updated UI.

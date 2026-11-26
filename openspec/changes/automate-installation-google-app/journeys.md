@@ -22,8 +22,8 @@ journey. All model execution and independent review uses Claude Sonnet 5.5 / med
 | I03 | Admin attaches an authorized model connection and selects Sonnet 5.5 / medium | First real chat and work interpretation use that selection; credentials stay private | Open: first-provider setup and current interpretation failure |
 | I04 | Invite a second member after all services are already running | Independent UID/volume, browser/Vault/GWS and model sockets appear without manual service editing | Candidate116a8cd shipped invitation timer and two independent installed members passed; real browser/Vault isolation passed |
 | I05 | Stop installation after preparation, then run the same installer | Original installation, member allocation and keys retained; conflicting inputs refused | Candidate116a8cd recovered prior build interruption; complete same-input replay and conflicting-origin refusal preserved identities/keys |
-| I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Candidate116a8cd two actual reboots passed; identities, handoff, admin boundary and both encrypted Vaults/items retained; Google/model connections still unconfigured |
-| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Same-kernel Ubuntu22.04/5.15.0-179/Kiri0.2.2 member recovery, both confined browsers and six owned profile-rollout checks passed; matched new-image/production transition remains open; no new-installer receipt is fabricated |
+| I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Candidate116a8cd reboots and upgraded0b5e8fa actual reboot passed; identities, independent Kiri recipients, handoff, admin boundary and both encrypted Vaults/items retained; Google/model connections still unconfigured |
+| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Same-kernel Ubuntu22.04/5.15.0-179/Kiri0.2.2 member recovery, both confined browsers and six owned profile-rollout checks passed; different-image candidate0b5e8fa transition and real reboot passed after correcting shared-service order and the confined seccomp path; production transition remains open; no new-installer receipt is fabricated |
 
 ## Model first use and recovery — 6 journeys
 
@@ -31,7 +31,7 @@ journey. All model execution and independent review uses Claude Sonnet 5.5 / med
 | --- | --- | --- | --- |
 | M01 | Empty installation; admin registers the shared Anthropic API connection | Both first members use Sonnet 5.5/medium; API credential stays in the host's private setup directory | Linux synthetic setup/socket boundaries passed; real API credential and inference open |
 | M02 | Invite another member during an existing member's model request | New socket appears; existing request is not cancelled or charged twice | Dynamic socket isolation passed; full install journey open |
-| M03 | Wrong/revoked key, unsupported model or invalid effort | Show the actual unavailable state; preserve an existing connection until the replacement is valid | Catalog rejection/CAS tested; real inference/effort and administrator diagnostics open |
+| M03 | Wrong/revoked key, unsupported model or invalid effort | Show the actual unavailable state; preserve an existing connection until the replacement is valid | Installed candidate0b5e8fa Chromium UI rejected one synthetic invalid-key catalog request, cleared input, stayed unconfigured after reload and hid setup from a second member; valid replacement and inference remain open |
 | M04 | Lose API-setup reply, then another administrator changes the connection | Reconcile this request's revision; never attribute another administrator's save to this request | Candidate UI attribution and atomic-save tests passed |
 | M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Missing production worker and public provisioning automation remain open; CLI prerequisites traced independently |
 | M06 | Worker is missing/restarted, member generation changes, or server reboots | No borrowed member login, no fallback model, no new charge before dispatch; truthful recovery | Socket isolation/replay boundaries passed; fresh subscription/reboot journey open |
@@ -194,7 +194,7 @@ provider-measured usage still governs charges.
 
 ### Recovery corrections and independent review
 
-The matrix now has **49 journeys**, 6–7 per feature. These remain acceptance
+At that checkpoint the matrix had **49 journeys**, 6–7 per feature; I07 below brings the active matrix to50. These remain acceptance
 journeys, not a count of unit tests. Candidate Google connection tests exercise
 real member HTTP reauthorization, SQLite checkpoints and the private atomic
 writer with synthetic Console responses. They cover one creation, saved file

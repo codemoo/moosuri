@@ -2,8 +2,10 @@
 """Real Chromium -> TLS -> installed gateway/Vault in a marked disposable guest.
 
 Run on the Linux VM host after clean-installed.py. No API response is mocked.
-Only the two synthetic origins can traverse the local CONNECT proxy; no Google
-or model provider is called. Root-private synthetic fixture credentials are read
+Only the two synthetic origins can traverse the local CONNECT proxy. By default
+no provider is called. --check-model-rejection makes the installed server check
+one deliberately invalid synthetic API key against Anthropic's model catalog;
+it never requests inference. Root-private synthetic fixture credentials are read
 through the guest SSH connection into memory and never printed or screenshotted.
 """
 import argparse
@@ -14,6 +16,7 @@ import os
 from pathlib import Path
 import secrets
 import select
+import shlex
 import socket
 import subprocess
 import sys
@@ -46,6 +49,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--vm-root', required=True, type=Path)
     parser.add_argument('--output-dir', required=True, type=Path)
+    parser.add_argument('--check-model-rejection', action='store_true',
+                        help='Check failed model setup via UI; one invalid-key catalog call, no inference')
+    parser.add_argument('--matched-rollout-dir', type=Path)
+    parser.add_argument('--expected-revision')
     args = parser.parse_args()
     assert sys.platform == 'linux'
     os.umask(0o077)
@@ -57,6 +64,22 @@ def main():
     marker = subprocess.run([*ssh, target, 'sudo', '-n', 'cat', '/etc/moosuri-kiri-lab-marker'],
                             capture_output=True, check=True, timeout=20).stdout.strip()
     assert marker == b'SYNTHETIC_DISPOSABLE_VM'
+    assert bool(args.matched_rollout_dir) == bool(args.expected_revision)
+    if args.matched_rollout_dir:
+        check = '''import hashlib,json,sys,subprocess
+from pathlib import Path
+e=json.loads((Path(sys.argv[1])/'complete.json').read_text())
+assert e['source_revision']==sys.argv[2]
+for unit,binary in [('moosuri-kiri-gateway','moosuri'),('moosuri-kiri-vault','moosuri-vault-service')]:
+ p=subprocess.run(['systemctl','show',unit,'-p','MainPID','--value'],capture_output=True,text=True,check=True).stdout.strip()
+ assert int(p)>1
+ assert hashlib.sha256((Path('/proc')/p/'exe').read_bytes()).hexdigest()==e['bundle_files'][binary]
+print('matched_running_revision_verified')
+'''
+        verified = subprocess.run([*ssh, target, 'sudo', '-n', 'python3', '-B', '-c',
+                                   shlex.quote(check), shlex.quote(str(args.matched_rollout_dir)),
+                                   shlex.quote(args.expected_revision)], capture_output=True, timeout=30)
+        assert verified.returncode == 0 and verified.stdout.strip() == b'matched_running_revision_verified'
     data = subprocess.run([*ssh, target, 'sudo', '-n', 'cat', '/root/moosuri-clean-acceptance-state.json'],
                           capture_output=True, check=True, timeout=20).stdout
     members = json.loads(data)['members']
@@ -179,6 +202,35 @@ def main():
                     print(f'PASS installed browser member {index + 1}: UI login/handoff, '
                           f'{"new 8-character Vault/recovery" if creating else "existing synthetic Vault reopen"}, '
                           'encrypted save, wrong-password denial, reopen, member isolation/layout', flush=True)
+                    if args.check_model_rejection:
+                        page.goto(ORIGIN + '/app#admin/engine')
+                        if index == 0:
+                            key = page.get_by_label('Anthropic API 키', exact=True)
+                            expect(key).to_be_visible(timeout=30000)
+                            expect(page.get_by_label('모델 ID', exact=True)).to_have_value('claude-sonnet-5-5')
+                            setup = page.locator('form').filter(has=key)
+                            expect(setup.get_by_label('추론 강도', exact=False)).to_have_value('medium')
+                            key.fill('synthetic-invalid-not-an-api-key')
+                            with page.expect_response(lambda r: r.url.endswith('/personal/admin/engine/setup')
+                                                      and r.request.method == 'POST') as failed:
+                                page.get_by_role('button', name='연결 확인 후 저장', exact=True).click()
+                            reply = failed.value
+                            assert reply.status == 502 and reply.json() == {
+                                'code': 'model_provider_verification_failed'}, 'model_failure_not_reported'
+                            expect(key).to_have_value('')
+                            expect(page.get_by_role('alert').filter(has_text='연결을 확인하지 못했습니다.')).to_be_visible(timeout=30000)
+                            page.reload()
+                            expect(page.get_by_label('Anthropic API 키', exact=True)).to_be_visible(timeout=30000)
+                            expect(page.get_by_text('설치에 연결 설정이 등록되어 있습니다.', exact=False)).to_have_count(0)
+                            print('PASS M03 partial: installed UI reports provider verification failure, clears input, '
+                                  'remains unconfigured after reload; invalid-key vs network failure, inference '
+                                  'and valid-key replacement are not distinguished/tested', flush=True)
+                        else:
+                            # Direct entry to the management route cannot expose the setup form.
+                            expect(page.locator('.member-workspace')).to_be_visible(timeout=30000)
+                            expect(page.get_by_label('Anthropic API 키', exact=True)).to_have_count(0)
+                            expect(page.get_by_role('button', name='연결 확인 후 저장', exact=True)).to_have_count(0)
+                            print('PASS installed non-admin: direct engine route exposes no credential form', flush=True)
                 assert not forbidden, 'plaintext_vault_value_sent'
                 for context in contexts:
                     context.close()
@@ -191,6 +243,8 @@ def main():
 
 
 if __name__ == '__main__':
+    if not __debug__:
+        raise SystemExit('Run without Python optimization; acceptance assertions are required')
     try:
         main()
     except Exception as error:

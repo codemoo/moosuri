@@ -89,19 +89,21 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable }: 
     {error && <p role="alert" className="preview-error">{error}</p>}
     {!form && <>
       <p role="status">설치에 연결 설정이 등록되어 있습니다. 위 엔진 상태를 새로고침하고 대화에서 응답을 확인해 주세요.</p>
-      {setup.connection_revision && <button type="button" onClick={() => { setError(""); setReplacing(true); }}>키·모델 교체</button>}
+      {setup.connection_revision && <button className="member-page-action" type="button" onClick={() => { setError(""); setReplacing(true); }}>키·모델 교체</button>}
     </>}
     {form && <form className="management-list" onSubmit={submit}>
-      <p className="management-note">{replacing
+      <p className="management-row management-note">{replacing
         ? "새 키와 모델을 확인한 뒤 현재 연결을 교체합니다. 확인이 끝나기 전에는 기존 연결이 유지됩니다."
         : "관리자의 Anthropic API 연결을 이 설치의 회원들이 사용합니다. 키와 모델 목록을 확인한 뒤 저장합니다."}</p>
-      <label>Anthropic API 키<input ref={keyInput} type="password" autoComplete="off" required minLength={8} maxLength={8192} disabled={busy}/></label>
-      <label>모델 ID<input ref={modelInput} defaultValue="claude-sonnet-5-5" required maxLength={200} disabled={busy}/></label>
-      <label>추론 강도<select ref={effortInput} defaultValue="medium" disabled={busy}>
+      <label className="management-row management-field"><span>Anthropic API 키</span><input ref={keyInput} type="password" autoComplete="off" required minLength={8} maxLength={8192} disabled={busy}/></label>
+      <label className="management-row management-field"><span>모델 ID</span><input ref={modelInput} defaultValue="claude-sonnet-5-5" required maxLength={200} disabled={busy}/></label>
+      <label className="management-row management-field"><span>추론 강도</span><select aria-label="추론 강도" ref={effortInput} defaultValue="medium" disabled={busy}>
         <option value="">모델 기본값</option><option value="low">낮음</option><option value="medium">보통</option><option value="high">높음</option>
       </select></label>
-      <button type="submit" disabled={busy}>{busy ? "연결 확인 중…" : "연결 확인 후 저장"}</button>
-      {replacing && <button type="button" disabled={busy} onClick={() => setReplacing(false)}>취소</button>}
+      <div className="management-row compatible-actions">
+        <button className="member-page-action primary" type="submit" disabled={busy}>{busy ? "연결 확인 중…" : "연결 확인 후 저장"}</button>
+        {replacing && <button className="member-page-action" type="button" disabled={busy} onClick={() => setReplacing(false)}>취소</button>}
+      </div>
     </form>}
   </section>;
 }

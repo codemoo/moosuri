@@ -111,6 +111,38 @@ def fixture_only():
     os.umask(0o077)
 
 
+def recipient_isolation(sessions):
+    jobs = [str(uuid4()), str(uuid4())]
+    def google(i, op, **fields):
+        j, a, _ = sessions[i]
+        return app('personal/google/kiri', 'POST', dict(op=op, job=jobs[i], **fields), j, a)
+    for i in range(2):
+        assert google(i, 'start', service='gmail')[0] == 200
+    recipients = []
+    routes = []
+    for i in range(2):
+        def prepared():
+            code, state = google(i, 'status')
+            assert code == 200 and state['state'] not in {'unavailable', 'blocked', 'cancelled'}
+            return state if state['state'] == 'vault' else None
+        ready = until(prepared, 60)
+        route = '/session/kiri-recipient?challenge=' + ready['challenge']
+        code, recipient = request('vault.example.com', route, jar=sessions[i][2])
+        assert code == 200 and recipient['binding']['account'] == sessions[i][1]
+        recipients.append(recipient)
+        routes.append(route)
+    assert recipients[0]['spki'] != recipients[1]['spki']
+    for i in range(2):
+        assert request('vault.example.com', routes[i], jar=sessions[1-i][2])[0] == 503
+    assert google(0, 'cancel')[0] == 200
+    assert request('vault.example.com', routes[0], jar=sessions[0][2])[0] == 503
+    assert request('vault.example.com', routes[1], jar=sessions[1][2])[0] == 200
+    assert app('auth/logout', 'POST', {}, sessions[1][0], sessions[1][1])[0] == 204
+    assert request('vault.example.com', routes[1], jar=sessions[1][2])[0] == 401
+    passed('CI-06 actual separate Kiri recipients, cross-member denial, cancellation and logout')
+
+
+
 def after_reboot():
     fixture_only()
     state = json.loads(REBOOT_STATE.read_text())
@@ -120,14 +152,17 @@ def after_reboot():
     for service in ('moosuri-kiri-model.service', 'moosuri-kiri-onboard.timer', 'nginx.service'):
         assert run(['systemctl', 'is-active', '--quiet', service]).returncode == 0
     accounts = []
+    sessions = []
     for member in state['members']:
         view, jar = login(member['email'], member['password'])
         account = view['user']['id']
         assert account == member['account']
         accounts.append(account)
-        vault_session(jar, account)
+        vault = vault_session(jar, account)
+        sessions.append((jar, account, vault))
         assert app('personal/admin/members', jar=jar, account=account)[0] == member['admin_status']
     assert len(set(accounts)) == 2
+    recipient_isolation(sessions)
     assert not (CONTROL / 'model-setup/runtime-model.json').exists()
     passed('CI-07 actual reboot retains both member identities, Vault handoff, admin boundary and unconfigured model')
 
@@ -205,34 +240,7 @@ def main(bundle):
     passed('I02/M01 model service starts unconfigured; only administrator can open setup; member writes denied')
 
     sessions = [(jar, account, first_vault), (jar2, account2, second_vault)]
-    jobs = [str(uuid4()), str(uuid4())]
-    def google(i, op, **fields):
-        j, a, _ = sessions[i]
-        return app('personal/google/kiri', 'POST', dict(op=op, job=jobs[i], **fields), j, a)
-    for i in range(2):
-        assert google(i, 'start', service='gmail')[0] == 200
-    recipients = []
-    routes = []
-    for i in range(2):
-        def prepared():
-            code, state = google(i, 'status')
-            assert code == 200 and state['state'] not in {'unavailable', 'blocked', 'cancelled'}
-            return state if state['state'] == 'vault' else None
-        ready = until(prepared, 60)
-        route = '/session/kiri-recipient?challenge=' + ready['challenge']
-        code, recipient = request('vault.example.com', route, jar=sessions[i][2])
-        assert code == 200 and recipient['binding']['account'] == sessions[i][1]
-        recipients.append(recipient)
-        routes.append(route)
-    assert recipients[0]['spki'] != recipients[1]['spki']
-    for i in range(2):
-        assert request('vault.example.com', routes[i], jar=sessions[1-i][2])[0] == 503
-    assert google(0, 'cancel')[0] == 200
-    assert request('vault.example.com', routes[0], jar=first_vault)[0] == 503
-    assert request('vault.example.com', routes[1], jar=second_vault)[0] == 200
-    assert app('auth/logout', 'POST', {}, jar2, account2)[0] == 204
-    assert request('vault.example.com', routes[1], jar=second_vault)[0] == 401
-    passed('CI-06 actual separate Kiri recipients, cross-member denial, cancellation and logout')
+    recipient_isolation(sessions)
 
     journal = run(['journalctl', '--no-pager', '-u', 'moosuri-*'], timeout=30).stdout
     argv = run(['ps', '-eo', 'args']).stdout

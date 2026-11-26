@@ -1045,3 +1045,51 @@ Linux OpenSpec strict validation and plan/link verification passed (1,754 links)
 Static Gitleaks found only the previously documented unusable synthetic PEM
 marker in the installer fixture; no new exception was added. Dependencies and
 third-party assets are unchanged. Production/public main are still unchanged.
+
+### 2026-11-27 matched source transition and reboot
+
+Runtime source `0b5e8fa07e18be1c2dd3f607443309b0b2aa8efd` was built into one
+hash-verified bundle: native assistant/Vault binaries and member/Chromium/Chrome
+images. The installed two-member Ubuntu24 fixture moved from116a8cd to a different
+member image. The first transition failed safely with the original container
+retained stopped: a new registry lookup migrated schema10→11 while old connection
+services still ran. The corrected order stops all registry consumers, installs
+matching host code/configs, starts matching brokers, then replaces members and
+resumes lifecycle/admission. Independent Claude Sonnet5.5/medium reviewed this
+ordering. The next run caught a harness seccomp path under `/root`, hidden by the
+installed services' `ProtectHome`; runtime policy now lives under `/etc/moosuri`.
+Neither failure changed the original member logical data snapshots or Vault.
+
+The corrected [matched rollout harness](../../../deployment/kiri/linux-vm-smoke/guest-matched-rollout.py)
+passed actual capsule startup/confinement/cleanup, both different-image member
+replacements, UID/key/database/mount/allocation preservation and same-target
+ID/PID replay. All six matching executables stayed stable before and after HTTPS
+health. Lifecycle resumption retained both exact containers and member snapshots.
+The original installer receipt, enrollment and encrypted Vault were retained.
+Probe provenance is recorded separately; the bundle itself is not a signed release.
+
+The real Linux Chromium acceptance then rejected a synthetic invalid model key
+through the installed catalog endpoint, cleared its input, retained the unconfigured
+state after reload and denied a second member the credential form. No inference
+was called; this does not distinguish invalid-key rejection from provider outage.
+A harness selector was corrected because Chromium's implicit select label included
+its option text. An actual reboot was measured against the immediately preceding
+boot ID. Both member identities, separate fresh Kiri recipients, cancellation,
+logout, Vault handoff and admin boundary passed after reboot. Both existing Vaults
+reopened their respective encrypted items at1280px/390px; wrong passwords and
+cross-member visibility were refused. Screenshots were inspected.
+
+Visual inspection also found bare controls in the new Claude setup form. It now
+uses the existing management field/button styles and an explicit select label.
+Exact current-source Linux engine tests17, typecheck/build and plan/link verification
+passed. Candidate assets against the actual installed backend passed1280px/390px
+field/default/touch-size/overflow checks and were visually inspected; no provider
+call was made. This follow-up is not part of the0b5e8fa runtime acceptance above. Final-source
+installation, production transition, actual managed OAuth setup and two-real-member
+consent/conversation remain open. The complete0b5e8fa bundle is staged and hash
+verified on the Linux host; no production runtime was changed in this work unit.
+
+The reviewed candidate source and this evidence are being published as a development
+preview on main. This is source publication, not a claim that production, the default
+installer or all50 journeys are complete. The production server remains on its prior
+runtime until the separately verified data-preserving transition is applied.

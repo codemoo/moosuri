@@ -300,17 +300,30 @@ async fn bootstrap_action(
             | Action::InspectAudience
             | Action::ConfigureAudience
             | Action::InspectScopes
-            | Action::ConfigureScopes => {
+            | Action::ConfigureScopes
+            | Action::InspectDomains
+            | Action::ConfigureDomains
+            | Action::InspectPublication
+            | Action::ConfigurePublication => {
                 // Values come only from the verified bound email and the derived
-                // project id. The SDK is untouched; the token cancels the Chrome
-                // walk, which taints Chrome on any error (teardown still runs).
+                // project id (and, for public information, the binding origin that
+                // `admit` proved equal to the request's exact callback origin). The SDK is
+                // untouched; the token cancels the Chrome walk, which taints Chrome on any
+                // error (teardown still runs).
                 let op = console::Op::from_action(request.action).ok_or(Error::Invalid)?;
                 let email = Email::parse(&boot.google_email)?;
-                let spec = console::Spec::new(&id, &email);
+                let spec = match op {
+                    console::Op::InspectDomains | console::Op::ConfigureDomains => {
+                        console::Spec::with_site(&id, &email, &binding.origin)?
+                    }
+                    _ => console::Spec::new(&id, &email),
+                };
                 let seconds = match op {
                     console::Op::InspectBranding
                     | console::Op::InspectScopes
-                    | console::Op::InspectAudience => 150,
+                    | console::Op::InspectAudience
+                    | console::Op::InspectDomains
+                    | console::Op::InspectPublication => 150,
                     _ => 420,
                 };
                 let work = browser.console(op, &spec, &token);

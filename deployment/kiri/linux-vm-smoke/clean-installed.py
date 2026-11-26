@@ -25,6 +25,7 @@ CONTROL = Path('/var/lib/moosuri-control')
 BIN = '/usr/local/bin/moosuri'
 ORIGIN = 'https://assistant.example.com'
 VAULT = 'https://vault.example.com'
+REBOOT_STATE = Path('/root/moosuri-clean-acceptance-state.json')
 
 
 def run(args, secret=None, timeout=90):
@@ -104,10 +105,35 @@ def passed(text):
     print('PASS ' + text, flush=True)
 
 
-def main(bundle):
+def fixture_only():
     assert os.geteuid() == 0 and sys.platform == 'linux'
     assert Path('/etc/moosuri-kiri-lab-marker').read_text().strip() == 'SYNTHETIC_DISPOSABLE_VM'
     os.umask(0o077)
+
+
+def after_reboot():
+    fixture_only()
+    state = json.loads(REBOOT_STATE.read_text())
+    assert Path('/proc/sys/kernel/random/boot_id').read_text().strip() != state['boot_id']
+    for path, digest in state['files'].items():
+        assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
+    for service in ('moosuri-kiri-model.service', 'moosuri-kiri-onboard.timer', 'nginx.service'):
+        assert run(['systemctl', 'is-active', '--quiet', service]).returncode == 0
+    accounts = []
+    for member in state['members']:
+        view, jar = login(member['email'], member['password'])
+        account = view['user']['id']
+        assert account == member['account']
+        accounts.append(account)
+        vault_session(jar, account)
+        assert app('personal/admin/members', jar=jar, account=account)[0] == member['admin_status']
+    assert len(set(accounts)) == 2
+    assert not (CONTROL / 'model-setup/runtime-model.json').exists()
+    passed('CI-07 actual reboot retains both member identities, Vault handoff, admin boundary and unconfigured model')
+
+
+def main(bundle):
+    fixture_only()
     receipt = json.loads((ETC / 'kiri-install.json').read_text())
     assert receipt['complete'] and receipt['admin_email'] == 'install-test@example.com'
     assert receipt['public_origin'] == ORIGIN and receipt['vault_origin'] == VAULT
@@ -118,6 +144,10 @@ def main(bundle):
     assert not admin['password_change_required'] and not admin['user']['must_change_password']
     account = admin['user']['id']
     assert app('personal/admin/members', jar=jar, account=account)[0] == 200
+    code, model_setup = app('personal/admin/engine/setup', jar=jar, account=account)
+    assert code == 200 and model_setup == {'supported': True, 'saved': False}
+    assert run(['systemctl', 'is-active', '--quiet', 'moosuri-kiri-model.service']).returncode == 0
+    assert not (CONTROL / 'model-setup/runtime-model.json').exists()
     first_vault = vault_session(jar, account)
     passed('CI-02 HTTPS assistant/Vault, authenticated administrator and single-use Vault handoff')
 
@@ -164,7 +194,15 @@ def main(bundle):
                       '--user', f"{m['uid']}:{m['uid']}", name, '/usr/local/bin/gws', '--version'])
         assert result.returncode == 0 and result.stdout.splitlines()[0] == 'gws 0.22.0'
     assert app('personal/admin/members', jar=jar2, account=account2)[0] == 403
+    assert app('personal/admin/engine/setup', jar=jar2, account=account2)[0] == 403
+    assert app('personal/admin/engine/setup', 'POST', {
+        'request_id': str(uuid4()), 'api_key': 'synthetic-never-dispatched',
+        'model': 'claude-sonnet-5-5', 'effort': 'medium',
+    }, jar2, account2)[0] == 403
+    assert app('personal/admin/engine/setup', jar=jar, account=account)[1] == {'supported': True, 'saved': False}
+    assert not (CONTROL / 'model-setup/runtime-model.json').exists()
     passed('CI-05 installed invitation timer, independent member UID and GWS; second member is not admin')
+    passed('I02/M01 model service starts unconfigured; only administrator can open setup; member writes denied')
 
     sessions = [(jar, account, first_vault), (jar2, account2, second_vault)]
     jobs = [str(uuid4()), str(uuid4())]
@@ -206,11 +244,29 @@ def main(bundle):
         evidence = (ETC / (name + '-smoke.json')).read_bytes()
         assert cfg['verified'] and cfg['smoke_evidence_sha256'] == hashlib.sha256(evidence).hexdigest()
     passed('CI-08 no synthetic secret in argv/journal/receipt; actual browser evidence matches configs')
+    # Synthetic fixture credentials only, retained root-private for the explicit
+    # post-reboot phase. Never usable on an unmarked installation or printed.
+    state = {
+        'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+        'files': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in before},
+        'members': [
+            {'email': receipt['admin_email'], 'password': password, 'account': account, 'admin_status': 200},
+            {'email': 'second-install@example.com', 'password': replacement, 'account': account2, 'admin_status': 403},
+        ],
+    }
+    fd = os.open(REBOOT_STATE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        json.dump(state, output)
+        output.flush()
+        os.fsync(output.fileno())
 
 
 if __name__ == '__main__':
     try:
-        main(Path(sys.argv[1]).resolve())
+        if sys.argv[1:] == ['--after-reboot']:
+            after_reboot()
+        else:
+            main(Path(sys.argv[1]).resolve())
     except Exception as error:
         # Do not render HTTP response bodies, cookies, process logs or credentials.
         frame = traceback.extract_tb(error.__traceback__)[-1]

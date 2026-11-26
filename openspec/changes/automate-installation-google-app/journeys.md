@@ -72,12 +72,12 @@ matching the current account and Linux login is approved.
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
 | O01 | Admin connects Google with no project, OAuth client or GWS configuration | Same-profile private SDK creates a stable unbilled project and enables exactly supported APIs | Operator experiment passed earlier; automatic route open |
-| O02 | Unconfigured Auth Platform in that project | App/support/contact, External audience, scoped access and agentic web-client marker are configured; exact HTTPS callback | Live Console experiment passed; automatic route open |
+| O02 | Unconfigured Auth Platform in that project | App/support/contact, External audience, scoped access and agentic web-client marker are configured; exact HTTPS callback | Live Console experiment and candidate list/detail readback/form fill passed; actual automatic creation/capture open |
 | O03 | First client creation succeeds | Capture secret once into atomic private installation registration; UI/GWS observe same client; no secret in logs or model | Operator capture passed; candidate private worker/gateway/writer integration passed with synthetic Console answers; live automated route open |
 | O04 | Lose response after project, branding or client create | Reconcile stable identity before any write; no duplicate project/client or false success | Linux local-save failure, lost save acknowledgement and saved-file-before-checkpoint cases passed; actual provider fault injection open |
 | O05 | Client exists but creation secret was lost | Reconcile same client and supported rotation; handle two-secret limit and lost rotation response without duplication | Open implementation and actual Console observation |
 | O06 | Admin logs out/is demoted while SDK or Console operation is pending | Stop new writes, preserve uncertain intent, verify SDK teardown before successor admission | Open confined end-to-end fault injection |
-| O07 | Terms, quota, organization, branding, billing or verification blocks progress | Explain exact provider requirement and resume same setup; never silently link billing or declare production readiness | Testing and incomplete-branding restriction observed; remaining branches open |
+| O07 | Terms, quota, organization, branding, billing or verification blocks progress | Explain exact provider requirement and resume same setup; never silently link billing or declare production readiness | Actual missing public branding URLs observed; anonymous installation pages tested in Linux Chromium; provider publishing and other branches open |
 
 On 2026-11-27 the actual form exposed `Use this client for an AI-powered agent`.
 Google's [client guidance](https://support.google.com/cloud/answer/15549257?hl=en#agentic-client)
@@ -219,3 +219,49 @@ no authenticated session was published. It did not verify client selectors or
 new Google resources. The phone reservation was released without approving a
 login. Resume live DOM acceptance through the authorized Vault-backed fresh
 login; do not reuse a failed/stopped session or call synthetic checks live.
+
+### Subsequent live Console and public-page acceptance
+
+A later fresh operator login succeeded after the matching Linux device approval
+on the Flip5. The candidate's fixed script read the actual existing client list
+and details without mutation. Live markup exposed three defects: a leading
+checkbox header shifted the Name column; the detail used a labelled editable
+Name and a type heading; an `aria-hidden` loading placeholder remained after
+loading. Corrections preserve exact account/project/name/callback/agent checks.
+Linux client state-machine tests passed (8), and DOM fixtures passed (13).
+
+The same script completed the actual create form's six preparation actions
+(type open/select, name, URI add/fill and agent check), then stopped at Create.
+The draft was cancelled. No duplicate client or new secret was created. The
+empty-project list and actual creation-result/rotation capture remain unproved.
+This operator session is not the final packaged Vault-first journey.
+
+Google's actual Audience page refused Publish app with a Branding prerequisite.
+The saved homepage, privacy and terms fields were empty. The candidate now
+serves `/about`, `/privacy`, `/terms` anonymously from its own origin. Linux
+Chromium at 390px and 1280px passed direct entry, navigation/reload, keyboard,
+overflow and no-member/API/provider-request checks; gateway route restrictions,
+five React cases and web typecheck/build also passed. The tests are in
+[the public information browser harness](../../../deployment/kiri/linux-vm-smoke/public-information.py).
+An independent Claude Sonnet 5.5/medium review found omitted Calendar write
+disclosure; source inspection also identified separate mail-write consent. The
+pages now distinguish those permissions and final approvals from read-only
+connections. This does not prove Google publishing or verification.
+
+Opening four Console tabs in one operator capsule exhausted its Chrome memory;
+that capsule was stopped. Subsequent inspection used one Console tab and the
+successful session was explicitly stopped after use. This is an operator
+observation, not evidence that the product's single-tab flow failed.
+
+### Publication boundary and installer regression
+
+The candidate's separate Domains/Publish journal passes Linux state/recovery
+checks and gateway command checks. A real authenticated HTTP test covers all
+seven consent-start paths while managed setup is incomplete, plus unreadable
+registry failure. S06 still requires live Google publication, and no member
+journey is upgraded solely from these component results.
+
+I01 exposed a clean-install packaging failure at the member Docker build:
+the embedded model-service unit was outside the Docker context allowlist. The
+exact file is now included. Final source installation, the second member and
+reboot must still run after this correction; the failed run is retained.

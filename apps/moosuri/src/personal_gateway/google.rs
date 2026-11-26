@@ -253,6 +253,12 @@ async fn member(
             }
             None
         };
+        if uri.path().ends_with("/start") && google_connection::unpublished_app(&g).await? {
+            return Ok(response(
+                StatusCode::NOT_FOUND,
+                br#"{"code":"google_setup_required"}"#.to_vec(),
+            ));
+        }
         let reply = g
             .proxy(&a, method.clone(), uri.path(), payload, Some(&session))
             .await;

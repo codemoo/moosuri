@@ -451,6 +451,292 @@ async fn audience_adds_the_bound_user_once_then_reloads_the_persisted_table() {
     assert_eq!(fake.navigations.len(), 2);
 }
 
+const SITE: &str = "https://assistant.example.test";
+
+fn site_spec() -> Spec {
+    Spec::with_site(
+        &ProjectId::parse("moosuri-0123456789abcdef0123").unwrap(),
+        &Email::parse("Member@Example.test").unwrap(),
+        SITE,
+    )
+    .unwrap()
+}
+
+async fn go_site(fake: &mut Fake, op: Op) -> Result<Reply, Error> {
+    run(fake, op, &site_spec(), &CancellationToken::new()).await
+}
+
+#[test]
+fn public_information_origin_is_validated_and_passed_to_the_page() {
+    let project = ProjectId::parse("moosuri-0123456789abcdef0123").unwrap();
+    let email = Email::parse("Member@Example.test").unwrap();
+    for bad in [
+        "http://assistant.example.test",
+        "https://assistant.example.test/",
+        "https://assistant.example.test/about",
+        "https://user@assistant.example.test",
+        "https://localhost",
+        "https://192.0.2.7",
+        "https://[2001:db8::1]",
+        "https://assistant.example.test?x=1",
+        "",
+    ] {
+        assert_eq!(
+            Spec::with_site(&project, &email, bad).err(),
+            Some(Error::NeedsHuman),
+            "{bad}"
+        );
+    }
+    assert!(Spec::with_site(&project, &email, "https://assistant.example.test:8443").is_ok());
+    let call = Call {
+        mode: Mode::Domains,
+        last: "",
+        expected: "",
+    };
+    let expr = expression(&site_spec(), &call).unwrap();
+    assert!(expr.ends_with(r#","Moosuri","https://assistant.example.test","assistant.example.test"])"#));
+    assert!(
+        expression(&spec(), &call)
+            .unwrap()
+            .ends_with(r#","Moosuri","",""])"#)
+    );
+    assert!(site_spec().url(Mode::Domains).contains("/auth/branding?project="));
+    assert!(site_spec().url(Mode::Publication).contains("/auth/audience?project="));
+    // The labels and the exact confirmation are fixed in the page script, never supplied.
+    for fixed in [
+        "application home page",
+        "application privacy policy link",
+        "application terms of service link",
+        "origin + \"/about\"",
+        "origin + \"/privacy\"",
+        "origin + \"/terms\"",
+        "push to production?",
+    ] {
+        assert!(SCRIPT.contains(fixed), "{fixed}");
+    }
+    assert_eq!(
+        Op::from_action(Action::ConfigurePublication),
+        Some(Op::ConfigurePublication)
+    );
+    assert_eq!(
+        Op::from_action(Action::InspectDomains),
+        Some(Op::InspectDomains)
+    );
+}
+
+#[tokio::test]
+async fn blank_public_urls_are_filled_once_saved_once_and_read_back() {
+    let mut fake = Fake::new(
+        &[
+            "domains_fill",
+            "domains_fill", // inspect: blank, stable
+            "domains_fill",
+            "acted", // fill blanks
+            "waiting",
+            "domains_save",
+            "acted", // Save
+            "domains_fill",
+            "domains_fill", // first reload not yet persisted: wait, no click
+            "domains_match",
+        ],
+        "!fail",
+    );
+    assert_eq!(
+        go_site(&mut fake, Op::ConfigureDomains).await,
+        Ok(Reply::Ready)
+    );
+    assert_eq!(fake.acts(), vec!["domains_fill", "domains_save"]);
+    assert_eq!(fake.navigations.len(), 3);
+    assert!(
+        fake.navigations
+            .iter()
+            .all(|u| u.contains("/auth/branding?project=moosuri-0123456789abcdef0123&hl=en"))
+    );
+    // Context-dependent script: the Save peek knows the fill was the last act.
+    assert!(
+        fake.calls
+            .iter()
+            .any(|c| c.expected.is_empty() && c.last == "domains_fill")
+    );
+    // Already persisted: inspect only, never a click.
+    let mut done = Fake::new(&["domains_match"], "!fail");
+    assert_eq!(
+        go_site(&mut done, Op::ConfigureDomains).await,
+        Ok(Reply::Ready)
+    );
+    assert!(done.acts().is_empty());
+    let mut blank = Fake::new(&["domains_fill", "domains_fill"], "!fail");
+    assert_eq!(
+        go_site(&mut blank, Op::InspectDomains).await,
+        Ok(Reply::Absent)
+    );
+}
+
+#[tokio::test]
+async fn conflicting_url_account_or_unproven_domain_never_writes() {
+    for (raw, expected) in [
+        ("domains_mismatch", Error::Blocked),
+        ("branding_mismatch", Error::Blocked),
+        ("wrong_account", Error::Blocked),
+        ("foreign", Error::Blocked),
+        ("domain_unproven", Error::NeedsHuman),
+        ("ambiguous", Error::NeedsHuman),
+        ("unsupported", Error::NeedsHuman),
+    ] {
+        for op in [Op::InspectDomains, Op::ConfigureDomains] {
+            let mut fake = Fake::new(&[], raw);
+            assert_eq!(go_site(&mut fake, op).await, Err(expected_clone(&expected)));
+            assert!(fake.acts().is_empty(), "{raw}");
+        }
+    }
+    // A conflict appearing after the fill started stops before Save.
+    let mut midway = Fake::new(
+        &[
+            "domains_fill",
+            "domains_fill",
+            "domains_fill",
+            "acted",
+            "domains_mismatch",
+        ],
+        "!fail",
+    );
+    assert_eq!(
+        go_site(&mut midway, Op::ConfigureDomains).await,
+        Err(Error::Blocked)
+    );
+    assert_eq!(midway.acts(), vec!["domains_fill"]);
+    // Without a validated origin nothing is even opened.
+    let mut none = Fake::new(&[], "domains_fill");
+    assert_eq!(
+        go(&mut none, Op::ConfigureDomains).await,
+        Err(Error::NeedsHuman)
+    );
+    assert!(none.calls.is_empty() && none.navigations.is_empty());
+}
+
+#[tokio::test]
+async fn publication_is_never_ready_from_a_disabled_action_and_production_is_idempotent() {
+    // Disabled prerequisite / unknown status: a human, no click, never Ready.
+    for raw in ["publish_blocked", "unsupported", "ambiguous"] {
+        for op in [Op::InspectPublication, Op::ConfigurePublication] {
+            let mut fake = Fake::new(&[], raw);
+            assert_eq!(go(&mut fake, op).await, Err(Error::NeedsHuman));
+            assert!(fake.acts().is_empty(), "{raw}");
+        }
+    }
+    let mut external = Fake::new(&[], "publication_mismatch");
+    assert_eq!(
+        go(&mut external, Op::ConfigurePublication).await,
+        Err(Error::Blocked)
+    );
+    // In production (exact field) on a resume: Ready without any click.
+    for op in [Op::InspectPublication, Op::ConfigurePublication] {
+        let mut fake = Fake::new(&["publication_match"], "!fail");
+        assert_eq!(go(&mut fake, op).await, Ok(Reply::Ready));
+        assert!(fake.acts().is_empty());
+        assert!(fake.navigations[0].contains("/auth/audience?project="));
+    }
+    // Testing with an enabled action is the only absence.
+    let mut testing = Fake::new(&["publish_open", "publish_open"], "!fail");
+    assert_eq!(
+        go(&mut testing, Op::InspectPublication).await,
+        Ok(Reply::Absent)
+    );
+}
+
+#[tokio::test]
+async fn publish_clicks_open_then_the_exact_confirm_once_and_reloads() {
+    let mut fake = Fake::new(
+        &[
+            "publish_open",
+            "publish_open", // inspect
+            "publish_open",
+            "acted", // Publish app
+            "waiting",
+            "publish_confirm",
+            "acted", // Confirm in the exact dialog
+            "publish_open",
+            "publish_open", // reload still Testing: wait, no click
+            "publication_match",
+        ],
+        "!fail",
+    );
+    assert_eq!(
+        go(&mut fake, Op::ConfigurePublication).await,
+        Ok(Reply::Ready)
+    );
+    assert_eq!(fake.acts(), vec!["publish_open", "publish_confirm"]);
+    // A page that never reaches production is NeedsHuman, not another click.
+    let mut stuck = Fake::new(
+        &[
+            "publish_open",
+            "publish_open",
+            "publish_open",
+            "acted",
+            "publish_confirm",
+            "acted",
+        ],
+        "publish_open",
+    );
+    assert_eq!(
+        go(&mut stuck, Op::ConfigurePublication).await,
+        Err(Error::NeedsHuman)
+    );
+    assert_eq!(stuck.acts(), vec!["publish_open", "publish_confirm"]);
+}
+
+#[tokio::test]
+async fn lost_publish_or_save_reply_is_an_error_and_never_resubmitted() {
+    let mut lost = Fake::new(
+        &[
+            "publish_open",
+            "publish_open",
+            "publish_open",
+            "acted",
+            "publish_confirm",
+            "!fail",
+        ],
+        "!fail",
+    );
+    assert_eq!(
+        go(&mut lost, Op::ConfigurePublication).await,
+        Err(Error::Unavailable)
+    );
+    assert_eq!(lost.acts(), vec!["publish_open", "publish_confirm"]);
+    let mut save = Fake::new(
+        &[
+            "domains_fill",
+            "domains_fill",
+            "domains_fill",
+            "acted",
+            "domains_save",
+            "!fail",
+        ],
+        "!fail",
+    );
+    assert_eq!(
+        go_site(&mut save, Op::ConfigureDomains).await,
+        Err(Error::Unavailable)
+    );
+    assert_eq!(save.acts(), vec!["domains_fill", "domains_save"]);
+    // Cancellation between the inspection and any click performs no click.
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    for op in [
+        Op::InspectDomains,
+        Op::ConfigureDomains,
+        Op::InspectPublication,
+        Op::ConfigurePublication,
+    ] {
+        let mut fake = Fake::new(&[], "publish_open");
+        assert_eq!(
+            run(&mut fake, op, &site_spec(), &cancel).await,
+            Err(Error::Unavailable)
+        );
+        assert!(fake.calls.is_empty() && fake.navigations.is_empty());
+    }
+}
+
 #[test]
 fn step_wire_names_round_trip_and_are_ordered() {
     for (step, wire) in STEPS {

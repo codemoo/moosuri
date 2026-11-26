@@ -1434,6 +1434,19 @@ fn setup_failure(error: bootstrap::Failure) -> Result<&'static str, StatusCode> 
         Failure::Gateway(status) => return Err(status),
     })
 }
+/// A managed app may not issue consent until its publication is confirmed. The
+/// private file can precede its checkpoint after a lost save acknowledgement.
+/// A legacy manually registered app has no bootstrap checkpoint. An unreadable
+/// registry never establishes readiness.
+pub(super) async fn unpublished_app(g: &Gateway) -> Result<bool, StatusCode> {
+    let root = g.registry.clone();
+    tokio::task::spawn_blocking(move || {
+        moosuri_store::runtime_registry::admin::google_bootstrap::publication_pending(&root)
+    })
+    .await
+    .map_err(|_| UNAVAILABLE)?
+    .map_err(|_| UNAVAILABLE)
+}
 fn missing_google_setup(status: StatusCode, bytes: &[u8]) -> bool {
     status == StatusCode::NOT_FOUND
         && serde_json::from_slice::<Value>(bytes).is_ok_and(|v| {
@@ -1537,18 +1550,29 @@ async fn run(
     if let Some(intent) = read {
         payload["read"] = json!(intent)
     }
-    let (mut status, mut bytes, _) = timeout(
-        Duration::from_secs(15),
-        g.proxy(
-            a,
-            Method::POST,
-            &path,
-            Some(payload.to_string().as_bytes()),
-            Some(session),
-        ),
-    )
-    .await
-    .map_err(|_| UNAVAILABLE)??;
+    // A Kiri-created app that is saved but not yet published (External/Testing) must not hand
+    // any member a consent URL: it is treated exactly like a missing setup, which only the
+    // verified administrator's durable setup flow can complete.
+    let (mut status, mut bytes) = if unpublished_app(g).await? {
+        (
+            StatusCode::NOT_FOUND,
+            br#"{"code":"google_setup_required"}"#.to_vec(),
+        )
+    } else {
+        let (status, bytes, _) = timeout(
+            Duration::from_secs(15),
+            g.proxy(
+                a,
+                Method::POST,
+                &path,
+                Some(payload.to_string().as_bytes()),
+                Some(session),
+            ),
+        )
+        .await
+        .map_err(|_| UNAVAILABLE)??;
+        (status, bytes)
+    };
     if missing_google_setup(status, &bytes) {
         let Transport::Portable(prepared) = &mut transport else {
             return Ok("setup_required");
@@ -1564,6 +1588,8 @@ async fn run(
                 bootstrap::Prepared::Ready(mut controller) => {
                     controller.console(&mut prepared.peer).await?;
                     controller.client(&mut prepared.peer).await?;
+                    // Publication follows the saved client (also an older Registered one).
+                    controller.publication(&mut prepared.peer).await?;
                     controller.finish(&mut prepared.peer).await?;
                     idle_started = Instant::now();
                     // The root relay clears the SDK fence only after actual

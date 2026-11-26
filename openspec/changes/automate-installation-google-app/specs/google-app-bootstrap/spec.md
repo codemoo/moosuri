@@ -94,6 +94,14 @@ client for the installation callback and automatically prepare member GWS.
 The system SHALL share the installation application through the existing GWS
 distribution while keeping each member's vault and service tokens private.
 
+#### Scenario: Google requires public branding information
+- **WHEN** External publishing requires a homepage, privacy policy and terms
+- **THEN** the installation supplies its own anonymous `/about`, `/privacy` and `/terms` pages with accurate data-use and separate-write-consent disclosures, without loading member data or claiming Google verification
+
+#### Scenario: An anonymous visitor opens public information
+- **WHEN** a visitor follows the public homepage and policy links without a session
+- **THEN** the information remains readable across mobile layout and reload, no member or model request is made, and existing host, origin, method and API-route restrictions remain enforced
+
 #### Scenario: Another member connects
 - **WHEN** an app is registered and another member connects Google
 - **THEN** the member uses that app and independently consents with their own Google account

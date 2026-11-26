@@ -1,6 +1,6 @@
 //! Fixed typed protocol for SDK preparation inside the same-Chrome authentication
 //! worker. Requests carry no credential, CLI flag, path or script: the only
-//! inputs are a setup id, the exact OAuth redirect and one of twelve fixed actions.
+//! inputs are a setup id, the exact OAuth redirect and one of the fixed actions.
 //! The project id and ownership label are derived from the setup id. Console
 //! branding/scope/client actions additionally use only the bound verified Google
 //! email and fixed constants (see `console` and `client`).
@@ -80,6 +80,22 @@ pub enum Action {
     /// Only right after `InspectClient` answered `Absent`, once per worker. Answers
     /// `Client` only after the persisted settings were read back and verified.
     CreateClient,
+    /// Branding public information URLs (home page, privacy policy, terms of service) at
+    /// this installation's own `/about`, `/privacy`, `/terms` on the validated callback
+    /// origin. Needs verified branding, scopes and audience. `Ready` = all three persisted
+    /// exactly AND an existing authorized domain covers the origin's hostname; `Absent` =
+    /// some URL blank (never a differing non-empty one: that is `Blocked`). An authorized
+    /// domain that does not cover the hostname is `NeedsHuman`: no domain is ever written.
+    InspectDomains,
+    /// Only right after `InspectDomains` answered `Absent`, once. Fills blank URLs only.
+    ConfigureDomains,
+    /// External audience publishing status. `Ready` = In production (exact field);
+    /// `Absent` = Testing with an enabled Publish app action. Needs domains ready.
+    /// A disabled publish action or unknown status is `NeedsHuman`.
+    InspectPublication,
+    /// Only right after `InspectPublication` answered `Absent`, once. LIVE-UNPROVEN: the
+    /// publish confirmation dialog is the documented conventional one, not yet observed.
+    ConfigurePublication,
     Finish,
 }
 
@@ -399,6 +415,10 @@ pub(super) struct Sequence {
     /// Persisted scopes / audience verified `Ready`.
     scopes_ready: bool,
     audience_ready: bool,
+    /// Public-information URLs verified `Ready` in this session (gates publication).
+    domains_ready: bool,
+    domains_configured: bool,
+    publication_configured: bool,
     /// The one `CreateClient` this worker may ever attempt (spent when admitted).
     client_created: bool,
     /// The inspect action whose `Absent` reply is valid for the very next command.
@@ -482,6 +502,41 @@ impl Sequence {
                 self.scopes_configured = true;
                 Ok(())
             }
+            // The saved-client precondition is a durable gateway/registry rule; this worker
+            // only needs the verified Console prerequisites of its own session.
+            Action::InspectDomains
+            | Action::ConfigureDomains
+            | Action::InspectPublication
+            | Action::ConfigurePublication
+                if !(self.owned
+                    && self.apis
+                    && self.branded
+                    && self.scopes_ready
+                    && self.audience_ready) =>
+            {
+                Err(Error::Invalid)
+            }
+            Action::ConfigureDomains
+                if absent != Some(Action::InspectDomains) || self.domains_configured =>
+            {
+                Err(Error::Invalid)
+            }
+            Action::ConfigureDomains => {
+                self.domains_configured = true;
+                Ok(())
+            }
+            Action::InspectPublication | Action::ConfigurePublication if !self.domains_ready => {
+                Err(Error::Invalid)
+            }
+            Action::ConfigurePublication
+                if absent != Some(Action::InspectPublication) || self.publication_configured =>
+            {
+                Err(Error::Invalid)
+            }
+            Action::ConfigurePublication => {
+                self.publication_configured = true;
+                Ok(())
+            }
             Action::InspectClient | Action::CreateClient
                 if !(self.owned
                     && self.apis
@@ -518,9 +573,14 @@ impl Sequence {
                 | Action::InspectBranding
                 | Action::InspectScopes
                 | Action::InspectAudience
+                | Action::InspectDomains
+                | Action::InspectPublication
                 | Action::InspectClient,
                 Reply::Absent,
             ) => self.absent = Some(action),
+            (Action::InspectDomains | Action::ConfigureDomains, Reply::Ready) => {
+                self.domains_ready = true
+            }
             (Action::InspectScopes | Action::ConfigureScopes, Reply::Ready) => {
                 self.scopes_ready = true
             }
@@ -912,6 +972,57 @@ mod tests {
         let mut wrong = request(&b, id, Action::InspectClient);
         wrong.redirect_uri = "https://evil.example/api/v1/mail/oauth/callback".into();
         assert!(s.admit(&wrong, &b).is_err());
+    }
+
+    #[test]
+    fn publication_actions_need_console_readiness_domains_first_and_are_once_after_absent() {
+        use Action::*;
+        let b = binding();
+        let id = Uuid::new_v4();
+        let mut s = ready_session(&b, id);
+        assert_eq!(
+            request(&b, id, ConfigurePublication).to_wire()["bootstrap"]["action"],
+            "configure_publication"
+        );
+        for a in [
+            InspectDomains,
+            ConfigureDomains,
+            InspectPublication,
+            ConfigurePublication,
+        ] {
+            assert!(s.admit(&request(&b, id, a), &b).is_err(), "{a:?}");
+        }
+        for inspect in [InspectBranding, InspectScopes, InspectAudience] {
+            s.admit(&request(&b, id, inspect), &b).unwrap();
+            s.record(inspect, Reply::Ready);
+        }
+        // Publication needs this session's verified public information first.
+        assert!(s.admit(&request(&b, id, InspectPublication), &b).is_err());
+        assert!(s.admit(&request(&b, id, ConfigureDomains), &b).is_err());
+        s.admit(&request(&b, id, InspectDomains), &b).unwrap();
+        s.record(InspectDomains, Reply::Absent);
+        s.admit(&request(&b, id, ConfigureDomains), &b).unwrap();
+        s.record(ConfigureDomains, Reply::Ready);
+        s.admit(&request(&b, id, InspectDomains), &b).unwrap();
+        s.record(InspectDomains, Reply::Absent);
+        assert!(s.admit(&request(&b, id, ConfigureDomains), &b).is_err());
+        // Another inspection's absence never unlocks the publish click.
+        s.admit(&request(&b, id, InspectDomains), &b).unwrap();
+        s.record(InspectDomains, Reply::Absent);
+        assert!(
+            s.admit(&request(&b, id, ConfigurePublication), &b)
+                .is_err()
+        );
+        s.admit(&request(&b, id, InspectPublication), &b).unwrap();
+        s.record(InspectPublication, Reply::Absent);
+        s.admit(&request(&b, id, ConfigurePublication), &b).unwrap();
+        s.record(ConfigurePublication, Reply::Ready);
+        s.admit(&request(&b, id, InspectPublication), &b).unwrap();
+        s.record(InspectPublication, Reply::Absent);
+        assert!(
+            s.admit(&request(&b, id, ConfigurePublication), &b)
+                .is_err()
+        );
     }
 
     #[test]

@@ -847,3 +847,59 @@ exception was added. Lockfiles and third-party dependencies/assets are unchanged
 the new DOM fixtures are synthetic, not copied provider pages. Runtime tests and
 UI build ran on Linux; the static source scan ran on the Mac checkout. This is a
 local recovery checkpoint, not publication or final license/release acceptance.
+
+## 2026-11-27 live Console correction and fresh installation run
+
+- O02: the integrated fixed client script now reads the actual existing Console
+  list/detail and fills the create form up to, but not including, Create. The
+  draft was cancelled and the fresh Kiri session stopped. Fixed header checkbox
+  alignment, editable Name/type heading and a hidden loading placeholder.
+  Linux: 8 Rust client cases and 13 DOM fixtures passed. Actual creation-result
+  and rotation remain open; no extra OAuth client or secret was issued.
+- O07/S06: actual publishing is disabled until Branding's public information is
+  complete. Candidate `/about`, `/privacy`, `/terms` routes and pages are added.
+  The real Linux browser covered anonymous direct entry, links/reload,
+  keyboard/layout and no member/API/provider requests at 390/1280px. Gateway
+  boundary test and 5 UI cases passed, as did typecheck/build. Independent
+  Sonnet 5.5/medium review identified the omitted Calendar permission; it and
+  the separate mail-write consent are now disclosed against actual source.
+  Automatic domain/publishing lifecycle integration is in progress, not live
+  acceptance or deployment. [Detailed evidence](journeys.md#subsequent-live-console-and-public-page-acceptance)
+- I01–I06: another pristine Ubuntu guest is installing immutable candidate
+  `dabc8c9d13604ef48208e9d55295b0d95fe9a687` from a Git bundle with no preinstalled
+  Docker/Kiri/compiler/Google credentials. Its web/Vault/server build passed;
+  runtime image preparation and installed acceptance are still running. This
+  source predates the latest Console/public-page corrections, so it cannot close
+  final-source release acceptance. Keep the new final-install guest; the older
+  stopped diagnostic disk was compressed off-host and its restored SHA256
+  verified before removing only that old disk to preserve host capacity.
+- M01/M05: real shared API model acceptance requires an authorized API connection.
+  A secure administrator-screen registration question is pending. Existing
+  developer Claude CLI authentication is used only for bounded development
+  verification/review, never copied into the installed product or shared between
+  members. Other installation and Google work continues independently.
+
+### Publication integration and clean-install failure — 2026-11-27
+
+The candidate now journals Domains and Publish separately after the private OAuth
+client save. Old Registered records do not establish publication. Managed setup
+blocks all seven consent-start routes until publication is confirmed, including
+a saved client whose checkpoint acknowledgement was lost. Unreadable registry
+state fails closed; legacy manually registered installations remain distinct.
+Linux registry40 and gateway38 cases passed, plus the actual HTTP start-route
+and unreadable-registry regression. Independent Claude Sonnet5.5/medium review
+of this frozen integration is running; provider publication remains unverified.
+
+The fresh Ubuntu VM's source install at dabc8c9 failed while compiling the member
+Docker image: the Docker context excluded the embedded model-service template.
+Added that exact public service file to the existing Docker context allowlist.
+No product services or member state had been installed. Continue from the same
+VM with the corrected integrated source; record this as interrupted-install
+recovery until a complete final-source install and reboot are observed.
+
+One synthetic SDK project-probe test returned Unavailable during the first
+concurrent connector suite. Its isolated SDK suite and six bounded full Google
+connector runs under Linux process tracing passed. No ETXTBSY/EAGAIN/ENOENT
+spawn failure was observed. This does not establish the original cause; no
+speculative production process retry was added. Retain the intermittent failure
+as a diagnostic limitation and proceed with installation/provider acceptance.

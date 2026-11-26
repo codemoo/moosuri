@@ -22,3 +22,4 @@
 !web/public/moosuri-icon-192.png
 !deployment/kiri/text-preview.json
 !deployment/kiri/setup/**
+!deployment/kiri/lifecycle/moosuri-kiri-model.service

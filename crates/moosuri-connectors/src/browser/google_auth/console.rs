@@ -21,6 +21,26 @@
 //! * `ConfigureScopes`: same inspect-first rule, then Add or remove scopes ->
 //!   manual input -> Add to table -> Update -> Save, then persisted readback.
 //!
+//! * `InspectDomains` / `ConfigureDomains` (Branding page, after the client is saved):
+//!   `Ready` = the Application home page, privacy policy and terms of service inputs (found
+//!   by their real label association) hold exactly `<callback origin>/about`, `/privacy`,
+//!   `/terms` AND a listed authorized domain covers the origin hostname on a DNS label
+//!   boundary (exact hostname or a dotted parent). `Absent` = at least one URL blank and no
+//!   conflict. A different non-empty URL, other branding or another account => `Blocked`; no
+//!   covering authorized domain => `NeedsHuman` and NOTHING is written (no public suffix
+//!   list exists here, so no "registrable root" is ever guessed or added). Configure fills
+//!   only blank URLs, clicks Save once, then a fresh load must read all three back.
+//! * `InspectPublication` / `ConfigurePublication` (Audience page): `Ready` = the exact
+//!   "Publishing status" field reads `In production` for an External app (banner text is
+//!   never read); `Absent` = `Testing` with an ENABLED "Publish app" action; a disabled
+//!   action (prerequisites missing) or any other status => `NeedsHuman`. Configure clicks
+//!   Publish app, then only the exact "Push to production?" dialog's own Confirm. LIVE-UNPROVEN:
+//!   that dialog is the documented conventional one and has not been observed; any other
+//!   dialog or extra control is refused untouched. This is publication only: Google
+//!   verification, the unverified-app warning and the user cap are untouched and not claimed.
+//!   The old `InspectAudience`/`ConfigureAudience` treat an External `In production` app as
+//!   ready without adding a test user.
+//!
 //! # Finite states and safety rules
 //! The page script returns exactly one of: `waiting`, `foreign` (origin, path or
 //! `project` differs), `wrong_account`, `ambiguous` (duplicate matching controls,
@@ -77,11 +97,19 @@ pub(super) enum Op {
     ConfigureScopes,
     InspectAudience,
     ConfigureAudience,
+    InspectDomains,
+    ConfigureDomains,
+    InspectPublication,
+    ConfigurePublication,
 }
 
 impl Op {
     pub fn from_action(action: Action) -> Option<Self> {
         match action {
+            Action::InspectDomains => Some(Self::InspectDomains),
+            Action::ConfigureDomains => Some(Self::ConfigureDomains),
+            Action::InspectPublication => Some(Self::InspectPublication),
+            Action::ConfigurePublication => Some(Self::ConfigurePublication),
             Action::InspectBranding => Some(Self::InspectBranding),
             Action::ConfigureBranding => Some(Self::ConfigureBranding),
             Action::InspectAudience => Some(Self::InspectAudience),
@@ -99,6 +127,10 @@ pub(super) enum Mode {
     Branding,
     Scopes,
     Audience,
+    /// Public information URLs on the Branding page.
+    Domains,
+    /// Publishing status on the Audience page.
+    Publication,
 }
 
 /// Fixed per-request values. Constructed only from parsed, validated types.
@@ -106,6 +138,41 @@ pub(super) enum Mode {
 pub(super) struct Spec {
     project: String,
     email: String,
+    /// Validated `https://<dns-hostname>[:port]` callback origin and its lowercase hostname.
+    site: Option<(String, String)>,
+}
+
+/// The hostname of a plain https origin that can be an authorized domain: a DNS name with at
+/// least two labels (never an IP literal), no userinfo/path/query/fragment.
+fn site_host(origin: &str) -> Option<String> {
+    let url = url::Url::parse(origin).ok()?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || origin != url.origin().ascii_serialization()
+    {
+        return None;
+    }
+    let url::Host::Domain(host) = url.host()? else {
+        return None;
+    };
+    let labels: Vec<&str> = host.split('.').collect();
+    let sane = host.len() <= 253
+        && labels.len() >= 2
+        && labels.iter().all(|l| {
+            (1..=63).contains(&l.len())
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+        })
+        && !labels
+            .last()
+            .is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()));
+    sane.then(|| host.to_owned())
 }
 
 impl Spec {
@@ -113,12 +180,21 @@ impl Spec {
         Self {
             project: project.as_str().to_owned(),
             email: email.as_str().to_owned(),
+            site: None,
         }
+    }
+    /// For the public-information operations: the installation's validated callback origin.
+    pub fn with_site(project: &ProjectId, email: &Email, origin: &str) -> Result<Self, Error> {
+        let host = site_host(origin).ok_or(Error::NeedsHuman)?;
+        Ok(Self {
+            site: Some((origin.to_owned(), host)),
+            ..Self::new(project, email)
+        })
     }
     pub fn url(&self, mode: Mode) -> String {
         let page = match mode {
-            Mode::Audience => "audience",
-            Mode::Branding => "branding",
+            Mode::Audience | Mode::Publication => "audience",
+            Mode::Branding | Mode::Domains => "branding",
             Mode::Scopes => "scopes",
         };
         format!("{PREFIX}{page}?project={}&hl=en", self.project)
@@ -166,9 +242,13 @@ enum Step {
     AudienceOpen,
     AudienceInput,
     AudienceSave,
+    DomainsFill,
+    DomainsSave,
+    PublishOpen,
+    PublishConfirm,
 }
 
-const STEPS: [(Step, &str); 20] = [
+const STEPS: [(Step, &str); 24] = [
     (Step::GetStarted, "get_started"),
     (Step::AppName, "app_name"),
     (Step::SupportOpen, "support_open"),
@@ -189,6 +269,10 @@ const STEPS: [(Step, &str); 20] = [
     (Step::AudienceOpen, "audience_partial"),
     (Step::AudienceInput, "audience_input"),
     (Step::AudienceSave, "audience_save"),
+    (Step::DomainsFill, "domains_fill"),
+    (Step::DomainsSave, "domains_save"),
+    (Step::PublishOpen, "publish_open"),
+    (Step::PublishConfirm, "publish_confirm"),
 ];
 
 impl Step {
@@ -207,6 +291,8 @@ enum Seen {
     BrandingMatch,
     ScopesMatch,
     AudienceMatch,
+    DomainsMatch,
+    PublicationMatch,
     /// Foreign page, wrong account, different persisted state: never overwritten.
     Blocked,
     /// Duplicate controls or unrecognised DOM: a human must look.
@@ -222,9 +308,13 @@ impl Seen {
             "branding_match" => Self::BrandingMatch,
             "scopes_match" => Self::ScopesMatch,
             "audience_match" => Self::AudienceMatch,
+            "domains_match" => Self::DomainsMatch,
+            "publication_match" => Self::PublicationMatch,
             "foreign" | "wrong_account" | "branding_mismatch" | "scopes_extra"
-            | "audience_mismatch" => Self::Blocked,
-            "ambiguous" | "unsupported" => Self::Human,
+            | "audience_mismatch" | "domains_mismatch" | "publication_mismatch" => Self::Blocked,
+            // `domain_unproven`: no listed authorized domain covers the hostname.
+            // `publish_blocked`: the Publish app action is disabled.
+            "ambiguous" | "unsupported" | "domain_unproven" | "publish_blocked" => Self::Human,
             "acted" => Self::Acted,
             "changed" => Self::Changed,
             other => STEPS
@@ -252,6 +342,8 @@ pub(super) fn expression(spec: &Spec, call: &Call) -> Result<String, Error> {
         SCOPES,
         call.expected,
         APP_NAME,
+        spec.site.as_ref().map_or("", |(origin, _)| origin.as_str()),
+        spec.site.as_ref().map_or("", |(_, host)| host.as_str()),
     ))
     .map_err(|_| Error::Invalid)?;
     Ok(format!("({SCRIPT})(...{args})"))
@@ -305,10 +397,14 @@ async fn inspect<P: Port>(
     match (mode, first) {
         (Mode::Branding, Seen::BrandingMatch)
         | (Mode::Scopes, Seen::ScopesMatch)
-        | (Mode::Audience, Seen::AudienceMatch) => Ok(Reply::Ready),
+        | (Mode::Audience, Seen::AudienceMatch)
+        | (Mode::Domains, Seen::DomainsMatch)
+        | (Mode::Publication, Seen::PublicationMatch) => Ok(Reply::Ready),
         (Mode::Branding, Seen::Step(Step::GetStarted))
         | (Mode::Scopes, Seen::Step(Step::ScopesOpen))
-        | (Mode::Audience, Seen::Step(Step::AudienceOpen)) => {
+        | (Mode::Audience, Seen::Step(Step::AudienceOpen))
+        | (Mode::Domains, Seen::Step(Step::DomainsFill))
+        | (Mode::Publication, Seen::Step(Step::PublishOpen)) => {
             // Absence must be stable, not a loading skeleton.
             port.pause(PAUSE).await;
             if first_seen(port, spec, mode, cancel).await? == first {
@@ -333,6 +429,8 @@ async fn drive<P: Port>(
         Mode::Branding => (Step::GetStarted, Step::Create),
         Mode::Scopes => (Step::ScopesOpen, Step::ScopesSave),
         Mode::Audience => (Step::AudienceOpen, Step::AudienceSave),
+        Mode::Domains => (Step::DomainsFill, Step::DomainsSave),
+        Mode::Publication => (Step::PublishOpen, Step::PublishConfirm),
     };
     let mut last: Option<Step> = None;
     let mut idle = 0usize;
@@ -423,7 +521,14 @@ pub(super) async fn run<P: Port>(
     spec: &Spec,
     cancel: &CancellationToken,
 ) -> Result<Reply, Error> {
+    if matches!(op, Op::InspectDomains | Op::ConfigureDomains) && spec.site.is_none() {
+        return Err(Error::NeedsHuman);
+    }
     match op {
+        Op::InspectDomains => inspect(port, spec, Mode::Domains, cancel).await,
+        Op::ConfigureDomains => configure(port, spec, Mode::Domains, cancel).await,
+        Op::InspectPublication => inspect(port, spec, Mode::Publication, cancel).await,
+        Op::ConfigurePublication => configure(port, spec, Mode::Publication, cancel).await,
         Op::InspectAudience => inspect(port, spec, Mode::Audience, cancel).await,
         Op::ConfigureAudience => configure(port, spec, Mode::Audience, cancel).await,
         Op::InspectBranding => inspect(port, spec, Mode::Branding, cancel).await,
@@ -438,7 +543,7 @@ pub(super) async fn run<P: Port>(
 /// here: Get started, Next, Continue, Create, the App name / contact inputs, the
 /// support-email combobox and option, External radio, the user-data-policy checkbox,
 /// Add or remove scopes, the dialog textarea, Add to table, Update and Save.
-const SCRIPT: &str = r##"function(mode, project, email, last, scopes, expected, appName) {
+const SCRIPT: &str = r##"function(mode, project, email, last, scopes, expected, appName, origin, host) {
   "use strict";
   const visible = e => !!e && !!e.getClientRects().length && getComputedStyle(e).visibility !== "hidden";
   const txt = e => ((e && (e.innerText || e.textContent)) || "").replace(/\s+/g, " ").trim();
@@ -474,8 +579,9 @@ const SCRIPT: &str = r##"function(mode, project, email, last, scopes, expected, 
   try {
     const params = new URLSearchParams(location.search);
     const path = location.pathname.replace(/\/+$/, "");
-    const pathOk = mode === "audience" ? path === "/auth/audience"
+    const pathOk = (mode === "audience" || mode === "publication") ? path === "/auth/audience"
       : mode === "scopes" ? path === "/auth/scopes"
+      : mode === "domains" ? path === "/auth/branding"
       : (path === "/auth/branding" || path.startsWith("/auth/overview"));
     if (location.origin !== "https://console.cloud.google.com" || !pathOk
         || params.getAll("project").length !== 1 || params.get("project") !== project) return "foreign";
@@ -563,7 +669,10 @@ const SCRIPT: &str = r##"function(mode, project, email, last, scopes, expected, 
       const lines = (document.querySelector("main") || document.body).innerText.split("\n").map(s => s.trim()).filter(Boolean);
       const field = name => { const at = lines.map((v,i) => v === name ? i : -1).filter(i => i >= 0);
         if (at.length !== 1) throw "unsupported"; return lines[at[0]+1]; };
-      if (field("User type") !== "External" || field("Publishing status") !== "Testing") return "audience_mismatch";
+      const type = field("User type"), status = field("Publishing status");
+      if (type !== "External" || (status !== "Testing" && status !== "In production")) return "audience_mismatch";
+      // A published app needs no test user; never try to add one.
+      if (status === "In production") return "audience_match";
       const dialog = need(all('[role="dialog"]').filter(e => txt(e)));
       if (dialog) {
         const input = need(all('input[aria-label="Text field for emails"]', dialog));
@@ -583,6 +692,71 @@ const SCRIPT: &str = r##"function(mode, project, email, last, scopes, expected, 
         const users = all("td,[role=cell]",tables[0]).map(txt).filter(v=>v.includes("@"));
         if (users.some(u => low(u) === low(email))) return "audience_match";
         press("audience_partial", button("add users"));
+      }
+    } else if (mode === "domains") {
+      if (!origin || !host) return "unsupported";
+      const nameInput = need(all("input").filter(i => nameOf(i).startsWith("app name")));
+      const support = need(all('[role="combobox"]').filter(c => nameOf(c) === "user support email"));
+      const contact = need(all('input[aria-label="Text field for emails"]'));
+      const group = contact && contact.closest("mat-form-field");
+      // Still rendering: wait (bounded by the caller's polls, then NeedsHuman).
+      if (!nameInput || !support || !group) return "waiting";
+      const emails = all("mat-chip-row", group).map(txt).map(low);
+      if (!(nameInput.value === appName && low(txt(support)) === low(email)
+          && emails.length === 1 && emails[0] === low(email))) return "branding_mismatch";
+      // Real HTML label association only (exactly one label), never placeholder or position.
+      const labelText = i => i.labels && i.labels.length === 1
+        ? low(txt(i.labels[0])).replace(/\s*\*$/, "").trim() : "";
+      const urls = [["application home page", origin + "/about"],
+        ["application privacy policy link", origin + "/privacy"],
+        ["application terms of service link", origin + "/terms"]];
+      const fields = urls.map(([name]) => need(all("input").filter(i => labelText(i) === name)));
+      if (fields.some(f => !f)) return "waiting";
+      const blank = [];
+      for (let k = 0; k < fields.length; k++) {
+        if (fields[k].value.trim() === "") blank.push(k);
+        else if (fields[k].value !== urls[k][1]) return "domains_mismatch";
+      }
+      // An existing authorized domain must cover the hostname on a DNS label boundary. No
+      // public suffix list exists here: never derive or add a "registrable" parent.
+      const label = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+      const dns = new RegExp("^" + label + "(?:\\." + label + ")+$");
+      const authorized = all("input").filter(i => /^authorized domain \d+$/.test(labelText(i)))
+        .map(i => low(i.value).trim().replace(/\.$/, "")).filter(Boolean);
+      if (!authorized.some(d => dns.test(d) && (host === d || host.endsWith("." + d)))) return "domain_unproven";
+      if (blank.length) {
+        if (last === "") go("domains_fill", () => { for (const k of blank) setValue(fields[k], urls[k][1]); });
+        else go("waiting", null);
+      } else if (last === "") return "domains_match";
+      else if (last === "domains_fill") press("domains_save", button("save"));
+      else go("waiting", null);
+    } else if (mode === "publication") {
+      const lines = (document.querySelector("main") || document.body).innerText.split("\n").map(s => s.trim()).filter(Boolean);
+      const field = name => { const at = lines.map((v, i) => v === name ? i : -1).filter(i => i >= 0);
+        if (!at.length) throw "waiting";
+        if (at.length !== 1) throw "unsupported"; return lines[at[0] + 1]; };
+      if (field("User type") !== "External") return "publication_mismatch";
+      // The exact field only; banner or explanation text is never evidence.
+      const status = field("Publishing status");
+      if (status === "In production") return "publication_match";
+      if (status !== "Testing") return "unsupported";
+      const dialog = need(all('[role="dialog"]').filter(e => txt(e)));
+      if (dialog) {
+        // Only the conventional documented confirmation, opened by our own Publish app click.
+        const buttons = all("button, [role=button]", dialog);
+        const names = buttons.map(b => low(txt(b)) || low(b.getAttribute("aria-label")));
+        const confirm = need(buttons.filter(b => low(txt(b)) === "confirm"));
+        if (last !== "publish_open" || !low(txt(dialog)).includes("push to production?") || !confirm
+            || names.some(n => n !== "confirm" && n !== "cancel")
+            || all("input, textarea, select, a[href], [role=checkbox], [role=radio], [role=combobox]", dialog).length)
+          return "unsupported";
+        press("publish_confirm", confirm);
+      } else if (last !== "") go("waiting", null);
+      else {
+        const publish = button("publish app");
+        if (!publish) return "unsupported";
+        if (!enabled(publish)) return "publish_blocked";
+        go("publish_open", () => publish.click());
       }
     } else {
       const allowed = new Set(scopes);

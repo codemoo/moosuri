@@ -1,0 +1,16 @@
+.public-information { min-height: 100dvh; background: #181819; color: #f2efe9; }
+.public-information header, .public-information footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; padding: 12px clamp(16px, 4vw, 48px); border-bottom: 1px solid #353638; }
+.public-information footer { border-top: 1px solid #353638; border-bottom: 0; }
+.public-information a { display: inline-flex; align-items: center; min-height: 44px; color: #c4d0df; text-underline-offset: 3px; }
+.public-information main p a, .public-information main li a { display: inline; min-height: 0; }
+.public-information a:focus-visible { outline: 2px solid #c4d0df; outline-offset: 3px; border-radius: 4px; }
+.public-information a[aria-current=page] { color: #f2efe9; font-weight: 600; }
+.public-information .info-brand { gap: 10px; font-size: 19px; font-weight: 600; color: #f2efe9; text-decoration: none; }
+.public-information .info-brand img { border-radius: 10px; }
+.public-information main { max-width: 760px; margin: auto; padding: clamp(28px, 6vw, 72px) 20px; line-height: 1.7; }
+.public-information h1 { font-size: clamp(28px, 4vw, 38px); letter-spacing: -.04em; line-height: 1.25; }
+.public-information h2 { margin-top: 32px; font-size: 20px; }
+.public-information .info-lead { color: #d8d5d0; }
+.public-information p[lang=en] { color: #bcbab6; }
+.public-information li { margin-block: 6px; }
+.public-information footer nav { display: flex; flex-wrap: wrap; gap: 4px 20px; }

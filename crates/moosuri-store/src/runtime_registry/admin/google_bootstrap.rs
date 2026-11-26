@@ -11,6 +11,12 @@
 //! journals them per `Command` (branding, audience, scopes: intent -> confirmed, same setup,
 //! lease and admin checks). The step bit alone is never read as proof of any one of them.
 //!
+//! Publication (migration 10) is a separate, later stage that runs AFTER the client is saved
+//! (`Registered`): `Publication::{Domains, Publish}` have their own journal and are never
+//! inferred from the step, the console commands or any older record. `Registered` therefore
+//! still means only "client saved"; `publication_confirmed` / `publication_pending` are the
+//! explicit extra readiness, also for a checkpoint that was Registered before migration 10.
+//!
 //! The registry cannot read credentials. If the process dies between the private client-file
 //! commit and the checkpoint commit, the checkpoint stays at `Client` with intent set; the
 //! stable `Setup::client_name` lets the gateway reconcile the provider client and adopt the
@@ -448,6 +454,174 @@ pub fn confirm_command(root: &Path, s: &AdminSession, run: Uuid, cmd: Command) -
         }
         renew(tx, now)
     })
+}
+
+/// The two provider mutations that follow a SAVED client (migration 10): the installation's own
+/// public information URLs on the Branding page and the External Testing -> In production
+/// change. They have their own journal and are never inferred from any older record: a
+/// Registered checkpoint, a confirmed audience (test user) or confirmed scopes say nothing
+/// about them. They neither read nor set the checkpoint's step intent bit, so a lost-client
+/// intent at `Client` stays exactly as it was. Not evidence of Google verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Publication {
+    /// Blank public URLs set to this installation's about/privacy/terms pages.
+    Domains,
+    /// Publishing status moved to In production. Needs `Domains` confirmed.
+    Publish,
+}
+impl Publication {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Domains => "domains",
+            Self::Publish => "publish",
+        }
+    }
+}
+
+/// Only a journal row is authoritative; without one the command was never attempted.
+fn publication_effective(c: &Connection, setup: &Setup, cmd: Publication) -> Result<CommandState> {
+    let state: Option<String> = c
+        .query_row(
+            "SELECT state FROM installation_google_publication_commands WHERE setup_id=?1 AND command=?2",
+            params![setup.setup_id.to_string(), cmd.name()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match state.as_deref() {
+        None => Ok(CommandState::Untried),
+        Some("intent") => Ok(CommandState::Intent),
+        Some("confirmed") => Ok(CommandState::Confirmed),
+        Some(_) => Err(StoreError::Corrupt),
+    }
+}
+
+/// Current state of a publication command for the claimed run (fresh admin pin + lease).
+pub fn publication_state(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    cmd: Publication,
+) -> Result<CommandState> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        let state = publication_effective(tx, &setup, cmd)?;
+        renew(tx, now)?;
+        Ok(state)
+    })
+}
+
+/// Durable intent BEFORE the worker is told to mutate. Only for a saved (Registered) client,
+/// only if never attempted; `Publish` additionally needs `Domains` confirmed.
+pub fn intend_publication(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    cmd: Publication,
+) -> Result<()> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        if setup.step != Step::Registered
+            || setup.intent
+            || publication_effective(tx, &setup, cmd)? != CommandState::Untried
+            || (cmd == Publication::Publish
+                && publication_effective(tx, &setup, Publication::Domains)?
+                    != CommandState::Confirmed)
+        {
+            return Err(StoreError::Conflict);
+        }
+        tx.execute(
+            "INSERT INTO installation_google_publication_commands(setup_id,command,state) VALUES(?1,?2,'intent')",
+            params![setup.setup_id.to_string(), cmd.name()],
+        )?;
+        renew(tx, now)
+    })
+}
+
+/// Reserve one bounded replay of an idempotent publication setting. The gateway must first
+/// inspect the exact provider state as Absent. This never applies to resource creation.
+/// The durable ceiling includes the first intent, including a dispatch lost before send.
+/// An exhausted command can still be reconciled by a positive readback.
+pub fn retry_publication(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    cmd: Publication,
+) -> Result<bool> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        if setup.step != Step::Registered
+            || setup.intent
+            || publication_effective(tx, &setup, cmd)? != CommandState::Intent
+            || (cmd == Publication::Publish
+                && publication_effective(tx, &setup, Publication::Domains)?
+                    != CommandState::Confirmed)
+        {
+            return Err(StoreError::Conflict);
+        }
+        let reserved = tx.execute(
+            "UPDATE installation_google_publication_commands SET attempts=attempts+1 WHERE setup_id=?1 AND command=?2 AND state='intent' AND attempts<3",
+            params![setup.setup_id.to_string(), cmd.name()],
+        )? == 1;
+        renew(tx, now)?;
+        Ok(reserved)
+    })
+}
+
+/// Record a positive exact readback. Resolves an uncertain intent; idempotent when already
+/// confirmed; refused for a command never begun.
+pub fn confirm_publication(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    cmd: Publication,
+) -> Result<()> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        match publication_effective(tx, &setup, cmd)? {
+            CommandState::Confirmed => return renew(tx, now),
+            CommandState::Untried => return Err(StoreError::Conflict),
+            CommandState::Intent => {}
+        }
+        if tx.execute(
+            "UPDATE installation_google_publication_commands SET state='confirmed' WHERE setup_id=?1 AND command=?2 AND state='intent'",
+            params![setup.setup_id.to_string(), cmd.name()],
+        )? != 1
+        {
+            return Err(StoreError::Conflict);
+        }
+        renew(tx, now)
+    })
+}
+
+fn published(c: &Connection, setup: &Setup) -> Result<bool> {
+    Ok(setup.step == Step::Registered
+        && publication_effective(c, setup, Publication::Publish)? == CommandState::Confirmed
+        && publication_effective(c, setup, Publication::Domains)? == CommandState::Confirmed)
+}
+
+/// For an authorized administrator, without a lease: the saved client's app was confirmed
+/// published by this journal. `false` for anything older or less than Registered.
+pub fn publication_confirmed(root: &Path, s: &AdminSession) -> Result<bool> {
+    let (_dir, mut c) = open(root, false)?;
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    check(&tx, s)?;
+    match read(&tx)? {
+        Some(setup) => published(&tx, &setup),
+        None => Ok(false),
+    }
+}
+
+/// Observation only, no authority granted: any managed bootstrap whose publication
+/// is not confirmed. The private file may already exist while its checkpoint is
+/// still Client (lost save acknowledgement). A legacy manually registered app has
+/// no bootstrap checkpoint and is never pending.
+pub fn publication_pending(root: &Path) -> Result<bool> {
+    let (_dir, c) = open(root, false)?;
+    match read(&c)? {
+        Some(setup) => Ok(!published(&c, &setup)?),
+        None => Ok(false),
+    }
 }
 
 /// Register through the existing private, atomic Google client writer. `save` receives the
@@ -1270,7 +1444,7 @@ mod tests {
         {
             let (_dir, c) = open(r, false).unwrap();
             c.execute_batch(
-                "DROP TABLE installation_google_console_commands; UPDATE installation_google_bootstrap SET intent=1 WHERE step='audience'; PRAGMA user_version=8;",
+                "DROP TABLE installation_google_publication_commands; DROP TABLE installation_google_console_commands; UPDATE installation_google_bootstrap SET intent=1 WHERE step='audience'; PRAGMA user_version=8;",
             )
             .unwrap();
         }
@@ -1280,7 +1454,7 @@ mod tests {
             c.query_row("PRAGMA user_version", [], |row| row.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         // Neither command may be sent blind, and the old bit is not aliased to one of them.
         assert_eq!(
             command_state(r, &s, run, Command::Audience).unwrap(),
@@ -1304,6 +1478,245 @@ mod tests {
         confirm_command(r, &s, run, Command::Scopes).unwrap();
         confirmed(r, &s, run, Step::Audience).unwrap();
         assert_eq!(stored(r).step, Step::Client);
+    }
+
+    fn publication_rows(r: &Path) -> Vec<(String, String)> {
+        let (_d, c) = open(r, false).unwrap();
+        let mut q = c
+            .prepare("SELECT command,state FROM installation_google_publication_commands ORDER BY command")
+            .unwrap();
+        q.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap()
+    }
+    fn registered(r: &Path, s: &AdminSession, run: Uuid) -> Setup {
+        advance_to_client(r, s, run);
+        register(r, s, run, |_| Ok(())).unwrap();
+        stored(r)
+    }
+
+    #[test]
+    fn publication_retry_budget_survives_restart_and_cannot_reset_or_change_identity() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let first = Uuid::new_v4();
+        begin(r, &s, first);
+        registered(r, &s, first);
+        assert!(retry_publication(r, &s, first, Publication::Domains).is_err());
+        intend_publication(r, &s, first, Publication::Domains).unwrap();
+        assert!(retry_publication(r, &s, first, Publication::Domains).unwrap());
+        expire(r);
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        assert!(retry_publication(r, &s, first, Publication::Domains).is_err());
+        assert!(retry_publication(r, &s, next, Publication::Domains).unwrap());
+        assert!(!retry_publication(r, &s, next, Publication::Domains).unwrap());
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            for sql in [
+                "UPDATE installation_google_publication_commands SET attempts=1",
+                "UPDATE installation_google_publication_commands SET attempts=4",
+                "UPDATE installation_google_publication_commands SET command='publish'",
+            ] {
+                assert!(c.execute(sql, []).is_err());
+            }
+        }
+        // An actual positive readback still settles an exhausted attempt.
+        confirm_publication(r, &s, next, Publication::Domains).unwrap();
+        assert!(retry_publication(r, &s, next, Publication::Domains).is_err());
+        intend_publication(r, &s, next, Publication::Publish).unwrap();
+        assert!(retry_publication(r, &s, next, Publication::Publish).unwrap());
+        assert!(retry_publication(r, &s, next, Publication::Publish).unwrap());
+        assert!(!retry_publication(r, &s, next, Publication::Publish).unwrap());
+        confirm_publication(r, &s, next, Publication::Publish).unwrap();
+        assert!(publication_confirmed(r, &s).unwrap());
+    }
+
+    #[test]
+    fn publication_follows_the_saved_client_in_order_and_reconciles_a_lost_reply() {
+        use CommandState::*;
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        assert!(!publication_pending(r).unwrap());
+        begin(r, &s, run);
+        advance_to_client(r, &s, run);
+        // Before the client is saved nothing may begin, and the lost-client intent is kept.
+        assert!(publication_pending(r).unwrap());
+        for cmd in [Publication::Domains, Publication::Publish] {
+            assert!(matches!(
+                intend_publication(r, &s, run, cmd),
+                Err(StoreError::Conflict)
+            ));
+        }
+        assert_eq!((stored(r).step, stored(r).intent), (Step::Client, true));
+        register(r, &s, run, |_| Ok(())).unwrap();
+        assert!(publication_pending(r).unwrap());
+        assert!(!publication_confirmed(r, &s).unwrap());
+        assert_eq!(
+            publication_state(r, &s, run, Publication::Publish).unwrap(),
+            Untried
+        );
+        // Publish cannot begin before the domains readback, not even through the schema.
+        assert!(matches!(
+            intend_publication(r, &s, run, Publication::Publish),
+            Err(StoreError::Conflict)
+        ));
+        let id = stored(r).setup_id.to_string();
+        {
+            // The registry directory lock is held by `_dir`: no registry call inside.
+            let (_dir, c) = open(r, false).unwrap();
+            for state in ["intent", "confirmed"] {
+                assert!(c.execute(
+                    "INSERT INTO installation_google_publication_commands(setup_id,command,state) VALUES(?1,'publish',?2)",
+                    params![id, state],
+                ).is_err());
+            }
+        }
+        assert!(matches!(
+            confirm_publication(r, &s, run, Publication::Domains),
+            Err(StoreError::Conflict)
+        ));
+        intend_publication(r, &s, run, Publication::Domains).unwrap();
+        // Registered carries no step intent: the bit is never set by publication.
+        assert_eq!((stored(r).step, stored(r).intent), (Step::Registered, false));
+        // Reply lost: a new run preserves intent; only the bounded retry API can reserve another dispatch.
+        expire(r);
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        assert_eq!(
+            publication_state(r, &s, next, Publication::Domains).unwrap(),
+            Intent
+        );
+        assert!(matches!(
+            intend_publication(r, &s, next, Publication::Domains),
+            Err(StoreError::Conflict)
+        ));
+        assert!(matches!(
+            intend_publication(r, &s, next, Publication::Publish),
+            Err(StoreError::Conflict)
+        ));
+        confirm_publication(r, &s, next, Publication::Domains).unwrap();
+        confirm_publication(r, &s, next, Publication::Domains).unwrap();
+        assert!(publication_pending(r).unwrap());
+        intend_publication(r, &s, next, Publication::Publish).unwrap();
+        assert!(publication_pending(r).unwrap());
+        confirm_publication(r, &s, next, Publication::Publish).unwrap();
+        assert!(!publication_pending(r).unwrap());
+        assert!(publication_confirmed(r, &s).unwrap());
+        assert!(matches!(
+            intend_publication(r, &s, next, Publication::Publish),
+            Err(StoreError::Conflict)
+        ));
+        // Permanent and monotone at the schema level.
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            for sql in [
+                "UPDATE installation_google_publication_commands SET state='intent'",
+                "UPDATE installation_google_publication_commands SET command='domains' WHERE command='publish'",
+                "DELETE FROM installation_google_publication_commands",
+                "INSERT OR REPLACE INTO installation_google_publication_commands(setup_id,command,state) VALUES((SELECT setup_id FROM installation_google_bootstrap),'domains','intent')",
+            ] {
+                assert!(c.execute(sql, []).is_err(), "{sql}");
+            }
+        }
+        assert_eq!(
+            publication_rows(r),
+            [
+                ("domains".to_string(), "confirmed".to_string()),
+                ("publish".to_string(), "confirmed".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn migration_nine_registered_and_console_records_cannot_manufacture_publication() {
+        use CommandState::*;
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        let setup = registered(r, &s, run);
+        assert_eq!(setup.step, Step::Registered);
+        // Exactly the migration 9 world: every console command confirmed, client saved,
+        // and no publication journal at all.
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            c.execute_batch(
+                "DROP TABLE installation_google_publication_commands; PRAGMA user_version=9;",
+            )
+            .unwrap();
+        }
+        assert!(publication_rows(r).is_empty());
+        for cmd in [Command::Branding, Command::Audience, Command::Scopes] {
+            assert_eq!(command_state(r, &s, run, cmd).unwrap(), Confirmed);
+        }
+        for cmd in [Publication::Domains, Publication::Publish] {
+            assert_eq!(publication_state(r, &s, run, cmd).unwrap(), Untried);
+            assert!(matches!(
+                confirm_publication(r, &s, run, cmd),
+                Err(StoreError::Conflict)
+            ));
+        }
+        assert!(publication_pending(r).unwrap());
+        assert!(!publication_confirmed(r, &s).unwrap());
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            for (cmd, state) in [
+                ("domains", "confirmed"),
+                ("publish", "confirmed"),
+                ("publish", "intent"),
+            ] {
+                assert!(
+                    c.execute(
+                        "INSERT INTO installation_google_publication_commands(setup_id,command,state) VALUES(?1,?2,?3)",
+                        params![setup.setup_id.to_string(), cmd, state],
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert!(publication_rows(r).is_empty());
+    }
+
+    #[test]
+    fn publication_needs_fresh_admin_current_lease_and_survives_demotion_unchanged() {
+        let (d, mut s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        registered(r, &s, run);
+        intend_publication(r, &s, run, Publication::Domains).unwrap();
+        expire(r);
+        // Expired lease: neither read nor write for the old run.
+        assert!(publication_state(r, &s, run, Publication::Domains).is_err());
+        assert!(confirm_publication(r, &s, run, Publication::Domains).is_err());
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        assert!(confirm_publication(r, &s, run, Publication::Domains).is_err());
+        s.issued = Instant::now() - Duration::from_secs(6);
+        assert!(confirm_publication(r, &s, next, Publication::Domains).is_err());
+        assert!(publication_confirmed(r, &s).is_err());
+        s.issued = Instant::now();
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            c.execute(
+                "UPDATE installation_members SET role_revision=role_revision+1",
+                [],
+            )
+            .unwrap();
+        }
+        for cmd in [Publication::Domains, Publication::Publish] {
+            assert!(intend_publication(r, &s, next, cmd).is_err());
+            assert!(confirm_publication(r, &s, next, cmd).is_err());
+            assert!(publication_state(r, &s, next, cmd).is_err());
+        }
+        assert!(publication_confirmed(r, &s).is_err());
+        assert_eq!(
+            publication_rows(r),
+            [("domains".to_string(), "intent".to_string())]
+        );
     }
 
     #[test]

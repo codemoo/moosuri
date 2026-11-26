@@ -21,7 +21,7 @@ use moosuri_store::{
     StoreError,
     runtime_registry::admin::{
         self as control, AdminSession,
-        google_bootstrap::{self as registry, Command, CommandState, Setup, Step},
+        google_bootstrap::{self as registry, Command, CommandState, Publication, Setup, Step},
     },
 };
 
@@ -141,6 +141,8 @@ fn expected(action: Action, reply: Reply) -> Result<Reply, Failure> {
             | Action::InspectBranding
             | Action::InspectAudience
             | Action::InspectScopes
+            | Action::InspectDomains
+            | Action::InspectPublication
             | Action::InspectClient,
             _,
         )
@@ -267,13 +269,16 @@ impl Controller {
                 intent: false,
             },
         );
-        // Observe Registered without taking a new lease or changing identity.
-        if let Some(setup) = c
+        // Observe Registered without taking a new lease or changing identity. A saved client
+        // is NOT publication: only a confirmed publication journal ends the setup here. An
+        // older Registered checkpoint (no journal rows) continues below and is published.
+        if let Some((setup, true)) = c
             .with_admin(|root, s| {
                 if registry::pending_sdk_run(root, s)?.is_some() {
                     return Err(StoreError::Conflict);
                 }
-                registry::current(root, s)
+                let published = registry::publication_confirmed(root, s)?;
+                Ok(registry::current(root, s)?.map(|setup| (setup, published)))
             })
             .await?
             && setup.step == Step::Registered
@@ -284,7 +289,9 @@ impl Controller {
         c.setup = c
             .with_admin(move |root, s| registry::claim(root, s, run, email, redirect_uri))
             .await?;
-        if c.setup.step == Step::Registered {
+        if c.setup.step == Step::Registered
+            && c.with_admin(registry::publication_confirmed).await?
+        {
             return Ok(Prepared::Configured(c.setup));
         }
         c.with_admin(move |root, s| registry::begin_sdk(root, s, run))
@@ -404,6 +411,11 @@ impl Controller {
     /// Issue once, or adopt only the exact provider client whose private file
     /// already survived a lost journal commit. No secret reaches the web layer.
     pub(super) async fn client(&mut self, peer: &mut BufReader<UnixStream>) -> Result<(), Failure> {
+        // A client already saved by an earlier run: nothing to create. (Publication is a
+        // separate stage, see `publication`.)
+        if self.setup.step == Step::Registered {
+            return Ok(());
+        }
         if self.setup.step != Step::Client {
             return Err(Failure::Gateway(StatusCode::CONFLICT));
         }
@@ -505,6 +517,86 @@ impl Controller {
         self.setup.step = Step::Registered;
         self.setup.intent = false;
         Ok(())
+    }
+
+    /// Publication prerequisite AFTER the client is saved (`Registered`), including an older
+    /// Registered checkpoint that predates the journal. The installation's own public
+    /// information URLs, then External / In production, each with its own durable command:
+    /// intent before the mutation, a positive exact readback as the only confirmation, and a
+    /// lost reply is reconciled by inspection. Only these two idempotent settings may be
+    /// resubmitted after a positive Absent readback, with three durable attempts total.
+    /// Resource creation remains non-replayable. Needs a fresh admin proof
+    /// for every registry step and every worker command, like the stages before it. The step
+    /// intent bit (client-creation uncertainty) is neither set nor consumed. This is
+    /// publication only: no Google verification is claimed and nothing about the
+    /// unverified-app warning, the user cap or billing is touched. The caller must not offer
+    /// consent to any member until this returns `Ok`.
+    pub(super) async fn publication(
+        &mut self,
+        peer: &mut BufReader<UnixStream>,
+    ) -> Result<(), Failure> {
+        if self.setup.step != Step::Registered || self.setup.intent {
+            return Err(Failure::Gateway(StatusCode::CONFLICT));
+        }
+        for (cmd, inspect, configure) in [
+            (
+                Publication::Domains,
+                Action::InspectDomains,
+                Action::ConfigureDomains,
+            ),
+            (
+                Publication::Publish,
+                Action::InspectPublication,
+                Action::ConfigurePublication,
+            ),
+        ] {
+            let seen = self.command(peer, inspect).await?;
+            let state = self.publication_state(cmd).await?;
+            if state == CommandState::Intent && seen == Reply::Absent {
+                let run = self.run;
+                if !self
+                    .with_admin(move |root, s| registry::retry_publication(root, s, run, cmd))
+                    .await?
+                {
+                    return Err(Failure::Unresolved);
+                }
+                self.command(peer, configure).await?;
+                self.confirm_publication(cmd).await?;
+                continue;
+            }
+            match plan(state, seen)? {
+                Plan::Done => {}
+                Plan::Settle {
+                    intend,
+                    configure: send,
+                } => {
+                    if intend {
+                        self.intend_publication(cmd).await?;
+                    }
+                    if send {
+                        self.command(peer, configure).await?;
+                    }
+                    self.confirm_publication(cmd).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn publication_state(&self, cmd: Publication) -> Result<CommandState, Failure> {
+        let run = self.run;
+        self.with_admin(move |root, s| registry::publication_state(root, s, run, cmd))
+            .await
+    }
+    async fn intend_publication(&self, cmd: Publication) -> Result<(), Failure> {
+        let run = self.run;
+        self.with_admin(move |root, s| registry::intend_publication(root, s, run, cmd))
+            .await
+    }
+    async fn confirm_publication(&self, cmd: Publication) -> Result<(), Failure> {
+        let run = self.run;
+        self.with_admin(move |root, s| registry::confirm_publication(root, s, run, cmd))
+            .await
     }
 
     async fn command_state(&self, cmd: Command) -> Result<CommandState, Failure> {
@@ -1059,6 +1151,297 @@ mod tests {
                 );
                 if client.exists() {
                     assert_eq!(std::fs::metadata(client).unwrap().mode() & 0o7777, 0o600);
+                }
+            }
+            member_task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn publication_refuses_before_a_saved_client_and_sends_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let g = Gateway::new(&super::super::super::tests::options(&root)).unwrap();
+        let a = SessionAllocation {
+            allocation: Allocation {
+                account_id: Uuid::new_v4().to_string(),
+                tenant_id: Uuid::new_v4().to_string(),
+                volume_id: Uuid::new_v4().to_string(),
+                generation: 1,
+            },
+            epoch: 0,
+        };
+        // Client step: a lost-client intent must stay untouched and nothing may be sent.
+        let setup = Setup {
+            setup_id: Uuid::new_v4(),
+            google_email: "google@example.test".into(),
+            redirect_uri: "https://assistant.example.test/api/v1/mail/oauth/callback".into(),
+            step: Step::Client,
+            intent: true,
+        };
+        let mut c = Controller::new(
+            &g,
+            &a,
+            "session",
+            "member@example.test",
+            Uuid::new_v4(),
+            setup.redirect_uri.clone(),
+            setup,
+        );
+        let (mut worker, controller) = UnixStream::pair().unwrap();
+        let mut peer = BufReader::new(controller);
+        assert_eq!(
+            c.publication(&mut peer).await,
+            Err(Failure::Gateway(StatusCode::CONFLICT))
+        );
+        assert!(c.setup.intent && !c.broken);
+        let mut byte = [0u8; 1];
+        assert!(
+            timeout(Duration::from_millis(50), worker.read(&mut byte))
+                .await
+                .is_err()
+        );
+        // Domains and publication absence may be answered by an inspection only.
+        for action in [Action::InspectDomains, Action::InspectPublication] {
+            assert_eq!(expected(action, Reply::Absent), Ok(Reply::Absent));
+        }
+        for action in [Action::ConfigureDomains, Action::ConfigurePublication] {
+            assert_eq!(expected(action, Reply::Absent), Err(protocol()));
+        }
+    }
+
+    #[tokio::test]
+    async fn publication_runs_after_saved_client_and_retries_only_absent_idempotent_settings() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
+        // Real gateway session reauthorization and the real registry journal; only the
+        // Console worker's answers are synthetic (NOT a live Google result).
+        #[derive(Clone, Copy)]
+        enum W {
+            Ready,
+            Absent,
+            NeedsHuman,
+        }
+        use W::*;
+        // (scenario, journal prepared before the run, worker script, expected result)
+        type Scenario = (
+            &'static str,
+            &'static [(Publication, bool)],
+            &'static [(&'static str, W)],
+            Result<(), Failure>,
+        );
+        let scenarios: [Scenario; 9] = [
+            // Old Registered checkpoint with no journal at all: both are performed, in order.
+            (
+                "old_registered",
+                &[],
+                &[
+                    ("inspect_domains", Absent),
+                    ("configure_domains", Ready),
+                    ("inspect_publication", Absent),
+                    ("configure_publication", Ready),
+                ],
+                Ok(()),
+            ),
+            // Already In production with a lost confirmation: positive readback, no click.
+            (
+                "production_resume",
+                &[(Publication::Domains, true), (Publication::Publish, false)],
+                &[("inspect_domains", Ready), ("inspect_publication", Ready)],
+                Ok(()),
+            ),
+            // Lost save reply, page definitively blank: reserve one idempotent retry.
+            (
+                "lost_domains_reply",
+                &[(Publication::Domains, false)],
+                &[("inspect_domains", Absent), ("configure_domains", Ready),
+                    ("inspect_publication", Absent), ("configure_publication", Ready)],
+                Ok(()),
+            ),
+            // Lost publish reply, definitively Testing: bounded idempotent retry.
+            (
+                "lost_publish_reply",
+                &[(Publication::Domains, true), (Publication::Publish, false)],
+                &[("inspect_domains", Ready), ("inspect_publication", Absent), ("configure_publication", Ready)],
+                Ok(()),
+            ),
+            (
+                "exhausted",
+                &[(Publication::Domains, true), (Publication::Publish, false)],
+                &[("inspect_domains", Ready), ("inspect_publication", Absent)],
+                Err(Failure::Unresolved),
+            ),
+            (
+                "confirmed_drift",
+                &[(Publication::Domains, true), (Publication::Publish, true)],
+                &[("inspect_domains", Ready), ("inspect_publication", Absent)],
+                Err(Failure::Unresolved),
+            ),
+            // Publish action disabled (prerequisite missing): truthful human result.
+            (
+                "disabled_prerequisite",
+                &[(Publication::Domains, true)],
+                &[("inspect_domains", Ready), ("inspect_publication", NeedsHuman)],
+                Err(Failure::Provider(Terminal::NeedsHuman)),
+            ),
+            // Fully confirmed journal and production: inspect only.
+            (
+                "idempotent",
+                &[(Publication::Domains, true), (Publication::Publish, true)],
+                &[("inspect_domains", Ready), ("inspect_publication", Ready)],
+                Ok(()),
+            ),
+            // Authority lost between the worker answer and the journal write.
+            (
+                "logout",
+                &[],
+                &[("inspect_domains", Absent)],
+                Err(Failure::Gateway(StatusCode::UNAUTHORIZED)),
+            ),
+        ];
+        for (scenario, journal, script, wanted) in scenarios {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let options = super::super::super::tests::options(&root);
+            let email = "admin@example.test";
+            let (allocation, store, member_task) =
+                super::super::super::tests::real_member(&options, email).await;
+            let login = store
+                .login(email.into(), "Synthetic-password-42".into())
+                .await
+                .unwrap();
+            let g = Gateway::new(&options).unwrap();
+            let a = SessionAllocation {
+                allocation,
+                epoch: 0,
+            };
+            let (_, bytes, _) = g
+                .proxy(
+                    &a,
+                    Method::GET,
+                    "/api/v1/auth/session",
+                    None,
+                    Some(&login.token),
+                )
+                .await
+                .unwrap();
+            let view = member_session_view(&bytes, &a).unwrap();
+            control::bootstrap(&options.registry, Uuid::new_v4(), &a, &view).unwrap();
+            let pin = control::checked_session(&options.registry, &a, &view)
+                .unwrap()
+                .at_epoch(0)
+                .unwrap();
+            let run = Uuid::new_v4();
+            let redirect = format!("{}{}", g.origin, google::CALLBACK);
+            let original = registry::claim(
+                &options.registry,
+                &pin,
+                run,
+                "google@example.test".into(),
+                redirect.clone(),
+            )
+            .unwrap();
+            for step in [Step::Project, Step::Apis] {
+                registry::intend(&options.registry, &pin, run, step).unwrap();
+                registry::confirmed(&options.registry, &pin, run, step).unwrap();
+            }
+            for (cmd, done) in [
+                (Command::Branding, Some(Step::Branding)),
+                (Command::Audience, None),
+                (Command::Scopes, Some(Step::Audience)),
+            ] {
+                registry::intend_command(&options.registry, &pin, run, cmd).unwrap();
+                registry::confirm_command(&options.registry, &pin, run, cmd).unwrap();
+                if let Some(step) = done {
+                    registry::confirmed(&options.registry, &pin, run, step).unwrap();
+                }
+            }
+            registry::intend(&options.registry, &pin, run, Step::Client).unwrap();
+            registry::register(&options.registry, &pin, run, |_| Ok(())).unwrap();
+            // The saved client is not publication, for the registry or the start gate.
+            assert!(registry::publication_pending(&options.registry).unwrap());
+            for (cmd, confirmed) in journal {
+                registry::intend_publication(&options.registry, &pin, run, *cmd).unwrap();
+                if *confirmed {
+                    registry::confirm_publication(&options.registry, &pin, run, *cmd).unwrap();
+                }
+            }
+            if scenario == "exhausted" {
+                assert!(registry::retry_publication(&options.registry, &pin, run, Publication::Publish).unwrap());
+                assert!(registry::retry_publication(&options.registry, &pin, run, Publication::Publish).unwrap());
+            }
+            let setup = registry::current(&options.registry, &pin).unwrap().unwrap();
+            assert_eq!((setup.step, setup.intent), (Step::Registered, false));
+            let mut controller =
+                Controller::new(&g, &a, &login.token, email, run, redirect.clone(), setup);
+            let (worker, gateway) = UnixStream::pair().unwrap();
+            let worker_store = store.clone();
+            let worker_user = login.user;
+            let worker_task = tokio::spawn(async move {
+                let mut peer = BufReader::new(worker);
+                let mut line = String::new();
+                for (action, reply) in script {
+                    line.clear();
+                    peer.read_line(&mut line).await.unwrap();
+                    let sent: Value = serde_json::from_str(&line).unwrap();
+                    assert_eq!(sent["bootstrap"]["action"], *action);
+                    if scenario == "logout" {
+                        worker_store.logout(&worker_user).await.unwrap();
+                    }
+                    let bytes = match reply {
+                        Ready => WorkerResponse::Status(Reply::Ready).to_line().unwrap().to_vec(),
+                        Absent => WorkerResponse::Status(Reply::Absent)
+                            .to_line()
+                            .unwrap()
+                            .to_vec(),
+                        NeedsHuman => b"{\"status\":\"needs_human\"}\n".to_vec(),
+                    };
+                    peer.get_mut().write_all(&bytes).await.unwrap();
+                }
+                // Nothing beyond the exact script: no unbounded Configure retries.
+                line.clear();
+                assert_eq!(peer.read_line(&mut line).await.unwrap(), 0, "{scenario}");
+            });
+            let mut peer = BufReader::new(gateway);
+            let result = controller.publication(&mut peer).await;
+            assert_eq!(result, wanted, "{scenario}");
+            drop(peer);
+            worker_task.await.unwrap();
+            // Observation without a session (the member start gate): pending until the
+            // journal confirms publication, whatever happened above.
+            let published = matches!(
+                scenario,
+                "old_registered" | "production_resume" | "idempotent" | "lost_domains_reply" | "lost_publish_reply" | "confirmed_drift"
+            );
+            assert_eq!(
+                registry::publication_pending(&options.registry).unwrap(),
+                !published,
+                "{scenario}"
+            );
+            if scenario != "logout" {
+                let after = registry::current(&options.registry, &pin).unwrap().unwrap();
+                assert_eq!(after.setup_id, original.setup_id);
+                assert_eq!((after.step, after.intent), (Step::Registered, false));
+                assert_eq!(
+                    registry::publication_confirmed(&options.registry, &pin).unwrap(),
+                    published,
+                    "{scenario}"
+                );
+                let state = |cmd| {
+                    registry::publication_state(&options.registry, &pin, run, cmd).unwrap()
+                };
+                match scenario {
+                    "lost_domains_reply" => {
+                        assert_eq!(state(Publication::Domains), CommandState::Confirmed);
+                        assert_eq!(state(Publication::Publish), CommandState::Confirmed);
+                    }
+                    "lost_publish_reply" => {
+                        assert_eq!(state(Publication::Publish), CommandState::Confirmed);
+                    }
+                    "disabled_prerequisite" => {
+                        // Inspection failed before any intent: still never attempted.
+                        assert_eq!(state(Publication::Publish), CommandState::Untried);
+                    }
+                    _ => {}
                 }
             }
             member_task.abort();

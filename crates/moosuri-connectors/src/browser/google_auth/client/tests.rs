@@ -304,6 +304,13 @@ fn page_answers_and_private_captures_parse_strictly() {
 }
 
 #[test]
+fn observed_client_id_path_segment_is_accepted_and_traversal_is_not() {
+    assert!(segment_ok("1234-abc.apps.googleusercontent.com"));
+    assert!(!segment_ok("a?b"));
+    assert!(!segment_ok("%2e%2e"));
+}
+
+#[test]
 fn only_fixed_values_reach_the_page_and_script_has_no_side_channels() {
     let req = request(Action::CreateClient);
     let spec = spec(&req);

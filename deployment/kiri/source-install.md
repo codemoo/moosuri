@@ -54,6 +54,11 @@ origins, member limits and administrator identity. Installation and first-member
 request IDs stay the same. Changed inputs are refused; do not delete private
 state to force a retry. Root-owned supplied certificates are supported with the
 paired `--tls-certificate` and `--tls-key` options instead of Certbot.
+The candidate also serves public product information at `/about`, `/privacy`
+and `/terms` on the assistant origin. These pages do not require a member
+session or load private data. They describe this installation's data handling;
+operators remain responsible for their host, support and deletion requests.
+Their presence alone does not establish Google domain or app verification.
 If a previous failed attempt exhausted member login attempts and reports
 `member_login_rate_limited`, wait five minutes before resuming the same command.
 Do not replace the password or delete the member to work around the limiter.

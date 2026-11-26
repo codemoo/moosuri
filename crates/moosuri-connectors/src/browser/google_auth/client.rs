@@ -25,17 +25,18 @@
 //!   `Sequence`): it is never replayed. If the secret is not visible the result is
 //!   `NeedsHuman`; automatic rotation / secret recovery is NOT implemented.
 //!
-//! # NOT PROVEN (live DOM verification gaps)
-//! Only these were observed live: console origin, exact `project` query, the open
-//! shadow-root account toolbar (`Account: Name (email)`), list path `/auth/clients`,
-//! and the create form (application type `role=combobox` -> "Web application", Name
-//! input, two "Add URI" buttons for JS origins/redirects, the "Use this client for an
-//! AI-powered agent" checkbox, Create/Cancel). Everything else is a fail-closed
-//! heuristic that yields `unsupported` => `NeedsHuman` on mismatch: the clients
-//! list's table/empty-state markup, the `/auth/clients/create` path, the existing
-//! client detail page labels (`Client ID`, `Name`, `Application type`, `Authorized
-//! redirect URIs`, how the agentic flag is shown), the creation-result dialog's
-//! `Client ID` / `Client secret` fields and pagination of the list.
+//! # Observed vs NOT PROVEN (live DOM verification gaps)
+//! Observed live: console origin, exact `project` query, the open shadow-root account
+//! toolbar (`Account: Name (email)`), the create form (application type
+//! `role=combobox` -> "Web application", Name input, two "Add URI" buttons, the "Use
+//! this client for an AI-powered agent" checkbox, Create/Cancel), the single-row list
+//! (`TABLE role=grid`; header row = checkbox TD + TH Name/Creation date/Type/Client
+//! ID/Actions; body rows = checkbox TD + `rowheader` name link + four cells; a second
+//! empty-text icon link to the same detail path) and the detail page (title "Client
+//! ID for Web application", labelled Name input, "URIs 1" input, "Additional
+//! information" / `Client ID` label then the visible id). Still NOT proven and
+//! fail-closed: the zero-row empty-state text, pagination/filter markup, multi-row
+//! lists, the `/auth/clients/create` path and the creation-result dialog fields.
 use super::{
     Error,
     bootstrap::{
@@ -550,7 +551,7 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
     .filter(b => low(txt(b)) === label || low(b.getAttribute("aria-label")) === label));
   const nameOf = i => low(i.getAttribute("aria-label")
     || (i.getAttribute("aria-labelledby") || "").split(/\s+/).map(id => txt(document.getElementById(id))).filter(Boolean).join(" ") || (i.labels && i.labels[0] && i.labels[0].innerText)
-    || i.getAttribute("placeholder") || "").replace(/\s*\*$/, "");
+    || i.getAttribute("placeholder") || "").replace(/\s+/g, " ").trim().replace(/\s*\*$/, "");
   const setValue = (field, value) => {
     const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
@@ -604,7 +605,10 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
     if (mode === "list") {
       const tables = all("table,[role=table]", root).filter(t => all("th,[role=columnheader]", t).some(c => low(txt(c)) === "name"));
       if (tables.length > 1) return "ambiguous";
-      const busy = all("[role=progressbar],mat-spinner,mat-progress-bar,mat-progress-spinner").length > 0;
+      // Console keeps an aria-hidden, zero-height progress-button placeholder
+      // after loading completes. Only an exposed indicator fences list proof.
+      const busy = all("[role=progressbar],mat-spinner,mat-progress-bar,mat-progress-spinner")
+        .some(e => !e.closest('[aria-hidden="true"]'));
       if (busy) return "waiting";
       // Absence or uniqueness on only one page is not evidence for the entire
       // project. A filtered or paginated list must be reconciled by an operator
@@ -631,30 +635,44 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
         if (all("a[href]", root).some(clientLink) || !create.length || !empty) return "waiting";
         return "list_none";
       }
-      const rows = all("tr,[role=row]", tables[0]).filter(r => all("td,[role=cell],[role=gridcell]", r).length);
+      // Observed: the header row starts with an empty select-all checkbox TD before
+      // the TH columnheaders, and each body row starts with a checkbox TD. A header
+      // row is any row holding a columnheader; only the other rows are data rows.
+      const headRows = all("tr,[role=row]", tables[0]).filter(r => all("th,[role=columnheader]", r).length);
+      const rows = all("tr,[role=row]", tables[0]).filter(r => !headRows.includes(r)
+        && all("td,[role=cell],[role=gridcell],[role=rowheader]", r).length);
       if (!rows.length || (rows.length === 1 && empty && !all("a[href]", rows[0]).length))
         return empty && create.length ? "list_none" : "waiting";
-      const heads = all("th,[role=columnheader]", tables[0]).map(txt);
+      if (headRows.length !== 1) return "unsupported";
+      // Positional: leading checkbox cells keep their slot, so Name is not shifted.
+      const heads = all("th,td,[role=columnheader],[role=gridcell],[role=cell],[role=rowheader]", headRows[0]).map(txt);
       if (heads.filter(h => h === "Name").length !== 1) return "unsupported";
       const nameIndex = heads.indexOf("Name");
       for (const row of rows) {
-        const cells = all("td,[role=cell],[role=gridcell]", row);
+        const cells = all("td,[role=cell],[role=gridcell],[role=rowheader]", row);
         if (cells.length !== heads.length || !txt(cells[nameIndex])) return "waiting";
       }
       const uuid = low(name.slice("Moosuri ".length));
       const exact = [];
       let mentions = 0;
       for (const row of rows) {
-        const hits = all("a[href]", row).filter(a => txt(a) === name);
+        const cells = all("td,[role=cell],[role=gridcell],[role=rowheader]", row);
+        const hits = all("a[href]", cells[nameIndex]).filter(a => txt(a) === name);
         if (hits.length > 1) return "client_duplicate";
-        if (hits.length === 1) exact.push(hits[0]);
+        if (hits.length === 1) exact.push({link: hits[0], row});
         const text = low(txt(row));
         if (text.includes(uuid) || text.includes(low(name))) mentions++;
       }
       if (exact.length > 1 || mentions > 1) return "client_duplicate";
       if (exact.length === 0) return mentions ? "client_mismatch" : "list_none";
-      if (mentions !== 1 || !clientLink(exact[0])) return "client_mismatch";
-      const u = new URL(exact[0].href, location.href);
+      if (mentions !== 1 || !clientLink(exact[0].link)) return "client_mismatch";
+      const u = new URL(exact[0].link.href, location.href);
+      // The row's icon link (empty text) is the same client; any other client link
+      // or labelled link in the row is not.
+      for (const a of all("a[href]", exact[0].row).filter(clientLink)) {
+        if (new URL(a.href, location.href).pathname !== u.pathname) return "client_mismatch";
+        if (txt(a) !== "" && txt(a) !== name) return "client_mismatch";
+      }
       return "link:" + decodeURIComponent(u.pathname.slice("/auth/clients/".length));
     }
 
@@ -667,8 +685,24 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
         if (hit.length > 1) throw "ambiguous";
         return lines[hit[0] + 1] || "";
       };
+      // Observed: title heading "Client ID for Web application" (no separate
+      // "Application type" label) and an editable Name input with a real label.
+      // The older plain "Application type" line stays supported only when no
+      // such title exists. Helper text means "next line" is not trusted for Name.
+      const titles = all("h1,h2,h3,h4,h5,h6,[role=heading]", root).map(txt).filter(t => /^client id for /i.test(t));
+      if (titles.length > 1) return "ambiguous";
+      const type = titles.length ? titles[0].replace(/^client id for /i, "") : field("Application type");
+      const nameInputs = all("input", root).filter(i => nameOf(i) === "name");
+      if (nameInputs.length > 1) return "ambiguous";
+      const shown = nameInputs.length ? nameInputs[0].value : field("Name");
       const id = field("Client ID");
-      if (field("Name") !== name || field("Application type") !== "Web application") return "client_mismatch";
+      if (shown !== name || type !== "Web application") return "client_mismatch";
+      if (/\s/.test(id) || id.length > 256 || !/\.apps\.googleusercontent\.com$/i.test(id)) return "unsupported";
+      if (/\.apps\.googleusercontent\.com$/i.test(segment) && low(decodeURIComponent(segment)) !== low(id)) return "client_mismatch";
+      // Redirect inputs are labelled "URIs N". Exactly one may exist (origins have
+      // none), so a blank extra row or an origin input cannot hide.
+      const uriInputs = all("input", root).filter(i => /^uris? \d+$/.test(nameOf(i)));
+      if (uriInputs.length > 1 || (uriInputs.length === 1 && uriInputs[0].value !== redirect)) return "client_mismatch";
       const boxes = all("input[type=checkbox],[role=checkbox],[role=switch]", root)
         .filter(c => /ai-powered agent/i.test(nameOf(c) + " " + txt(c.closest("label") || c.parentElement)));
       let agent;

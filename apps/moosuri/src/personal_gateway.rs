@@ -1165,7 +1165,13 @@ async fn public_shell(
     let path = uri.path();
     let asset = if matches!(
         path,
-        "/" | "/preview" | "/app" | "/login" | "/personal.html"
+        "/" | "/preview"
+            | "/app"
+            | "/login"
+            | "/personal.html"
+            | "/about"
+            | "/privacy"
+            | "/terms"
     ) {
         "/personal.html"
     } else if matches!(path, "/demo" | "/demo.html") {
@@ -2913,6 +2919,44 @@ mod tests {
             StatusCode::FORBIDDEN
         );
     }
+    #[tokio::test]
+    async fn google_consent_routes_cannot_bypass_an_unpublished_managed_app() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
+        use moosuri_store::runtime_registry::admin::{self as control, google_bootstrap};
+        let temp = tempfile::tempdir().unwrap();
+        let options = options(&temp.path().canonicalize().unwrap());
+        let (a, _, task) = real_member(&options, "a@example.test").await;
+        let g = Gateway::new(&options).unwrap();
+        let login = request(
+            &g, "/api/v1/auth/login", Method::POST, headers(),
+            &serde_json::json!({"email":"a@example.test","password":"Synthetic-password-42"}).to_string(),
+        ).await;
+        assert_eq!(login.status(), StatusCode::OK);
+        let h = authenticated(&cookies(&login), &a);
+        let view = serde_json::from_value::<moosuri_core::SessionView>(json(login).await).unwrap();
+        control::bootstrap(&options.registry, Uuid::new_v4(), &a, &view).unwrap();
+        assert_eq!(google_connection::unpublished_app(&g).await, Ok(false));
+        let pin = control::checked_session(&options.registry, &a, &view).unwrap().at_epoch(0).unwrap();
+        google_bootstrap::claim(
+            &options.registry, &pin, Uuid::new_v4(), "google@example.test".into(),
+            "https://assistant.example.test/api/v1/mail/oauth/callback".into(),
+        ).unwrap();
+        // Even the initial checkpoint blocks consent: a private client file can
+        // survive a lost checkpoint acknowledgement and must not bypass setup.
+        assert_eq!(google_connection::unpublished_app(&g).await, Ok(true));
+        for service in ["", "drive/", "docs/", "slides/", "sheets/", "calendar/", "mail-write/"] {
+            let response = request(
+                &g, &format!("/api/v1/personal/google/{service}start"),
+                Method::POST, h.clone(), "{}",
+            ).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{service}");
+            assert_eq!(json(response).await, serde_json::json!({"code":"google_setup_required"}));
+        }
+        // A storage failure must never be interpreted as a legacy ready app.
+        fs::rename(&options.registry, temp.path().join("unreadable-registry")).unwrap();
+        assert_eq!(google_connection::unpublished_app(&g).await, Err(StatusCode::SERVICE_UNAVAILABLE));
+        task.abort();
+    }
     async fn check_google_setup_administration(
         g: &Gateway,
         registry: &Path,
@@ -3309,5 +3353,69 @@ mod tests {
             request(&gateway, "/", Method::GET, h, "").await.status(),
             StatusCode::BAD_REQUEST
         );
+    }
+    #[tokio::test]
+    async fn public_information_pages_use_the_public_shell_with_unchanged_restrictions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let options = options(&root);
+        let gateway = Gateway::new(&options).unwrap();
+        let mut h = headers();
+        h.remove("origin");
+        h.remove("x-real-ip");
+        for path in ["/about", "/privacy", "/terms"] {
+            let response = request(&gateway, path, Method::GET, h.clone(), "").await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert!(!response.headers().contains_key(header::SET_COOKIE));
+            let bytes = axum::body::to_bytes(response.into_body(), 512 * 1024)
+                .await
+                .unwrap();
+            let html = std::str::from_utf8(&bytes).unwrap();
+            assert!(html.contains("<title>Moosuri</title>"), "{path}");
+            assert_eq!(
+                request(&gateway, path, Method::POST, h.clone(), "")
+                    .await
+                    .status(),
+                StatusCode::METHOD_NOT_ALLOWED
+            );
+            assert_eq!(
+                request(&gateway, &format!("{path}?x=1"), Method::GET, h.clone(), "")
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+            let mut foreign_origin = h.clone();
+            foreign_origin.insert("origin", HeaderValue::from_static("https://evil.example.test"));
+            assert_eq!(
+                request(&gateway, path, Method::GET, foreign_origin, "")
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+            let mut foreign_host = h.clone();
+            foreign_host.insert("host", HeaderValue::from_static("foreign.example.test"));
+            assert_eq!(
+                request(&gateway, path, Method::GET, foreign_host, "")
+                    .await
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        for path in [
+            "/api/about",
+            "/api/v1/about",
+            "/about/",
+            "/privacy/x",
+            "/terms.html",
+            "/About",
+        ] {
+            assert_eq!(
+                request(&gateway, path, Method::GET, h.clone(), "")
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
     }
 }

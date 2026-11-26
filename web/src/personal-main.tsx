@@ -7,13 +7,30 @@ import "@astryxdesign/core/astryx.css";
 import "@astryxdesign/theme-neutral/theme.css";
 import "./styles.css";
 import "./workspace.css";
+import "./public-information.css";
 import "./touch-viewport";
-import PersonalPreview from "./PersonalPreview";
+import { PublicInformation, resolvePublicInformationPath } from "./PublicInformation";
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <Theme theme={neutralTheme} mode="dark">
-      <PersonalPreview />
-    </Theme>
-  </StrictMode>,
-);
+const root = createRoot(document.getElementById("root")!);
+const publicPage = resolvePublicInformationPath(window.location.pathname);
+
+if (publicPage) {
+  // Public pages never load the member application or contact any API.
+  root.render(
+    <StrictMode>
+      <Theme theme={neutralTheme} mode="dark">
+        <PublicInformation page={publicPage} />
+      </Theme>
+    </StrictMode>,
+  );
+} else {
+  void import("./PersonalPreview").then(({ default: PersonalPreview }) => {
+    root.render(
+      <StrictMode>
+        <Theme theme={neutralTheme} mode="dark">
+          <PersonalPreview />
+        </Theme>
+      </StrictMode>,
+    );
+  });
+}

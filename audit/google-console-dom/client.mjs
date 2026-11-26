@@ -10,14 +10,15 @@ const script=source.split('const SCRIPT: &str = r##"')[1].split('"##;')[0];
 const email='member@example.test',project='moosuri-0123456789abcdef0123',name='Moosuri 0123456789abcdef0123456789abcdef';
 const redirect='https://assistant.example.test/api/v1/mail/oauth/callback',id='1234567890-synthetic.apps.googleusercontent.com';
 function fixture(mode,html,account=email,seg='fixture'){
- const path=mode==='list'?'':mode==='detail'?'/'+seg:'/create';
+ const onDetail=['detail','secrets','add','capture'].includes(mode);
+ const path=mode==='list'?'':onDetail?'/'+seg:'/create';
  const dom=new JSDOM(`<body><div id="toolbar"></div><main>${html}</main></body>`,{url:`https://console.cloud.google.com/auth/clients${path}?project=${project}&hl=en`,runScripts:'outside-only'});
  const w=dom.window;Object.defineProperty(w.document,'readyState',{get:()=> 'complete'});
  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent},configurable:true});
  w.Element.prototype.getClientRects=function(){return [{width:1,height:1}]};
  w.document.getElementById('toolbar').attachShadow({mode:'open'}).innerHTML=`<button aria-label="Account: Synthetic (${account})"></button>`;
  const run=w.eval(`(${script})`);
- return {w,run:(last='',expected='')=>run(mode,project,email,last,expected,name,redirect,mode==='detail'?seg:''),close:()=>w.close()};
+ return {w,run:(last='',expected='',fp='')=>run(mode,project,email,last,expected,name,redirect,onDetail?seg:'',fp),close:()=>w.close()};
 }
 const row=(label=name)=>`<tr><td><a href="/auth/clients/fixture?project=${project}">${label}</a></td></tr>`;
 const table=(rows='')=>`<table><tr><th>Name</th></tr>${rows || '<tr><td>No rows to display</td></tr>'}</table><button>Create client</button>`;
@@ -100,6 +101,99 @@ test('observed detail markup binds title, label-associated name, uri, agent and 
 });
 test('observed detail never returns the secret text',()=>{
  const f=fixture('detail',obsDetail(),email,id);assert.ok(!f.run().includes('abcd'));f.close();
+});
+// ---- Same-client secret recovery: inventory, the one Add click, private capture. ----
+// Synthetic values with structurally observed DL rows. Both separate card wrappers
+// and the live adjacent-DL layout keep the NEW marker/copy button inside one card.
+const newSecret='GOCSPX-synthetic-wxyz',oldFp='abcd\tNov 1, 2026\tenabled';
+const card=({suffix='abcd',created='Nov 1, 2026',status='Enabled',marker='',copy='',extraRow='',wrap=true}={})=>{
+ const dl=`<dl><div><dt>Client secret</dt><dd><div>****${suffix}</div></dd></div><div><dt>Creation date</dt><dd><div>${created}</div></dd></div><div><dt>Status</dt><dd><div><i></i>${status}</div></dd></div>${extraRow}</dl>`;
+ return wrap?`<div class="card">${dl}${marker}${copy}</div>`:dl+marker+copy;
+};
+const fresh=({suffix='wxyz',value=newSecret,marker='<span>NEW</span>',copy=null,...rest}={})=>card({suffix,created:'Nov 2, 2026',marker,copy:copy??`<button aria-label="Copy to clipboard: ${value}"><i></i></button>`,...rest});
+const section=(cards,{busy=false,disabled=false}={})=>`<div id="sec"><h2>Client secrets</h2><div>Secrets are masked.</div>${cards}<cfc-progress-button><button aria-label="Add client secret" ${disabled?'disabled':''}>Add secret</button><div role="progressbar" aria-label="Adding" ${busy?'':'aria-hidden="true"'}></div></cfc-progress-button></div>`;
+const withSecrets=(cards,o={},detailOptions={})=>obsDetail(detailOptions).replace(/<div>Client secrets<\/div>.*<button>Add secret<\/button>/,section(cards,o));
+function secretsFixture(mode,cards,o,detailOptions,account){
+ const f=fixture(mode,withSecrets(cards,o,detailOptions),account,id);let clicks=0,adds=0,copies=0;
+ f.w.document.addEventListener('click',e=>{clicks++;const l=e.target.getAttribute&&e.target.getAttribute('aria-label')||'';if(l==='Add client secret')adds++;if(/^Copy to clipboard/.test(l))copies++;});
+ return {...f,stat:()=>({clicks,adds,copies})};
+}
+test('secret inventory is read only, strict and never carries a secret',()=>{
+ const f=secretsFixture('secrets',card());assert.equal(f.run(),`secrets\n${oldFp}\told`);assert.deepEqual(f.stat(),{clicks:0,adds:0,copies:0});f.close();
+ const g=secretsFixture('secrets',card()+fresh());
+ const out=g.run();assert.equal(out,`secrets\n${oldFp}\told\nwxyz\tNov 2, 2026\tenabled\tnew`);assert.ok(!out.includes('GOCSPX'));assert.equal(g.stat().clicks,0);g.close();
+ for(const [cards,result] of [
+  [card({status:'Disabled'}),'unsupported'],
+  [card({extraRow:'<div><dt>Last used</dt><dd><div>never</div></dd></div>'}),'unsupported'],
+  [card()+card({created:'Nov 3, 2026'}),'ambiguous'],
+  [card({suffix:'ab'}),'unsupported'],
+  [card().replace('<dl>','<dl><span>stray</span>'),'unsupported'],
+  [card()+card({suffix:'b1'}).replace('b1','b1b1'),'secrets\n'+oldFp+'\told\nb1b1\tNov 1, 2026\tenabled\told'],
+  ['','waiting'],
+ ]){const h=secretsFixture('secrets',cards);assert.equal(h.run(),result);assert.equal(h.stat().clicks,0);h.close();}
+ const busy=secretsFixture('secrets',card(),{busy:true});assert.equal(busy.run(),'waiting');busy.close();
+});
+test('observed new card has its NEW badge in DT and copy button in its own DD',()=>{
+ const statusButton=html=>html.replace('<div><i></i>Enabled</div>', '<div><i></i>Enabled <button aria-label="Disable client secret">Disable</button></div>');
+ const old=statusButton(card({wrap:false}));
+ const added=card({wrap:false,suffix:'wxyz',created:'Nov 2, 2026'})
+  .replace('<dt>Client secret</dt>','<dt>Client secret <ul><li>NEW</li></ul></dt>')
+  .replace('<div>****wxyz</div>',`<div>****wxyz<button aria-label="Copy to clipboard: ${newSecret}"></button></div>`);
+ const f=secretsFixture('capture',old+statusButton(added));
+ assert.equal(f.run('','',oldFp),`captured\n${id}\n${newSecret}`);
+ assert.deepEqual(f.stat(),{clicks:0,adds:0,copies:0});f.close();
+ const bad=secretsFixture('capture',old+added.replace('<li>NEW</li>','<li>NEW</li><li>NEW</li>'));
+ assert.equal(bad.run('','',oldFp),'unsupported');assert.equal(bad.stat().clicks,0);bad.close();
+});
+test('the one Add click needs the exact verified client, one unmarked row and the explicit add step',()=>{
+ const f=secretsFixture('add',card());
+ assert.equal(f.run('','',oldFp),'unsupported');assert.equal(f.stat().adds,0);
+ assert.equal(f.run('','add','abcd\tNov 9, 2026\tenabled'),'ambiguous');assert.equal(f.stat().adds,0);
+ assert.equal(f.run('','add',oldFp),'acted');assert.deepEqual(f.stat(),{clicks:1,adds:1,copies:0});f.close();
+ // Two entries refuse even though Google's Add button is still enabled.
+ for(const [cards,o,result] of [
+  [card()+fresh(),{},'ambiguous'],
+  [card()+card({suffix:'efgh'}),{},'ambiguous'],
+  [fresh(),{},'ambiguous'],
+  [card({marker:'<span>NEW</span>'}),{},'ambiguous'],
+  [card({copy:'<button aria-label="Copy to clipboard: GOCSPX-oldoldold-abcd"></button>'}),{},'ambiguous'],
+  [card(),{disabled:true},'changed'],
+  [card(),{busy:true},'waiting'],
+ ]){const g=secretsFixture('add',cards,o);assert.equal(g.run('','add',oldFp),result);assert.equal(g.stat().adds,0);g.close();}
+ // Wrong account/project, mismatching client name, callback, origins or agentic flag.
+ for(const [detailOptions,account,result] of [
+  [{},'foreign@example.test','wrong_account'],
+  [{uri:redirect+'/x'},email,'client_mismatch'],
+  [{origin:'https://assistant.example.test'},email,'client_mismatch'],
+  [{checked:false},email,'client_mismatch'],
+  [{nm:'Moosuri other'},email,'client_mismatch'],
+  [{title:'Client ID for Desktop app'},email,'client_mismatch'],
+ ]) for(const mode of ['secrets','add','capture']){
+  const g=secretsFixture(mode,card(),{},detailOptions,account);assert.equal(g.run('','add',oldFp),result,mode+JSON.stringify(detailOptions));assert.equal(g.stat().clicks,0);g.close();
+ }
+ const p=secretsFixture('add',card());p.w.history.replaceState(null,'','?project=foreign');assert.equal(p.run('','add',oldFp),'foreign');assert.equal(p.stat().clicks,0);p.close();
+});
+test('capture reads only the NEW card copy label, never clicks it and keeps the old row unchanged',()=>{
+ const f=secretsFixture('capture',card()+fresh());
+ assert.equal(f.run('add','',oldFp),`captured\n${id}\n${newSecret}`);assert.deepEqual(f.stat(),{clicks:0,adds:0,copies:0});f.close();
+ for(const [cards,result] of [
+  [card(),'waiting'],
+  [card()+fresh({copy:''}),'waiting'],
+  [card()+fresh({marker:'',copy:''}),'waiting'],
+  [card()+fresh({marker:''}),'ambiguous'],
+  [card({copy:'<button aria-label="Copy to clipboard: GOCSPX-oldoldold-abcd"></button>'})+fresh(),'ambiguous'],
+  [card()+fresh({value:'GOCSPX-synthetic-zzzz'}),'ambiguous'],
+  [card()+fresh({value:'GOCSPX-****'}),'secret_hidden'],
+  [card()+fresh({copy:'<button aria-label="Copy to clipboard"></button>'}),'secret_hidden'],
+  [card()+fresh({value:'short'}),'secret_hidden'],
+  [card({created:'Nov 9, 2026'})+fresh(),'ambiguous'],
+  [card()+fresh()+fresh({suffix:'qqqq'}),'ambiguous'],
+  [card()+fresh({suffix:'abcd'}),'ambiguous'],
+  [card()+fresh({status:'Disabled'}),'unsupported'],
+  // Unverified live shape: marker/copy outside any one-DL wrapper cannot be adopted.
+  [card({wrap:false})+fresh({wrap:false}),'waiting'],
+ ]){const g=secretsFixture('capture',cards);assert.equal(g.run('add','',oldFp),result,cards);assert.equal(g.stat().clicks,0);g.close();}
+ const busy=secretsFixture('capture',card()+fresh(),{busy:true});assert.equal(busy.run('add','',oldFp),'waiting');busy.close();
 });
 test('creation dialogue exposes only its fixed synthetic fields and refuses a masked secret',()=>{
  for(const [secret,result] of [['GOCSPX-synthetic-only',`created\n${id}\nGOCSPX-synthetic-only`],['GOCSPX-****','secret_hidden']]){

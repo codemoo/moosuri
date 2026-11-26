@@ -23,20 +23,46 @@
 //!   dropped (zeroized) and an error is returned. An uncertain click/response is an
 //!   error that taints Chrome and spends the worker's single create (see
 //!   `Sequence`): it is never replayed. If the secret is not visible the result is
-//!   `NeedsHuman`; automatic rotation / secret recovery is NOT implemented.
+//!   `NeedsHuman`.
+//! * `RecoverClientSecret`: same-client secret recovery by adding exactly ONE new
+//!   secret. The gateway must have proven (durably) that the local registration is
+//!   absent and hold a separate once-only recovery intent; this module grants no
+//!   authority. The worker `Sequence` admits it only right after an `InspectClient`
+//!   that answered `ClientPresent`, once, never in a worker that spent `CreateClient`.
+//!   Steps (each at most once, no replay): reconcile the list and read the detail
+//!   page (exact project/account/name/Web/agentic/redirect/no JS origins) => read-only
+//!   secret inventory (twice, stable) which must be EXACTLY one enabled masked secret
+//!   without a NEW marker => ONE click on the `Add client secret` button (the script
+//!   re-verifies the client and the unchanged inventory immediately before clicking)
+//!   => poll (no navigation) for exactly two cards: the old one byte-identical by
+//!   public fingerprint (masked suffix + creation text + status) with no copy button,
+//!   and one NEW enabled card whose `Copy to clipboard: GOCSPX-...` aria-label (read,
+//!   never clicked) is a fully valid secret ending in the card's masked suffix =>
+//!   reload list/detail and require the same client id and an inventory of exactly
+//!   {old row unchanged, one row with the captured suffix}. Only then `Response::Client`.
+//!   A lost Add reply, an uncertain error, a count of two before the write (even if the
+//!   Add button stays enabled), an ambiguous/hidden/missing new value or any metadata
+//!   change is an error that taints Chrome: no repeat, no adoption of an old secret.
+//!   Dates and row text are used only inside this module and are never returned,
+//!   logged or put in an error.
 //!
-//! # Observed vs NOT PROVEN (live DOM verification gaps)
-//! Observed live: console origin, exact `project` query, the open shadow-root account
-//! toolbar (`Account: Name (email)`), the create form (application type
-//! `role=combobox` -> "Web application", Name input, two "Add URI" buttons, the "Use
-//! this client for an AI-powered agent" checkbox, Create/Cancel), the single-row list
-//! (`TABLE role=grid`; header row = checkbox TD + TH Name/Creation date/Type/Client
-//! ID/Actions; body rows = checkbox TD + `rowheader` name link + four cells; a second
-//! empty-text icon link to the same detail path) and the detail page (title "Client
-//! ID for Web application", labelled Name input, "URIs 1" input, "Additional
-//! information" / `Client ID` label then the visible id). Still NOT proven and
-//! fail-closed: the zero-row empty-state text, pagination/filter markup, multi-row
-//! lists, the `/auth/clients/create` path and the creation-result dialog fields.
+//! # Live DOM evidence and remaining gaps
+//! The fixed expression was exercised in the same authenticated task Chrome with
+//! a disposable client: list/detail identity, Web/name/callback/agentic form steps,
+//! one Create, private creation-dialog capture, one-secret inventory, one Add,
+//! private NEW-card capture, and a reload with the unchanged old row plus the new
+//! captured suffix. The list uses a leading checkbox TD, rowheader Name link and
+//! an optional empty icon link to the same client. The account toolbar is in an
+//! open shadow root. The detail title is "Client ID for Web application".
+//!
+//! Secret cards are adjacent DLs of three DIV(DT,DD) rows. A new card puts a UL/LI
+//! NEW badge inside its Client secret DT and a rendered copy button inside its DD.
+//! With two secrets, Status contains Enabled plus a Disable button; it is never
+//! clicked. Reload removes the NEW marker and full-value copy control. Both the
+//! pre- and post-reload two-secret pages refused another Add. These are operator
+//! DOM-subflow checks, not installed gateway/SDK/registration acceptance. Zero-row
+//! empty states, pagination/filter variants and external layout changes still
+//! fail closed when the expected shape is absent or ambiguous.
 use super::{
     Error,
     bootstrap::{
@@ -67,6 +93,7 @@ const PAUSE: Duration = Duration::from_millis(700);
 pub(super) enum Op {
     Inspect,
     Create,
+    Recover,
 }
 
 impl Op {
@@ -74,6 +101,7 @@ impl Op {
         match action {
             Action::InspectClient => Some(Self::Inspect),
             Action::CreateClient => Some(Self::Create),
+            Action::RecoverClientSecret => Some(Self::Recover),
             _ => None,
         }
     }
@@ -86,6 +114,12 @@ pub(super) enum Mode {
     Detail,
     Create,
     Result,
+    /// Read-only client-secret inventory on the verified detail page.
+    Secrets,
+    /// The single `Add client secret` click (acts only when `expected == "add"`).
+    Add,
+    /// Read-only capture of the newly added secret from the verified detail page.
+    Capture,
 }
 
 /// Fixed per-request values, built only from parsed, validated types.
@@ -112,7 +146,7 @@ impl Spec {
         let page = match mode {
             Mode::List | Mode::Result => String::new(),
             Mode::Create => "/create".to_owned(),
-            Mode::Detail => format!("/{segment}"),
+            Mode::Detail | Mode::Secrets | Mode::Add | Mode::Capture => format!("/{segment}"),
         };
         format!("{PREFIX}{page}?project={}&hl=en", self.project)
     }
@@ -133,8 +167,10 @@ pub(super) struct Call<'a> {
     pub last: &'static str,
     /// Empty = read-only peek; otherwise act only if the page still shows it.
     pub expected: &'static str,
-    /// Validated client path segment (`Mode::Detail` only).
+    /// Validated client path segment (detail-based modes only).
     pub segment: &'a str,
+    /// Public fingerprint of the one pre-existing secret row (`Add`/`Capture` only).
+    pub fingerprint: &'a str,
 }
 
 /// Minimal browser surface; Chrome implements it, tests use a scripted fake. The
@@ -146,12 +182,13 @@ pub(super) trait Port {
     async fn pause(&mut self, duration: Duration);
 }
 
-/// Result of one client operation. `Created` holds the one-time secret.
+/// Result of one client operation. `Created`/`Recovered` hold the private secret.
 #[derive(Debug)]
 pub(super) enum Outcome {
     Absent,
     Present(ClientIdentity),
     Created(ClientRegistration),
+    Recovered(ClientRegistration),
 }
 
 impl Outcome {
@@ -159,9 +196,75 @@ impl Outcome {
         match self {
             Self::Absent => Response::Status(Reply::Absent),
             Self::Present(identity) => Response::ClientPresent(identity),
-            Self::Created(registration) => Response::Client(registration),
+            Self::Created(registration) | Self::Recovered(registration) => {
+                Response::Client(registration)
+            }
         }
     }
+}
+
+/// One public client-secret row (masked suffix + creation text; status is always
+/// `Enabled` or the script refuses). Never carries a secret; never leaves this module.
+#[derive(Clone, PartialEq, Eq)]
+struct Row {
+    suffix: String,
+    created: String,
+    fresh: bool,
+}
+
+impl fmt::Debug for Row {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Suffix and creation text are page text: never printed.
+        f.debug_struct("Row").field("fresh", &self.fresh).finish()
+    }
+}
+
+impl Row {
+    fn fingerprint(&self) -> String {
+        format!("{}\t{}\tenabled", self.suffix, self.created)
+    }
+    fn parse(line: &str) -> Result<Self, Error> {
+        let mut parts = line.split('\t');
+        let (Some(suffix), Some(created), Some("enabled"), Some(mark), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
+            return Err(Error::Unavailable);
+        };
+        let fresh = match mark {
+            "new" => true,
+            "old" => false,
+            _ => return Err(Error::Unavailable),
+        };
+        let suffix_ok = suffix.len() == 4
+            && suffix
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'));
+        if !suffix_ok
+            || created.is_empty()
+            || created.len() > 64
+            || created.chars().any(char::is_control)
+        {
+            return Err(Error::Unavailable);
+        }
+        Ok(Self {
+            suffix: suffix.to_owned(),
+            created: created.to_owned(),
+            fresh,
+        })
+    }
+}
+
+/// Inventory sanity: 1..=4 rows with unique masked suffixes.
+fn rows_ok(rows: &[Row]) -> bool {
+    (1..=4).contains(&rows.len())
+        && rows
+            .iter()
+            .enumerate()
+            .all(|(i, r)| rows[..i].iter().all(|p| p.suffix != r.suffix))
 }
 
 /// Create-form steps in strict progression order (derive order is the rank).
@@ -217,6 +320,10 @@ enum Seen {
     ListOne(String),
     Detail(String),
     Created(Capture),
+    /// Detail page secret inventory (public rows only).
+    Secrets(Vec<Row>),
+    /// The newly added secret, captured from the verified detail page.
+    Captured(Capture),
     /// Foreign page, wrong account, look-alike/mismatching client: never touched.
     Blocked,
     /// Duplicates, hidden secret or unrecognised DOM: a human must look.
@@ -234,17 +341,33 @@ fn segment_ok(segment: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+fn capture_of(rest: &str) -> Result<Capture, Error> {
+    let (id, secret) = rest.split_once('\n').ok_or(Error::Unavailable)?;
+    if !valid_client_id(id) || !valid_client_secret(secret) {
+        return Err(Error::Unavailable);
+    }
+    Ok(Capture {
+        id: id.to_owned(),
+        secret: Zeroizing::new(secret.to_owned()),
+    })
+}
+
 impl Seen {
     fn parse(raw: &str) -> Result<Self, Error> {
         if let Some(rest) = raw.strip_prefix("created\n") {
-            let (id, secret) = rest.split_once('\n').ok_or(Error::Unavailable)?;
-            if !valid_client_id(id) || !valid_client_secret(secret) {
-                return Err(Error::Unavailable);
-            }
-            return Ok(Self::Created(Capture {
-                id: id.to_owned(),
-                secret: Zeroizing::new(secret.to_owned()),
-            }));
+            return capture_of(rest).map(Self::Created);
+        }
+        if let Some(rest) = raw.strip_prefix("captured\n") {
+            return capture_of(rest).map(Self::Captured);
+        }
+        if let Some(rest) = raw.strip_prefix("secrets\n") {
+            let rows = rest
+                .split('\n')
+                .map(Row::parse)
+                .collect::<Result<Vec<_>, _>>()?;
+            return rows_ok(&rows)
+                .then_some(Self::Secrets(rows))
+                .ok_or(Error::Unavailable);
         }
         if let Some(segment) = raw.strip_prefix("link:") {
             return segment_ok(segment)
@@ -289,6 +412,7 @@ pub(super) fn expression(spec: &Spec, call: &Call<'_>) -> Result<String, Error> 
         spec.name.as_str(),
         spec.redirect.as_str(),
         call.segment,
+        call.fingerprint,
     ))
     .map_err(|_| Error::Invalid)?;
     Ok(format!("({SCRIPT})(...{args})"))
@@ -321,6 +445,7 @@ async fn first_seen<P: Port>(
             last: "",
             expected: "",
             segment,
+            fingerprint: "",
         };
         match observe(port, spec, call, cancel).await? {
             Seen::Waiting => port.pause(PAUSE).await,
@@ -383,15 +508,30 @@ async fn read_client<P: Port>(
     }
 }
 
+/// Like `find`, also returning the validated path segment. On `Some` the browser is
+/// left on that verified detail page.
+async fn find_at<P: Port>(
+    port: &mut P,
+    spec: &Spec,
+    cancel: &CancellationToken,
+) -> Result<Option<(ClientIdentity, String)>, Error> {
+    match reconcile(port, spec, cancel).await? {
+        Listing::None => Ok(None),
+        Listing::One(segment) => {
+            let identity = read_client(port, spec, &segment, cancel).await?;
+            Ok(Some((identity, segment)))
+        }
+    }
+}
+
 async fn find<P: Port>(
     port: &mut P,
     spec: &Spec,
     cancel: &CancellationToken,
 ) -> Result<Option<ClientIdentity>, Error> {
-    match reconcile(port, spec, cancel).await? {
-        Listing::None => Ok(None),
-        Listing::One(segment) => read_client(port, spec, &segment, cancel).await.map(Some),
-    }
+    Ok(find_at(port, spec, cancel)
+        .await?
+        .map(|(identity, _)| identity))
 }
 
 async fn inspect<P: Port>(
@@ -422,6 +562,7 @@ async fn drive<P: Port>(
             last: wire,
             expected: "",
             segment: "",
+            fingerprint: "",
         };
         match observe(port, spec, peek, cancel).await? {
             Seen::Waiting => idle += 1,
@@ -438,6 +579,7 @@ async fn drive<P: Port>(
                         last: wire,
                         expected: step.wire(),
                         segment: "",
+                        fingerprint: "",
                     };
                     match observe(port, spec, act, cancel).await? {
                         Seen::Acted => {
@@ -474,6 +616,7 @@ async fn capture<P: Port>(
             last: "create",
             expected: "",
             segment: "",
+            fingerprint: "",
         };
         match observe(port, spec, call, cancel).await? {
             Seen::Waiting => port.pause(PAUSE).await,
@@ -511,6 +654,124 @@ async fn create<P: Port>(
     Err(Error::NeedsHuman)
 }
 
+/// Stable (two-read) read-only secret inventory of the already verified detail page.
+async fn inventory<P: Port>(
+    port: &mut P,
+    spec: &Spec,
+    segment: &str,
+    cancel: &CancellationToken,
+) -> Result<Vec<Row>, Error> {
+    let first = match first_seen(port, spec, Mode::Secrets, segment, cancel).await? {
+        Seen::Secrets(rows) => rows,
+        other => return Err(other.refusal()),
+    };
+    port.pause(PAUSE).await;
+    match first_seen(port, spec, Mode::Secrets, segment, cancel).await? {
+        Seen::Secrets(second) if second == first => Ok(first),
+        Seen::Blocked => Err(Error::Blocked),
+        _ => Err(Error::NeedsHuman),
+    }
+}
+
+/// Polls (never navigating, never clicking) for the newly added secret.
+async fn capture_added<P: Port>(
+    port: &mut P,
+    spec: &Spec,
+    segment: &str,
+    fingerprint: &str,
+    cancel: &CancellationToken,
+) -> Result<Capture, Error> {
+    for _ in 0..RESULT_POLLS {
+        let call = Call {
+            mode: Mode::Capture,
+            last: "add",
+            expected: "",
+            segment,
+            fingerprint,
+        };
+        match observe(port, spec, call, cancel).await? {
+            Seen::Waiting => port.pause(PAUSE).await,
+            Seen::Captured(capture) => return Ok(capture),
+            other => return Err(other.refusal()),
+        }
+    }
+    Err(Error::NeedsHuman)
+}
+
+/// Adds exactly one secret to the one verified existing client and captures it.
+/// Every uncertain step is an error (Chrome is tainted by the caller): no repeat.
+async fn recover<P: Port>(
+    port: &mut P,
+    spec: &Spec,
+    cancel: &CancellationToken,
+) -> Result<Outcome, Error> {
+    // Client page, verified (name/Web/agentic/redirect/no origins/account/project).
+    let Some((identity, segment)) = find_at(port, spec, cancel).await? else {
+        return Err(Error::Blocked);
+    };
+    // The detail script binds the page to the id only through the path segment.
+    if !segment.eq_ignore_ascii_case(&identity.client_id) {
+        return Err(Error::NeedsHuman);
+    }
+    // Exactly one pre-existing, enabled, masked, unmarked secret; anything else
+    // (two already, none, duplicates, NEW marker) is for a human. No write yet.
+    let before = inventory(port, spec, &segment, cancel).await?;
+    let [old] = before.as_slice() else {
+        return Err(Error::NeedsHuman);
+    };
+    if old.fresh {
+        return Err(Error::NeedsHuman);
+    }
+    let fingerprint = old.fingerprint();
+    // The one and only Add. The script re-verifies the client and that the inventory
+    // still equals `fingerprint` in the same evaluation before it clicks.
+    let act = Call {
+        mode: Mode::Add,
+        last: "",
+        expected: "add",
+        segment: &segment,
+        fingerprint: &fingerprint,
+    };
+    match observe(port, spec, act, cancel).await? {
+        Seen::Acted => {}
+        Seen::Changed | Seen::Waiting => return Err(Error::NeedsHuman),
+        other => return Err(other.refusal()),
+    }
+    let captured = capture_added(port, spec, &segment, &fingerprint, cancel).await?;
+    if captured.id != identity.client_id {
+        return Err(Error::Blocked);
+    }
+    // Release only if the persisted same client reads back and holds exactly the
+    // unchanged old row plus one row ending in the captured secret's masked suffix.
+    for _ in 0..RELOADS {
+        match find_at(port, spec, cancel).await? {
+            Some((again, seg)) if again.client_id == captured.id => {
+                let rows = inventory(port, spec, &seg, cancel).await?;
+                let [first, second] = rows.as_slice() else {
+                    return Err(Error::NeedsHuman);
+                };
+                let added = match (
+                    first.fingerprint() == fingerprint,
+                    second.fingerprint() == fingerprint,
+                ) {
+                    (true, false) => second,
+                    (false, true) => first,
+                    _ => return Err(Error::NeedsHuman),
+                };
+                if !captured.secret.ends_with(added.suffix.as_str()) {
+                    return Err(Error::NeedsHuman);
+                }
+                let secret = SecretString::new(captured.secret.as_str().to_owned())
+                    .map_err(|_| Error::Unavailable)?;
+                return Ok(Outcome::Recovered(ClientRegistration::new(again, secret)));
+            }
+            Some(_) => return Err(Error::Blocked),
+            None => port.pause(PAUSE * 3).await,
+        }
+    }
+    Err(Error::NeedsHuman)
+}
+
 /// Entry point. Chrome taints itself on any error (see `Chrome::client`).
 pub(super) async fn run<P: Port>(
     port: &mut P,
@@ -521,6 +782,7 @@ pub(super) async fn run<P: Port>(
     match op {
         Op::Inspect => inspect(port, spec, cancel).await,
         Op::Create => create(port, spec, cancel).await,
+        Op::Recover => recover(port, spec, cancel).await,
     }
 }
 
@@ -529,8 +791,12 @@ pub(super) async fn run<P: Port>(
 /// creation result dialog's visible fields, `created\n<id>\n<secret>`. It never
 /// returns other page text. It clicks only: the application type combobox and its
 /// "Web application" option, the Name and redirect URI inputs (value set), the
-/// redirect section's "Add URI" button, the AI-agent checkbox and Create.
-const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, redirect, segment) {
+/// redirect section's "Add URI" button, the AI-agent checkbox and Create, and (mode
+/// `add` with `expected == "add"` only, after re-verifying the client page and the
+/// unchanged single secret row) the one `Add client secret` button. Modes `secrets` and
+/// `capture` are read-only; `capture` alone returns `captured\n<id>\n<secret>`, read
+/// from the aria-label of the NEW card's copy button (never clicked).
+const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, redirect, segment, fp) {
   "use strict";
   const visible = e => !!e && !!e.getClientRects().length && getComputedStyle(e).visibility !== "hidden";
   const rendered = e => { const s = getComputedStyle(e); return s.display !== "none" && s.visibility !== "hidden"; };
@@ -590,7 +856,8 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
     const path = location.pathname.replace(/\/+$/, "");
     const pathOk = mode === "list" ? path === "/auth/clients"
       : mode === "create" ? path === "/auth/clients/create"
-      : mode === "detail" ? (segment !== "" && segment !== "create" && path === "/auth/clients/" + segment)
+      : (mode === "detail" || mode === "secrets" || mode === "add" || mode === "capture")
+        ? (segment !== "" && segment !== "create" && path === "/auth/clients/" + segment)
       : (path === "/auth/clients" || path.startsWith("/auth/clients/"));
     if (location.origin !== "https://console.cloud.google.com" || !pathOk
         || params.getAll("project").length !== 1 || params.get("project") !== project) return "foreign";
@@ -676,7 +943,7 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
       return "link:" + decodeURIComponent(u.pathname.slice("/auth/clients/".length));
     }
 
-    if (mode === "detail") {
+    const detailCheck = () => {
       const lines = linesOf(root);
       const at = label => lines.map((l, i) => l === label ? i : -1).filter(i => i >= 0);
       const field = label => {
@@ -727,6 +994,90 @@ const SCRIPT: &str = r##"function(mode, project, email, last, expected, name, re
       const outside = lines.slice(0, start[0] + 1).concat(lines.slice(end)).filter(uri);
       if (outside.length || inside.length !== 1 || inside[0] !== redirect) return "client_mismatch";
       return "match:" + id;
+    };
+    if (mode === "detail") return detailCheck();
+
+    if (mode === "secrets" || mode === "add" || mode === "capture") {
+      const verified = detailCheck();
+      if (!verified.startsWith("match:")) return verified;
+      const heads = all("h1,h2,h3,h4,h5,h6,[role=heading]", root).filter(h => txt(h) === "Client secrets");
+      if (heads.length !== 1 || !heads[0].parentElement) return "unsupported";
+      const section = heads[0].parentElement;
+      // Only an exposed progress indicator fences the section (the hidden one stays).
+      if (all("[role=progressbar],mat-spinner,mat-progress-bar,mat-progress-spinner", section)
+        .some(e => !e.closest('[aria-hidden="true"]'))) return "waiting";
+      const adds = all("button,[role=button]", section).filter(b => low(b.getAttribute("aria-label")) === "add client secret");
+      if (adds.length !== 1) return "unsupported";
+      const dls = all("dl", section);
+      if (!dls.length) return "waiting";
+      const copyLabel = /^copy to clipboard/i;
+      const cards = dls.map(dl => {
+        const rows = [...dl.children];
+        const fields = new Map();
+        if (rows.length !== 3) throw "unsupported";
+        for (const r of rows) {
+          const kids = [...r.children];
+          if (kids.length !== 2 || kids[0].tagName !== "DT" || kids[1].tagName !== "DD") throw "unsupported";
+          let key = txt(kids[0]);
+          // Observed live: the new card's DT contains "Client secret" plus a
+          // UL/LI NEW badge. Accept that exact label only with its own one badge;
+          // the full card check below still binds the copy button to this DL.
+          if (key === "Client secret NEW" && all("*", kids[0])
+            .filter(e => !e.children.length && txt(e) === "NEW").length === 1) key = "Client secret";
+          if (!["Client secret", "Creation date", "Status"].includes(key)) throw "unsupported";
+          if (fields.has(key)) throw "ambiguous";
+          let value = txt(kids[1]);
+          // With two secrets Google exposes a Disable action beside each status.
+          // Read it as a control, never as a status or an action to perform.
+          if (key === "Status" && value === "Enabled Disable") {
+            const controls = all("button,[role=button]", kids[1]);
+            if (controls.length !== 1 || controls[0].getAttribute("aria-label") !== "Disable client secret"
+              || txt(controls[0]) !== "Disable") throw "unsupported";
+            value = "Enabled";
+          }
+          fields.set(key, value);
+        }
+        const masked = (fields.get("Client secret") || "").match(/^[*•●]{4}([A-Za-z0-9_-]{4})$/);
+        const created = fields.get("Creation date") || "";
+        if (!masked || !created || created.length > 64 || /[\t\n\r]/.test(created)) throw "unsupported";
+        if (!/^(?:[a-z_]+ )?Enabled$/.test(fields.get("Status") || "")) throw "unsupported";
+        // A card is its dl, widened to its own wrapper only when that wrapper holds
+        // no other dl, so the NEW marker and copy button cannot be borrowed.
+        const wrap = dl.parentElement;
+        const scope = wrap && wrap !== section && all("dl", wrap).length === 1 ? wrap : dl;
+        const marks = all("*", scope).filter(e => !e.children.length && /^new$/i.test(txt(e)));
+        if (marks.length > 1) throw "ambiguous";
+        const copies = all("button,[role=button]", scope).filter(b => copyLabel.test(b.getAttribute("aria-label") || ""));
+        if (copies.length > 1) throw "ambiguous";
+        return {suffix: masked[1], created, fresh: marks.length === 1, copy: copies.length ? copies[0].getAttribute("aria-label") : null};
+      });
+      if (cards.length > 4) return "ambiguous";
+      if (new Set(cards.map(c => c.suffix)).size !== cards.length) return "ambiguous";
+      const print = c => c.suffix + "\t" + c.created + "\tenabled";
+      if (mode === "secrets") {
+        return "secrets\n" + cards.map(c => print(c) + "\t" + (c.fresh ? "new" : "old")).join("\n");
+      }
+      if (mode === "add") {
+        if (expected !== "add") return "unsupported";
+        if (cards.length !== 1 || cards[0].fresh || cards[0].copy !== null || print(cards[0]) !== fp) return "ambiguous";
+        if (!enabled(adds[0])) return "changed";
+        adds[0].click();
+        return "acted";
+      }
+      // mode === "capture": exactly the old row (unchanged, no copy button) plus one NEW card.
+      if (cards.length < 2) return "waiting";
+      if (cards.length > 2) return "ambiguous";
+      const older = cards.filter(c => print(c) === fp);
+      const fresh = cards.filter(c => c !== older[0]);
+      if (older.length !== 1 || fresh.length !== 1) return "ambiguous";
+      if (older[0].fresh || older[0].copy !== null) return "ambiguous";
+      const added = fresh[0];
+      if (!added.fresh) return added.copy === null ? "waiting" : "ambiguous";
+      if (added.copy === null) return "waiting";
+      const value = added.copy.replace(/^copy to clipboard:\s*/i, "");
+      if (value === added.copy || !/^GOCSPX-[A-Za-z0-9_-]{8,}$/.test(value) || value.length > 256) return "secret_hidden";
+      if (!value.endsWith(added.suffix)) return "ambiguous";
+      return "captured\n" + verified.slice("match:".length) + "\n" + value;
     }
 
     if (mode === "result") {

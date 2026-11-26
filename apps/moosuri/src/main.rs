@@ -28,8 +28,8 @@ mod gws_relay;
 mod import_private;
 mod installation;
 mod installation_admin;
-mod kiri_invite;
 mod kiri_chrome_signin;
+mod kiri_invite;
 mod kiri_lifecycle;
 mod kiri_provision;
 mod kiri_storage;
@@ -74,6 +74,8 @@ enum Command {
     PersonalGateway(personal_gateway::Options),
     /// Reconcile a prepared member's Linux Kiri container.
     KiriProvision(kiri_provision::Options),
+    /// Replace one existing member's exact owned container with a pinned target image/profile.
+    KiriRollout(kiri_provision::rollout::Options),
     /// Invite a new member through a private, recoverable Linux installer flow.
     KiriInvite(kiri_invite::Options),
     /// Prepare persistent member storage from a reserved Linux allocation.
@@ -501,6 +503,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::KiriProvision(options) = &cli.command {
         return kiri_provision::run(options).await;
     }
+    if let Command::KiriRollout(options) = &cli.command {
+        return kiri_provision::rollout::run(options).await;
+    }
     if let Command::PersonalVolume(options) = &cli.command {
         return account_runtime::personal(options).await;
     }
@@ -667,6 +672,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::KiriOnboardWorker(_)
         | Command::KiriOnboard(_)
         | Command::KiriProvision(_)
+        | Command::KiriRollout(_)
         | Command::PersonalVolume(_)
         | Command::InstallationAdmin(_)
         | Command::AccountRuntime(_)
@@ -1274,13 +1280,25 @@ async fn shutdown_signal() {
 }
 fn allow_vault_form(response: &mut Response, vault_origin: Option<&str>) {
     if let Some(origin) = vault_origin
-        && let Some(policy) = response.headers().get(header::CONTENT_SECURITY_POLICY)
-            .and_then(|v| v.to_str().ok()).map(str::to_owned)
+        && let Some(policy) = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
     {
         // Preserve the assistant Origin on the vault's cross-origin handoff POST.
-        response.headers_mut().insert(header::REFERRER_POLICY, header::HeaderValue::from_static("strict-origin"));
-        let policy = policy.replace("form-action 'self'", &format!("form-action 'self' {origin}"));
-        response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, policy.parse().expect("validated vault origin"));
+        response.headers_mut().insert(
+            header::REFERRER_POLICY,
+            header::HeaderValue::from_static("strict-origin"),
+        );
+        let policy = policy.replace(
+            "form-action 'self'",
+            &format!("form-action 'self' {origin}"),
+        );
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            policy.parse().expect("validated vault origin"),
+        );
     }
 }
 

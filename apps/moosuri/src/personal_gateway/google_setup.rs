@@ -257,6 +257,21 @@ pub(super) fn verify_bootstrap(
         .map_err(|_| moosuri_store::StoreError::Unavailable)
 }
 
+/// Called only while the registry directory is exclusively locked. Any existing,
+/// invalid or unreadable registration prevents adding another provider secret.
+pub(super) fn require_bootstrap_absent(
+    directory: &File,
+    redirect_uri: &str,
+) -> Result<(), moosuri_store::StoreError> {
+    if stored_client(directory, redirect_uri)
+        .map_err(bootstrap_error)?
+        .is_some()
+    {
+        return Err(moosuri_store::StoreError::Conflict);
+    }
+    Ok(())
+}
+
 fn bootstrap_error(error: SetupError) -> moosuri_store::StoreError {
     use moosuri_store::StoreError;
     match error {

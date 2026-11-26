@@ -107,9 +107,14 @@ Google only reveals its full value once. After an interrupted creation, reconcil
 the stable client name, project and exact callback, then adopt an already committed
 private file when present. If the secret was lost before local commit, use the
 same client's supported secret-rotation flow; do not pretend a masked value is
-recoverable or create another client. Rotation itself needs a pre-write intent,
-bounded reconciliation and explicit handling of Google's two-secret limit. Until
-that recovery is implemented and tested, the client-creation gate stays open.
+recoverable or create another client. Migration 11 reserves a fresh-admin/lease
+intent only when the private registration is absent, binds the same setup/client
+permanently, and caps recovery at three durable attempts. Each worker permits
+one Create or Recover write. Recovery requires one unchanged enabled masked
+secret, adds once, privately captures only the new card and rechecks both rows
+after reload. Two preexisting secrets or an uncertain capture pause without
+deleting or disabling a secret. Another administrator's saved registration wins
+unchanged. The full installed recovery gate stays open until its journey passes.
 
 These provider requirements were rechecked on 2026-11-27 in
 [Google Auth Platform onboarding](https://support.google.com/cloud/answer/15544987?hl=en)

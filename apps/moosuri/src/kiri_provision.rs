@@ -1,7 +1,8 @@
 //! Linux Kiri provisioning preview. Experimental operator command; it does not enable any host service.
 //! Identity is authoritative in runtime_registry; these allocations only reserve host
 //! UID/path ownership. No image pulling, shell commands, volume initialization,
-//! mount creation, container replacement, or production installation occurs here.
+//! mount creation, container replacement, or production installation occurs in the
+//! provision command. Explicit existing-member replacement is isolated in `rollout`.
 //! RestartPolicy:no is intentional: Kiri restarts even never-started containers
 //! with unless-stopped after daemon recovery; a supervisor must reconcile/start.
 use clap::Args;
@@ -18,6 +19,9 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
+
+/// Guarded replacement of one exact owned member container (existing members only).
+pub(crate) mod rollout;
 
 const ENTRYPOINT: &str = "/usr/local/bin/moosuri";
 const API: &str = "/v1.47";
@@ -992,7 +996,7 @@ mod tests {
         assert_eq!(expected().reservation()["profile"], "kiri-0.2.1-none-v1");
         assert_eq!(expected().labels()[LABEL], "kiri-0.2.1-none-v1");
     }
-    fn expected() -> Expected {
+    pub(super) fn expected() -> Expected {
         Expected {
             name: "moosuri-member-00000000-0000-0000-0000-000000000001".into(),
             image: format!("sha256:{}", "a".repeat(64)),
@@ -1017,7 +1021,7 @@ mod tests {
         }
     }
     // Fields and null/empty shapes are from Kiri 0.2.1's real Linux inspect.
-    fn inspect(e: &Expected, running: bool) -> Value {
+    pub(super) fn inspect(e: &Expected, running: bool) -> Value {
         let mut v = json!({
         "Name":format!("/{}",e.name),"Image":e.image,"Path":ENTRYPOINT,"Args":e.command(),
         "Config":{"Entrypoint":[ENTRYPOINT],"Cmd":e.command(),"User":"10001:10001","WorkingDir":"/","Env":[],"Labels":e.labels(),"Healthcheck":{"Test":["NONE"]},"Tty":false,"OpenStdin":false},
@@ -1111,7 +1115,7 @@ mod tests {
         );
         assert!(verify_inspect(&inspect(&e, true), &e).is_ok());
     }
-    fn fake(
+    pub(super) fn fake(
         responses: Vec<(u16, Value)>,
     ) -> (
         tempfile::TempDir,

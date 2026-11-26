@@ -282,10 +282,11 @@ async fn bootstrap_action(
                 let work = async { sdk.verify_apis(&id, &token).await.map(|()| Reply::Ready) };
                 Response::Status(supervised(input, stop, &token, 90, work).await?)
             }
-            Action::InspectClient | Action::CreateClient => {
+            Action::InspectClient | Action::CreateClient | Action::RecoverClientSecret => {
                 // Values come only from the request's setup id / exact callback and
                 // the verified bound email. The SDK is untouched. Chrome is tainted
-                // on any error, so an uncertain create is never repeated.
+                // on any error, so an uncertain create or secret recovery is never
+                // repeated (the Sequence also spends the shared write budget).
                 let op = client::Op::from_action(request.action).ok_or(Error::Invalid)?;
                 let email = Email::parse(&boot.google_email)?;
                 let spec = client::Spec::new(&request, &id, &email);
@@ -339,6 +340,11 @@ async fn bootstrap_action(
             Action::Authorize => return Err(Error::Invalid),
         }
     };
+    // A private `Client` answer is only ever valid for Create/Recover and this exact
+    // request; anything else is dropped (zeroized) without being sent.
+    if !response.answers(&request) {
+        return Err(Error::Invalid);
+    }
     boot.seq.record_response(request.action, &response);
     send_response(output, &response).await
 }

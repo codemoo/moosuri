@@ -289,8 +289,7 @@ impl Controller {
         c.setup = c
             .with_admin(move |root, s| registry::claim(root, s, run, email, redirect_uri))
             .await?;
-        if c.setup.step == Step::Registered
-            && c.with_admin(registry::publication_confirmed).await?
+        if c.setup.step == Step::Registered && c.with_admin(registry::publication_confirmed).await?
         {
             return Ok(Prepared::Configured(c.setup));
         }
@@ -450,6 +449,54 @@ impl Controller {
                     redirect_uri: client.redirect_uri,
                 }),
             );
+        let result = self.save_registration(registration.clone()).await;
+        if result == Err(Failure::SecretUnavailable) {
+            let identity = registration.as_ref().as_ref().err().ok_or_else(protocol)?;
+            let expected_id = identity.client_id.clone();
+            let client_id = expected_id.clone();
+            let redirect = self.redirect_uri.clone();
+            let run = self.run;
+            let reserved = self
+                .with_admin(move |root, session| {
+                    registry::begin_secret_recovery(root, session, run, &client_id, |directory| {
+                        super::super::google_setup::require_bootstrap_absent(directory, &redirect)
+                    })
+                })
+                .await?;
+            if !reserved {
+                return Err(Failure::SecretUnavailable);
+            }
+            // The worker still holds the immediately preceding ClientPresent proof.
+            // It independently requires exactly one unchanged secret before one Add.
+            let recovered = match self
+                .private_command(peer, Action::RecoverClientSecret)
+                .await?
+            {
+                WorkerResponse::Client(client) if client.client_id == expected_id => client,
+                _ => {
+                    self.broken = true;
+                    return Err(protocol());
+                }
+            };
+            self.save_registration(Arc::new(Ok(moosuri_connectors::gmail::OAuthClient {
+                client_id: recovered.client_id,
+                client_secret: recovered.secret,
+                redirect_uri: recovered.redirect_uri,
+            })))
+            .await?;
+        } else {
+            result?;
+        }
+        self.setup.step = Step::Registered;
+        self.setup.intent = false;
+        Ok(())
+    }
+
+    /// Bounded local-only save/reconcile. It never sends a provider command.
+    async fn save_registration(
+        &self,
+        registration: Arc<Result<moosuri_connectors::gmail::OAuthClient, wire::ClientIdentity>>,
+    ) -> Result<(), Failure> {
         for attempt in 0..3 {
             let run = self.run;
             let redirect = self.redirect_uri.clone();
@@ -514,8 +561,6 @@ impl Controller {
                 Err(error) => return Err(error),
             }
         }
-        self.setup.step = Step::Registered;
-        self.setup.intent = false;
         Ok(())
     }
 
@@ -945,6 +990,10 @@ mod tests {
             "lost_save_ack",
             "saved_before_crash",
             "secret_lost",
+            "recovery_competing_save",
+            "recovery_refused",
+            "recovery_wrong_client",
+            "recovery_lost_reply",
             "uncertain_absent",
             "logout",
         ] {
@@ -1006,7 +1055,13 @@ mod tests {
             }
             if matches!(
                 scenario,
-                "saved_before_crash" | "secret_lost" | "uncertain_absent"
+                "saved_before_crash"
+                    | "secret_lost"
+                    | "uncertain_absent"
+                    | "recovery_competing_save"
+                    | "recovery_refused"
+                    | "recovery_wrong_client"
+                    | "recovery_lost_reply"
             ) {
                 registry::intend(&options.registry, &pin, run, Step::Client).unwrap();
             }
@@ -1044,6 +1099,7 @@ mod tests {
                 .unwrap();
             let worker_task = tokio::spawn(async move {
                 let mut peer = BufReader::new(worker);
+                let mut competing_file = None;
                 let mut line = String::new();
                 peer.read_line(&mut line).await.unwrap();
                 let action: Value = serde_json::from_str(&line).unwrap();
@@ -1096,7 +1152,7 @@ mod tests {
                         .unwrap();
                     }
                     let reply = WorkerResponse::Client(ClientRegistration::new(
-                        identity,
+                        identity.clone(),
                         SecretString::new("GOCSPX-synthetic-only".into()).unwrap(),
                     ));
                     peer.get_mut()
@@ -1108,17 +1164,100 @@ mod tests {
                         std::fs::remove_file(pending).unwrap();
                     }
                 }
-                // A failed/adopted inspection must not emit another create.
+                if matches!(
+                    scenario,
+                    "secret_lost"
+                        | "recovery_competing_save"
+                        | "recovery_refused"
+                        | "recovery_wrong_client"
+                        | "recovery_lost_reply"
+                ) {
+                    line.clear();
+                    peer.read_line(&mut line).await.unwrap();
+                    let action: Value = serde_json::from_str(&line).unwrap();
+                    assert_eq!(action["bootstrap"]["action"], "recover_client_secret");
+                    assert!(
+                        !worker_root
+                            .join(runtime_registry::GOOGLE_WEB_CLIENT_FILE)
+                            .exists()
+                    );
+                    if scenario == "recovery_competing_save" {
+                        // Another authorized save lands after the absent-file reservation,
+                        // before the recovered response arrives. Its bytes must win unchanged.
+                        control::with_google_setup(&worker_root, &worker_pin, |directory| {
+                            super::super::super::google_setup::save_bootstrap(
+                                directory,
+                                &identity.redirect_uri,
+                                &moosuri_connectors::gmail::OAuthClient {
+                                    client_id: identity.client_id.clone(),
+                                    client_secret: SecretString::new(
+                                        "GOCSPX-synthetic-other-admin".into(),
+                                    )
+                                    .unwrap(),
+                                    redirect_uri: identity.redirect_uri.clone(),
+                                },
+                            )
+                        })
+                        .unwrap()
+                        .unwrap();
+                        competing_file = Some(
+                            std::fs::read(
+                                worker_root.join(runtime_registry::GOOGLE_WEB_CLIENT_FILE),
+                            )
+                            .unwrap(),
+                        );
+                    }
+                    if scenario == "recovery_lost_reply" {
+                        return;
+                    }
+                    if scenario == "recovery_refused" {
+                        peer.get_mut()
+                            .write_all(b"{\"status\":\"needs_human\"}\n")
+                            .await
+                            .unwrap();
+                    } else {
+                        let mut recovered_identity = identity;
+                        if scenario == "recovery_wrong_client" {
+                            recovered_identity.client_id =
+                                "987-unrelated.apps.googleusercontent.com".into();
+                        }
+                        let reply = WorkerResponse::Client(ClientRegistration::new(
+                            recovered_identity,
+                            SecretString::new("GOCSPX-synthetic-recovered".into()).unwrap(),
+                        ));
+                        peer.get_mut()
+                            .write_all(&reply.to_line().unwrap())
+                            .await
+                            .unwrap();
+                    }
+                }
+                // A failed/adopted inspection or recovery must not emit another write.
                 line.clear();
                 assert_eq!(peer.read_line(&mut line).await.unwrap(), 0);
+                if let Some(bytes) = competing_file {
+                    assert_eq!(
+                        std::fs::read(worker_root.join(runtime_registry::GOOGLE_WEB_CLIENT_FILE))
+                            .unwrap(),
+                        bytes
+                    );
+                }
             });
             let mut peer = BufReader::new(gateway);
             let result = controller.client(&mut peer).await;
             match scenario {
-                "create" | "transient_save" | "lost_save_ack" | "saved_before_crash" => {
+                "create" | "transient_save" | "lost_save_ack" | "saved_before_crash"
+                | "secret_lost" => {
                     assert_eq!(result, Ok(()))
                 }
-                "secret_lost" => assert_eq!(result, Err(Failure::SecretUnavailable)),
+                "recovery_competing_save" => {
+                    assert_eq!(result, Err(Failure::Gateway(StatusCode::CONFLICT)))
+                }
+                "recovery_refused" => {
+                    assert_eq!(result, Err(Failure::Provider(Terminal::NeedsHuman)))
+                }
+                "recovery_wrong_client" | "recovery_lost_reply" => {
+                    assert_eq!(result, Err(protocol()))
+                }
                 "uncertain_absent" => assert_eq!(result, Err(Failure::Unresolved)),
                 "logout" => assert_eq!(result, Err(Failure::Gateway(StatusCode::UNAUTHORIZED))),
                 _ => unreachable!(),
@@ -1132,7 +1271,11 @@ mod tests {
                     saved.step,
                     if matches!(
                         scenario,
-                        "create" | "transient_save" | "lost_save_ack" | "saved_before_crash"
+                        "create"
+                            | "transient_save"
+                            | "lost_save_ack"
+                            | "saved_before_crash"
+                            | "secret_lost"
                     ) {
                         Step::Registered
                     } else {
@@ -1146,7 +1289,12 @@ mod tests {
                     client.exists(),
                     matches!(
                         scenario,
-                        "create" | "transient_save" | "lost_save_ack" | "saved_before_crash"
+                        "recovery_competing_save"
+                            | "create"
+                            | "transient_save"
+                            | "lost_save_ack"
+                            | "saved_before_crash"
+                            | "secret_lost"
                     )
                 );
                 if client.exists() {
@@ -1253,15 +1401,23 @@ mod tests {
             (
                 "lost_domains_reply",
                 &[(Publication::Domains, false)],
-                &[("inspect_domains", Absent), ("configure_domains", Ready),
-                    ("inspect_publication", Absent), ("configure_publication", Ready)],
+                &[
+                    ("inspect_domains", Absent),
+                    ("configure_domains", Ready),
+                    ("inspect_publication", Absent),
+                    ("configure_publication", Ready),
+                ],
                 Ok(()),
             ),
             // Lost publish reply, definitively Testing: bounded idempotent retry.
             (
                 "lost_publish_reply",
                 &[(Publication::Domains, true), (Publication::Publish, false)],
-                &[("inspect_domains", Ready), ("inspect_publication", Absent), ("configure_publication", Ready)],
+                &[
+                    ("inspect_domains", Ready),
+                    ("inspect_publication", Absent),
+                    ("configure_publication", Ready),
+                ],
                 Ok(()),
             ),
             (
@@ -1280,7 +1436,10 @@ mod tests {
             (
                 "disabled_prerequisite",
                 &[(Publication::Domains, true)],
-                &[("inspect_domains", Ready), ("inspect_publication", NeedsHuman)],
+                &[
+                    ("inspect_domains", Ready),
+                    ("inspect_publication", NeedsHuman),
+                ],
                 Err(Failure::Provider(Terminal::NeedsHuman)),
             ),
             // Fully confirmed journal and production: inspect only.
@@ -1366,8 +1525,14 @@ mod tests {
                 }
             }
             if scenario == "exhausted" {
-                assert!(registry::retry_publication(&options.registry, &pin, run, Publication::Publish).unwrap());
-                assert!(registry::retry_publication(&options.registry, &pin, run, Publication::Publish).unwrap());
+                assert!(
+                    registry::retry_publication(&options.registry, &pin, run, Publication::Publish)
+                        .unwrap()
+                );
+                assert!(
+                    registry::retry_publication(&options.registry, &pin, run, Publication::Publish)
+                        .unwrap()
+                );
             }
             let setup = registry::current(&options.registry, &pin).unwrap().unwrap();
             assert_eq!((setup.step, setup.intent), (Step::Registered, false));
@@ -1388,7 +1553,10 @@ mod tests {
                         worker_store.logout(&worker_user).await.unwrap();
                     }
                     let bytes = match reply {
-                        Ready => WorkerResponse::Status(Reply::Ready).to_line().unwrap().to_vec(),
+                        Ready => WorkerResponse::Status(Reply::Ready)
+                            .to_line()
+                            .unwrap()
+                            .to_vec(),
                         Absent => WorkerResponse::Status(Reply::Absent)
                             .to_line()
                             .unwrap()
@@ -1410,7 +1578,12 @@ mod tests {
             // journal confirms publication, whatever happened above.
             let published = matches!(
                 scenario,
-                "old_registered" | "production_resume" | "idempotent" | "lost_domains_reply" | "lost_publish_reply" | "confirmed_drift"
+                "old_registered"
+                    | "production_resume"
+                    | "idempotent"
+                    | "lost_domains_reply"
+                    | "lost_publish_reply"
+                    | "confirmed_drift"
             );
             assert_eq!(
                 registry::publication_pending(&options.registry).unwrap(),
@@ -1426,9 +1599,8 @@ mod tests {
                     published,
                     "{scenario}"
                 );
-                let state = |cmd| {
-                    registry::publication_state(&options.registry, &pin, run, cmd).unwrap()
-                };
+                let state =
+                    |cmd| registry::publication_state(&options.registry, &pin, run, cmd).unwrap();
                 match scenario {
                     "lost_domains_reply" => {
                         assert_eq!(state(Publication::Domains), CommandState::Confirmed);

@@ -12,7 +12,8 @@
 //!
 //! `Response` is `Status(Reply)` (`"ready"`/`"absent"`, the original wire), or for
 //! the two client actions `ClientPresent` (public identity, never a secret) or
-//! `Client` (`CreateClient` only: includes the one-time client secret). The latter
+//! `Client` (`CreateClient` or `RecoverClientSecret` only: includes the client secret
+//! shown once). The latter
 //! is PRIVATE: it travels worker -> capsule -> root relay -> authorized gateway
 //! only (bounded to `PRIVATE_WIRE_LIMIT`), must never reach a web response, a log
 //! or stderr, and is serialized with `Response::to_line` into a zeroizing buffer.
@@ -80,6 +81,13 @@ pub enum Action {
     /// Only right after `InspectClient` answered `Absent`, once per worker. Answers
     /// `Client` only after the persisted settings were read back and verified.
     CreateClient,
+    /// Same-client secret recovery by adding ONE new client secret. Only right after
+    /// `InspectClient` answered `ClientPresent`, once per worker, and never in a worker
+    /// that spent `CreateClient` (they share one write budget). Answers `Client` only
+    /// after the new secret was captured from the verified page and the exact same
+    /// client was re-read. Grants no authority: the gateway must hold a separate
+    /// durable once-only recovery intent and have proven local registration absent.
+    RecoverClientSecret,
     /// Branding public information URLs (home page, privacy policy, terms of service) at
     /// this installation's own `/about`, `/privacy`, `/terms` on the validated callback
     /// origin. Needs verified branding, scopes and audience. `Ready` = all three persisted
@@ -266,7 +274,7 @@ pub enum Response {
     Status(Reply),
     /// `InspectClient`: exactly one matching client exists (no secret).
     ClientPresent(ClientIdentity),
-    /// `CreateClient`: PRIVATE, includes the secret.
+    /// `CreateClient` / `RecoverClientSecret`: PRIVATE, includes the secret.
     Client(ClientRegistration),
 }
 
@@ -318,8 +326,12 @@ impl Response {
         match (request.action, self) {
             (Action::InspectClient, Self::Status(Reply::Absent)) => true,
             (Action::InspectClient, Self::ClientPresent(identity)) => identity.matches(request),
-            (Action::CreateClient, Self::Client(registration)) => registration.matches(request),
-            (Action::InspectClient | Action::CreateClient, _) => false,
+            (Action::CreateClient | Action::RecoverClientSecret, Self::Client(registration)) => {
+                registration.matches(request)
+            }
+            (Action::InspectClient | Action::CreateClient | Action::RecoverClientSecret, _) => {
+                false
+            }
             (_, Self::Status(_)) => true,
             (_, _) => false,
         }
@@ -419,10 +431,13 @@ pub(super) struct Sequence {
     domains_ready: bool,
     domains_configured: bool,
     publication_configured: bool,
-    /// The one `CreateClient` this worker may ever attempt (spent when admitted).
+    /// The one client WRITE (`CreateClient` or `RecoverClientSecret`) this worker may
+    /// ever attempt (spent when admitted; shared, so neither can follow the other).
     client_created: bool,
     /// The inspect action whose `Absent` reply is valid for the very next command.
     absent: Option<Action>,
+    /// `InspectClient` answered `ClientPresent`: valid for the very next command only.
+    present: bool,
     created: bool,
     branding_configured: bool,
     scopes_configured: bool,
@@ -455,6 +470,7 @@ impl Sequence {
         }
         // Absence is only good for the very next command.
         let absent = self.absent.take();
+        let present = std::mem::take(&mut self.present);
         match request.action {
             Action::CreateProject if absent != Some(Action::InspectProject) || self.created => {
                 Err(Error::Invalid)
@@ -537,7 +553,7 @@ impl Sequence {
                 self.publication_configured = true;
                 Ok(())
             }
-            Action::InspectClient | Action::CreateClient
+            Action::InspectClient | Action::CreateClient | Action::RecoverClientSecret
                 if !(self.owned
                     && self.apis
                     && self.branded
@@ -556,13 +572,22 @@ impl Sequence {
                 self.client_created = true;
                 Ok(())
             }
+            Action::RecoverClientSecret if !present || self.client_created => Err(Error::Invalid),
+            Action::RecoverClientSecret => {
+                // Same shared budget: an uncertain Add is never repeated, and a worker
+                // that created the client can never also add a secret.
+                self.client_created = true;
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
     /// Records a successful action's response.
     pub fn record_response(&mut self, action: Action, response: &Response) {
-        if let Response::Status(reply) = response {
-            self.record(action, *reply);
+        match response {
+            Response::Status(reply) => self.record(action, *reply),
+            Response::ClientPresent(_) if action == Action::InspectClient => self.present = true,
+            _ => {}
         }
     }
     /// Records a successful action's reply.
@@ -925,6 +950,130 @@ mod tests {
     }
 
     #[test]
+    fn private_client_answer_is_only_for_create_or_recover() {
+        let b = binding();
+        let id = Uuid::new_v4();
+        let recover = request(&b, id, Action::RecoverClientSecret);
+        assert_eq!(
+            recover.to_wire()["bootstrap"]["action"],
+            "recover_client_secret"
+        );
+        assert!(Response::Client(created(&b, id)).answers(&recover));
+        // A foreign setup, a foreign callback or a non-private reply never answers it.
+        assert!(!Response::Client(created(&b, Uuid::new_v4())).answers(&recover));
+        let mut foreign = created(&b, id);
+        foreign.redirect_uri = "https://evil.example/api/v1/mail/oauth/callback".into();
+        assert!(!Response::Client(foreign).answers(&recover));
+        assert!(!Response::Status(Reply::Ready).answers(&recover));
+        assert!(!Response::Status(Reply::Absent).answers(&recover));
+        assert!(!Response::ClientPresent(identity(&b, id)).answers(&recover));
+        // The private shape cannot answer any other action.
+        for action in [
+            Action::InspectClient,
+            Action::InspectProject,
+            Action::VerifyApis,
+            Action::InspectScopes,
+            Action::Finish,
+        ] {
+            assert!(
+                !Response::Client(created(&b, id)).answers(&request(&b, id, action)),
+                "{action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn recover_needs_readiness_present_immediately_before_and_shares_one_write() {
+        let b = binding();
+        let id = Uuid::new_v4();
+        let mut s = ready_session(&b, id);
+        // Prerequisites missing.
+        assert!(
+            s.admit(&request(&b, id, Action::RecoverClientSecret), &b)
+                .is_err()
+        );
+        for (inspect, configure) in [
+            (Action::InspectBranding, Action::ConfigureBranding),
+            (Action::InspectScopes, Action::ConfigureScopes),
+            (Action::InspectAudience, Action::ConfigureAudience),
+        ] {
+            s.admit(&request(&b, id, inspect), &b).unwrap();
+            s.record(inspect, Reply::Absent);
+            s.admit(&request(&b, id, configure), &b).unwrap();
+            s.record(configure, Reply::Ready);
+        }
+        let recover = request(&b, id, Action::RecoverClientSecret);
+        // No Inspect proof at all, then an Absent proof (never enough).
+        assert!(s.admit(&recover, &b).is_err());
+        s.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        s.record_response(Action::InspectClient, &Response::Status(Reply::Absent));
+        assert!(s.admit(&recover, &b).is_err());
+        // Present is spent by any intervening command.
+        s.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        s.record_response(
+            Action::InspectClient,
+            &Response::ClientPresent(identity(&b, id)),
+        );
+        s.admit(&request(&b, id, Action::VerifyApis), &b).unwrap();
+        assert!(s.admit(&recover, &b).is_err());
+        // A present proof from a different action never counts.
+        s.record_response(
+            Action::VerifyApis,
+            &Response::ClientPresent(identity(&b, id)),
+        );
+        assert!(s.admit(&recover, &b).is_err());
+        s.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        s.record_response(
+            Action::InspectClient,
+            &Response::ClientPresent(identity(&b, id)),
+        );
+        s.admit(&recover, &b).unwrap();
+        // Once: a second recovery (even with a fresh present proof) or a create is refused.
+        s.record_response(
+            Action::RecoverClientSecret,
+            &Response::Client(created(&b, id)),
+        );
+        s.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        s.record_response(
+            Action::InspectClient,
+            &Response::ClientPresent(identity(&b, id)),
+        );
+        assert!(s.admit(&recover, &b).is_err());
+        s.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        s.record_response(Action::InspectClient, &Response::Status(Reply::Absent));
+        assert!(s.admit(&request(&b, id, Action::CreateClient), &b).is_err());
+
+        // Never after a spent create in the same worker.
+        let mut t = ready_session(&b, id);
+        for (inspect, configure) in [
+            (Action::InspectBranding, Action::ConfigureBranding),
+            (Action::InspectScopes, Action::ConfigureScopes),
+            (Action::InspectAudience, Action::ConfigureAudience),
+        ] {
+            t.admit(&request(&b, id, inspect), &b).unwrap();
+            t.record(inspect, Reply::Absent);
+            t.admit(&request(&b, id, configure), &b).unwrap();
+            t.record(configure, Reply::Ready);
+        }
+        t.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        t.record_response(Action::InspectClient, &Response::Status(Reply::Absent));
+        t.admit(&request(&b, id, Action::CreateClient), &b).unwrap();
+        t.admit(&request(&b, id, Action::InspectClient), &b)
+            .unwrap();
+        t.record_response(
+            Action::InspectClient,
+            &Response::ClientPresent(identity(&b, id)),
+        );
+        assert!(t.admit(&recover, &b).is_err());
+    }
+
+    #[test]
     fn client_actions_need_full_readiness_and_create_is_once_after_absent() {
         let b = binding();
         let id = Uuid::new_v4();
@@ -1009,20 +1158,14 @@ mod tests {
         // Another inspection's absence never unlocks the publish click.
         s.admit(&request(&b, id, InspectDomains), &b).unwrap();
         s.record(InspectDomains, Reply::Absent);
-        assert!(
-            s.admit(&request(&b, id, ConfigurePublication), &b)
-                .is_err()
-        );
+        assert!(s.admit(&request(&b, id, ConfigurePublication), &b).is_err());
         s.admit(&request(&b, id, InspectPublication), &b).unwrap();
         s.record(InspectPublication, Reply::Absent);
         s.admit(&request(&b, id, ConfigurePublication), &b).unwrap();
         s.record(ConfigurePublication, Reply::Ready);
         s.admit(&request(&b, id, InspectPublication), &b).unwrap();
         s.record(InspectPublication, Reply::Absent);
-        assert!(
-            s.admit(&request(&b, id, ConfigurePublication), &b)
-                .is_err()
-        );
+        assert!(s.admit(&request(&b, id, ConfigurePublication), &b).is_err());
     }
 
     #[test]

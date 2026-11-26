@@ -23,7 +23,7 @@ journey. All model execution and independent review uses Claude Sonnet 5.5 / med
 | I04 | Invite a second member after all services are already running | Independent UID/volume, browser/Vault/GWS and model sockets appear without manual service editing | Candidate116a8cd shipped invitation timer and two independent installed members passed; real browser/Vault isolation passed |
 | I05 | Stop installation after preparation, then run the same installer | Original installation, member allocation and keys retained; conflicting inputs refused | Candidate116a8cd recovered prior build interruption; complete same-input replay and conflicting-origin refusal preserved identities/keys |
 | I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Candidate116a8cd two actual reboots passed; identities, handoff, admin boundary and both encrypted Vaults/items retained; Google/model connections still unconfigured |
-| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Open: current production is Ubuntu22.04/kernel5.15/Kiri0.2.1 and has no new-installer receipt; the Ubuntu24.04 source installer is not an updater |
+| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Same-kernel Ubuntu22.04/5.15.0-179/Kiri0.2.2 member recovery, both confined browsers and six owned profile-rollout checks passed; matched new-image/production transition remains open; no new-installer receipt is fabricated |
 
 ## Model first use and recovery — 6 journeys
 
@@ -73,10 +73,10 @@ matching the current account and Linux login is approved.
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
 | O01 | Admin connects Google with no project, OAuth client or GWS configuration | Same-profile private SDK creates a stable unbilled project and enables exactly supported APIs | Operator experiment passed earlier; automatic route open |
-| O02 | Unconfigured Auth Platform in that project | App/support/contact, External audience, scoped access and agentic web-client marker are configured; exact HTTPS callback | Live Console experiment and candidate list/detail readback/form fill passed; actual automatic creation/capture open |
+| O02 | Unconfigured Auth Platform in that project | App/support/contact, External audience, scoped access and agentic web-client marker are configured; exact HTTPS callback | Fixed candidate DOM create/capture and exact persisted list/detail passed on a disposable client; installed automatic setup remains open |
 | O03 | First client creation succeeds | Capture secret once into atomic private installation registration; UI/GWS observe same client; no secret in logs or model | Operator capture passed; candidate private worker/gateway/writer integration passed with synthetic Console answers; live automated route open |
 | O04 | Lose response after project, branding or client create | Reconcile stable identity before any write; no duplicate project/client or false success | Linux local-save failure, lost save acknowledgement and saved-file-before-checkpoint cases passed; actual provider fault injection open |
-| O05 | Client exists but creation secret was lost | Reconcile same client and supported rotation; handle two-secret limit and lost rotation response without duplication | Open implementation and actual Console observation |
+| O05 | Client exists but creation secret was lost | Reconcile same client and supported rotation; handle two-secret limit and lost rotation response without duplication | Bounded same-client recovery integrated; live DOM one-Add/private capture/reload/two-secret refusal passed after fixing NEW/status markup; full installed recovery and two-secret loss resolution remain open |
 | O06 | Admin logs out/is demoted while SDK or Console operation is pending | Stop new writes, preserve uncertain intent, verify SDK teardown before successor admission | Open confined end-to-end fault injection |
 | O07 | Terms, quota, organization, branding, billing or verification blocks progress | Explain exact provider requirement and resume same setup; never silently link billing or declare production readiness | Actual missing public branding URLs observed; anonymous installation pages tested in Linux Chromium; provider publishing and other branches open |
 
@@ -275,3 +275,31 @@ without a setup-kiri receipt. A successful new Ubuntu24.04 installation does not
 prove that upgrade. Keep its encrypted Vault, member allocations and Google
 grants while validating a matched component transition; the fresh installer
 must not be forced over the existing installation or used to upgrade the host OS.
+
+### Same-client recovery and current-kernel rollout acceptance
+
+O05 now reserves a fresh administrator/lease-bound recovery attempt only when the
+private registration is absent. Setup/client identity and a three-attempt bound
+survive restart. Create and Recover share a worker's single provider-write budget.
+A second authorized save between reservation and recovered response is retained
+byte-for-byte; the recovery save is refused. Store43, gateway38 and the added
+competing-save scenario passed on Linux. DOM17 passed with synthetic values.
+
+A live disposable-client run exposed two actual markup differences: NEW is inside
+the Client secret DT, and after Add each Enabled status includes a Disable control.
+The fixed expression captured the new secret privately, confirmed the unchanged
+old row plus the new suffix after reload, and refused another Add before/after
+reload. The client was then deleted through both Google confirmation dialogs and
+confirmed absent; private captures were removed. The original app/grants were
+unchanged. This proves the DOM subflow, not an installed controller completion.
+Two preexisting secrets or an unrecoverable response still pause without deletion.
+
+I07: a separate Ubuntu22.04 guest booted the actual production kernel
+5.15.0-179 with Kiri0.2.2. Public invitation/member/daemon recovery checks passed;
+Chromium and Google Chrome both passed the actual installer startup/confinement/
+owned-cleanup probe. The new [owned rollout harness](../../../deployment/kiri/linux-vm-smoke/guest-owned-rollout.py)
+then passed six actual checks: lifecycle-lock refusal, wrong-container-ID refusal,
+owned profile replacement with unchanged UID/volume/keys/database/reservation,
+unaffected sibling PIDs, same-target retry, and matched lifecycle resumption.
+The image content stayed at116a8cd; a different final image and production are
+still unverified. No host OS upgrade or installation-receipt adoption was done.

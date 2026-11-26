@@ -90,6 +90,24 @@ client for the installation callback and automatically prepare member GWS.
 - **WHEN** the gateway loses authorization or its transport while the worker may still exist
 - **THEN** it keeps the active guest fence until actual teardown confirmation or the bounded cleanup deadline
 
+### Requirement: Lost first-client secrets recover within the same identity
+The installation SHALL reserve bounded recovery under fresh administrator and
+lease authority only when its private registration is absent. Recovery SHALL
+retain the same setup, client, callback and account and never replace a saved
+registration, delete an existing secret, or expose the new secret to a model.
+
+#### Scenario: One existing masked secret and no private registration
+- **WHEN** two stable reads confirm exactly one enabled old secret on the exact client
+- **THEN** the worker adds at most one secret, privately captures its own NEW card and verifies the unchanged old row plus the captured suffix after reload before saving
+
+#### Scenario: Response lost or two secrets already exist
+- **WHEN** capture is uncertain, the worker has already spent its write, two secrets are present, or three durable recovery attempts are exhausted
+- **THEN** setup pauses truthfully without another Add, another client, deletion or disabling
+
+#### Scenario: Another administrator saves while recovery is pending
+- **WHEN** a valid private registration lands after recovery reservation but before its save
+- **THEN** a differing recovered value is refused and the saved registration remains byte-identical
+
 ### Requirement: Reuse the application without sharing member grants
 The system SHALL share the installation application through the existing GWS
 distribution while keeping each member's vault and service tokens private.

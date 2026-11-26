@@ -594,6 +594,65 @@ pub fn confirm_publication(
     })
 }
 
+/// Reserve one same-client recovery attempt only while the private registration
+/// is absent. The callback runs under the same exclusive directory lock as
+/// registration, after fresh administrator/lease checks and before the intent.
+/// A new worker must still inspect one unchanged enabled secret before its one
+/// Add action; a lost reply with two provider secrets cannot be replayed.
+pub fn begin_secret_recovery(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    client_id: &str,
+    require_absent: impl FnOnce(&fs::File) -> Result<()>,
+) -> Result<bool> {
+    let valid = client_id.len() <= 256
+        && client_id
+            .strip_suffix(".apps.googleusercontent.com")
+            .and_then(|id| id.split_once('-'))
+            .is_some_and(|(number, token)| {
+                !number.is_empty()
+                    && !token.is_empty()
+                    && number.bytes().all(|b| b.is_ascii_digit())
+                    && token
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            });
+    if !valid {
+        return Err(StoreError::InvalidInput);
+    }
+    leased(root, s, run, |tx, directory, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        if setup.step != Step::Client || !setup.intent {
+            return Err(StoreError::Conflict);
+        }
+        let previous: Option<(String, i64)> = tx.query_row(
+            "SELECT client_id,attempts FROM installation_google_secret_recovery WHERE setup_id=?1",
+            [setup.setup_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        if let Some((id, attempts)) = &previous {
+            if id != client_id {
+                return Err(StoreError::Conflict);
+            }
+            if *attempts >= 3 {
+                return Ok(false);
+            }
+        }
+        require_absent(directory)?;
+        if previous.is_some() {
+            tx.execute("UPDATE installation_google_secret_recovery SET attempts=attempts+1 WHERE setup_id=?1",
+                [setup.setup_id.to_string()])?;
+        } else {
+            tx.execute(
+                "INSERT INTO installation_google_secret_recovery VALUES(?1,?2,1)",
+                params![setup.setup_id.to_string(), client_id],
+            )?;
+        }
+        renew(tx, now)?;
+        Ok(true)
+    })
+}
+
 fn published(c: &Connection, setup: &Setup) -> Result<bool> {
     Ok(setup.step == Step::Registered
         && publication_effective(c, setup, Publication::Publish)? == CommandState::Confirmed
@@ -1444,7 +1503,7 @@ mod tests {
         {
             let (_dir, c) = open(r, false).unwrap();
             c.execute_batch(
-                "DROP TABLE installation_google_publication_commands; DROP TABLE installation_google_console_commands; UPDATE installation_google_bootstrap SET intent=1 WHERE step='audience'; PRAGMA user_version=8;",
+                "DROP TABLE installation_google_secret_recovery; DROP TABLE installation_google_publication_commands; DROP TABLE installation_google_console_commands; UPDATE installation_google_bootstrap SET intent=1 WHERE step='audience'; PRAGMA user_version=8;",
             )
             .unwrap();
         }
@@ -1454,7 +1513,7 @@ mod tests {
             c.query_row("PRAGMA user_version", [], |row| row.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         // Neither command may be sent blind, and the old bit is not aliased to one of them.
         assert_eq!(
             command_state(r, &s, run, Command::Audience).unwrap(),
@@ -1494,6 +1553,102 @@ mod tests {
         advance_to_client(r, s, run);
         register(r, s, run, |_| Ok(())).unwrap();
         stored(r)
+    }
+
+    #[test]
+    fn secret_recovery_budget_is_bound_to_unsaved_client_and_survives_restart() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        let client = "123-synthetic.apps.googleusercontent.com";
+        begin(r, &s, run);
+        assert!(begin_secret_recovery(r, &s, run, client, |_| Ok(())).is_err());
+        for step in ORDER {
+            advance(r, &s, run, step);
+        }
+        assert!(begin_secret_recovery(r, &s, run, client, |_| Ok(())).is_err());
+        intend(r, &s, run, Step::Client).unwrap();
+        assert!(begin_secret_recovery(r, &s, run, client, |_| Err(StoreError::Conflict)).is_err());
+        assert!(begin_secret_recovery(r, &s, run, client, |_| Ok(())).unwrap());
+        assert!(
+            begin_secret_recovery(r, &s, run, "456-other.apps.googleusercontent.com", |_| Ok(
+                ()
+            ))
+            .is_err()
+        );
+        release(r, &s, run).unwrap();
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        assert!(begin_secret_recovery(r, &s, run, client, |_| Ok(())).is_err());
+        assert!(begin_secret_recovery(r, &s, next, client, |_| Ok(())).unwrap());
+        assert!(begin_secret_recovery(r, &s, next, client, |_| Ok(())).unwrap());
+        assert!(
+            !begin_secret_recovery(r, &s, next, client, |_| panic!("exhausted callback")).unwrap()
+        );
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            for sql in [
+                "UPDATE installation_google_secret_recovery SET attempts=1",
+                "UPDATE installation_google_secret_recovery SET client_id='different'",
+                "DELETE FROM installation_google_secret_recovery",
+            ] {
+                assert!(c.execute(sql, []).is_err());
+            }
+        }
+        register(r, &s, next, |_| Ok(())).unwrap();
+        assert!(begin_secret_recovery(r, &s, next, client, |_| Ok(())).is_err());
+    }
+
+    #[test]
+    fn secret_recovery_checks_authority_before_reading_registration() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        advance_to_client(r, &s, run);
+        expire(r);
+        assert!(
+            begin_secret_recovery(
+                r,
+                &s,
+                run,
+                "123-synthetic.apps.googleusercontent.com",
+                |_| panic!("expired lease must not inspect registration")
+            )
+            .is_err()
+        );
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        assert!(
+            begin_secret_recovery(
+                r,
+                &s,
+                next,
+                "123-synthetic.apps.googleusercontent.com",
+                |_| Err(StoreError::Unavailable)
+            )
+            .is_err()
+        );
+        assert!(
+            begin_secret_recovery(
+                r,
+                &s,
+                next,
+                "123-synthetic.apps.googleusercontent.com",
+                |_| Ok(())
+            )
+            .unwrap()
+        );
+        let (_dir, c) = open(r, false).unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT attempts FROM installation_google_secret_recovery",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -1580,7 +1735,10 @@ mod tests {
         ));
         intend_publication(r, &s, run, Publication::Domains).unwrap();
         // Registered carries no step intent: the bit is never set by publication.
-        assert_eq!((stored(r).step, stored(r).intent), (Step::Registered, false));
+        assert_eq!(
+            (stored(r).step, stored(r).intent),
+            (Step::Registered, false)
+        );
         // Reply lost: a new run preserves intent; only the bounded retry API can reserve another dispatch.
         expire(r);
         let next = Uuid::new_v4();
@@ -1644,7 +1802,7 @@ mod tests {
         {
             let (_dir, c) = open(r, false).unwrap();
             c.execute_batch(
-                "DROP TABLE installation_google_publication_commands; PRAGMA user_version=9;",
+                "DROP TABLE installation_google_secret_recovery; DROP TABLE installation_google_publication_commands; PRAGMA user_version=9;",
             )
             .unwrap();
         }

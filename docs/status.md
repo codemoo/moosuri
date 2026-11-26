@@ -74,6 +74,14 @@ GWS·브라우저 수신자, 취소·로그아웃과 실제 재부팅이 통과�
 | Google Workspace | 볼트 계정 재사용·새 Kiri 로그인·기기 승인·동일 브라우저 Gmail 동의와 실제 5건 조회를 11월 27일 확인했다. 설치 앱은 External/Testing이다. [연결 절차](../deployment/kiri/google.md) | 최초 OAuth 앱 자동 생성, 두 회원 실계정, 자연어 조회와 최종 빈 서버 설치가 남아 있다. [50개 사용자 여정](../openspec/changes/automate-installation-google-app/journeys.md) |
 | 볼트 | Google 로그인 항목이 없으면 이메일과 비밀번호를 암호화 저장하고, 하나면 재사용하며, 여러 개면 선택한다. Linux Chromium에서 세 흐름과 선택 이메일의 암호문 바인딩을 확인하고 운영에 배포했다. [검증 기록](reviews/2026-11-26-google-account-selection.md) | 운영에서 볼트 잠금 해제·신규 Google 항목 저장·Kiri 인계를 확인했다. 기기 승인 후 Google 로그인을 확인했다. 서비스 OAuth 동의와 조회는 미완료다. |
 
+후보의 OAuth 비밀 유실 복구는 같은 클라이언트를 다시 확인하고 비밀을 한 번만
+추가한다. 실제 Console에서 새 비밀의 비공개 저장·새로고침 후 대조·두 비밀 상태의
+추가 생성 거부를 확인했다. 운영과 같은 Ubuntu22.04/커널5.15.0-179에서는 Kiri0.2.2의
+실제 두 브라우저 격리와 회원 실행 환경 교체를 검증했다. UID·볼륨·키·DB와 다른
+회원 실행 상태가 유지됐다. 최종 새 이미지의 운영 반영, 설치된 전체 Google 자동
+설정과 모델 연결을 통한 자연어 메일 조회는 계속 열린 상태다.
+[현재 여정과 제한](../openspec/changes/automate-installation-google-app/journeys.md)
+
 ## 회원 UI 개편과 검증 범위
 
 회원은 채팅에 “지난 출장 때 몇 시에 출발했는지랑 챙길 것, 한 장으로 정리해 줘”라고 보낼 수 있다. 개편판은 대화와 기억을 따로 조회하고, 같은 채팅에 출처와 저장한 보고서를 보여준다. 날짜가 다른 동명 출장이면 날짜를 묻고, 한 일의 조건만 바꾸면 그 일만 다시 실행한다. **맡긴 일**에서 원래 요청, 각 회차와 결과를 다시 연다. Linux 격리 회원 두 명의 화면과 SQLite에서 요청 재전송, 대화 재진입과 권한 철회를 대조했다. [회원 사용법](member-tasks.md) · [업무별 검증](reviews/2026-11-25-member-work-from-chat.md)

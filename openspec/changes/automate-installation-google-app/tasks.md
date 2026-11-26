@@ -1001,3 +1001,47 @@ confirmed absent by the product list expression, invalidating both test secrets;
 its private local capture was removed. The original installation client and
 member grants were not changed. Do not copy the secret or raw observation into
 source, test fixtures or further prompts.
+
+### 2026-11-27 same-client recovery and existing-member rollout
+
+| Unit | Integrated result | Validation | Release state |
+| --- | --- | --- | --- |
+| Lost first OAuth secret | Fresh admin/lease + absent-file reservation, permanent same-client binding and three-attempt bound; one Add per worker; private capture and exact reload | Linux registry43/gateway38, added competing-save preservation, DOM17; actual disposable-client creation and recovery DOM subflow passed | Candidate, installed full path open |
+| Existing-member runtime replacement | `kiri-rollout` reuses provisioner validation/locks; exact old container ID, same member/data/UID, no volume deletion, target replay/readiness | Linux provisioner20 and six actual same-kernel profile-rollout checks passed | Candidate, matched image/production switch open |
+| Production-kernel browser admission | Kiri0.2.2 on actual 5.15.0-179 Ubuntu22.04 kernel | Real Chromium + Google Chrome installer probes and invitation/member/daemon recovery passed | No production engine/service change |
+
+Recovery implementation and independent review used official Linux Claude
+Sonnet5.5/medium. Review found a missing competing-save acceptance case: it now
+writes a different valid shared registration after recovery reservation, verifies
+that recovery refuses it, and compares the file byte-for-byte. The existing
+atomic writer already refuses replacement. Three pre-dispatch failures may still
+exhaust the recovery budget; this conservative pause is documented, not reset.
+
+Actual Console testing corrected NEW-in-DT and Enabled-plus-Disable markup.
+No Disable control is clicked. After private capture, a reload kept the old row
+unchanged and the new suffix matched; both two-secret states refused Add.
+The disposable client was removed via Google's initial Delete and subsequent
+name-bound DELETE confirmation, then the product expression proved absence.
+The original installation app and grants were unchanged. Full installed recovery,
+publication and two-real-member Google journeys remain open.
+
+Independent rollout review found no blocking ownership defect. Its unproven Kiri
+ID/stop/delete semantics were resolved by the actual disposable-guest rollout.
+Documentation now distinguishes unchanged legacy reservations from optional
+local-GWS mounts and limits reverse rollout to a matching reservation/profile.
+Failures after a confirmed stop now explicitly report the retained stopped old
+container; HTTP500 stop replies reconcile with inspection. Linux failure cases
+cover those states without repeated stop/delete or implicit rollback.
+
+Next usable units: matched final bundle/production component transition; real
+managed setup/publishing; real two-member consent and conversational Gmail with
+an administrator-provided model connection; final-source fresh installation and
+coherent public release. Keep the 50-journey matrix open until those pass.
+
+A fresh bounded Claude Sonnet5.5/medium closure review read the actual private
+writer/registry locks and the refined stop/remove paths and found no material
+defect. The competing-save test passed, as did the final provisioner20 cases.
+Linux OpenSpec strict validation and plan/link verification passed (1,754 links).
+Static Gitleaks found only the previously documented unusable synthetic PEM
+marker in the installer fixture; no new exception was added. Dependencies and
+third-party assets are unchanged. Production/public main are still unchanged.

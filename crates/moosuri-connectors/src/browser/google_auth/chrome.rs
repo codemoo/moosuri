@@ -355,8 +355,9 @@ impl Chrome {
 
     /// Fixed OAuth client reconcile/creation in this same authenticated Chrome.
     /// Same gate discipline as `console`: any error, timeout or cancellation taints
-    /// Chrome, so a possibly-performed `Create` click can never be repeated. The
-    /// outcome may contain the one-time client secret (private, redacted Debug).
+    /// Chrome, so a possibly-performed `Create` or `Add client secret` click can
+    /// never be repeated. The outcome may contain a client secret (private, redacted
+    /// Debug; the page value only ever travels in zeroizing buffers).
     pub(super) async fn client(
         &mut self,
         op: super::client::Op,

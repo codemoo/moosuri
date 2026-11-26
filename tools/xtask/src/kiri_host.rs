@@ -34,6 +34,54 @@ fn capture(binary: &str, args: &[&str]) -> Check<String> {
     String::from_utf8(result.stdout).map_err(|_| "kiri_host_output_invalid".into())
 }
 
+/// Kiri's supported domain API persists its loopback-only router ports. The
+/// default 80/443 race nginx on reboot. Changing ports requires an empty engine;
+/// reapplying the same ports is idempotent and never restarts a container.
+fn configure_domain_ports() -> Check<()> {
+    let api = |write: bool| -> Check<serde_json::Value> {
+        let mut args = vec![
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "10",
+            "--unix-socket",
+            "/run/kiri/docker.sock",
+        ];
+        if write {
+            args.extend([
+                "--header",
+                "Content-Type: application/json",
+                "--data",
+                r#"{"http":18780,"https":18743}"#,
+            ]);
+        }
+        args.push("http://localhost/kiri/domains");
+        serde_json::from_str(&capture("curl", &args)?)
+            .map_err(|_| "kiri_host_domain_reply_invalid".into())
+    };
+    let matches = |v: &serde_json::Value| v["http"]["port"] == 18780 && v["https"]["port"] == 18743;
+    if !matches(&api(false)?) {
+        ensure(
+            capture(
+                "docker",
+                &[
+                    "--host=unix:///run/kiri/docker.sock",
+                    "container",
+                    "ls",
+                    "--all",
+                    "--quiet",
+                ],
+            )?
+            .trim()
+            .is_empty(),
+            "kiri_host_existing_containers_require_operator_setup",
+        )?;
+    }
+    // Even after a lost response, replaying the same ports finishes persistence.
+    ensure(matches(&api(true)?), "kiri_host_domain_ports_not_applied")
+}
+
 pub fn run_host(args: &[String]) -> Check<()> {
     ensure(args.is_empty(), "usage: kiri-host")?;
     ensure(
@@ -159,6 +207,11 @@ pub fn run_host(args: &[String]) -> Check<()> {
         "kiri_host_chrome_apparmor_profile_missing",
     )?;
     run("apparmor_parser", &["-r", "/etc/apparmor.d/chrome"])?;
+    run(
+        "systemctl",
+        &["enable", "--now", "docker.service", "kiri.service"],
+    )?;
+    configure_domain_ports()?;
     run(
         "systemctl",
         &[

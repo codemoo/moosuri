@@ -15,6 +15,7 @@ use axum::{
 use protocol::{AuthorityReply, AuthorityRequest, Operation, Owner};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 #[derive(Clone)]
@@ -53,13 +54,20 @@ impl Adapter {
         })
     }
     pub async fn call(&self, input: &AuthorityRequest) -> Result<AuthorityReply> {
+        self.post("", input).await
+    }
+    async fn post<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        suffix: &str,
+        input: &T,
+    ) -> Result<R> {
         let bytes = serde_json::to_vec(input).map_err(|_| Error::Invalid)?;
         if bytes.len() > 4096 {
             return Err(Error::Limit);
         }
         let mut response = self
             .client
-            .post(&self.url)
+            .post(format!("{}{suffix}", self.url))
             .header("x-moosuri-vault-adapter", self.key.as_str())
             .header("content-type", "application/json")
             .body(bytes)
@@ -374,8 +382,39 @@ async fn exchange(
     );
     Ok(response)
 }
-async fn kiri_recipient(State(s): State<Service>, h: HeaderMap) -> Result<Json<serde_json::Value>> {
-    let (owner, _) = authorized(&s, &h, false).await?;
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecipientQuery {
+    challenge: Option<Uuid>,
+}
+async fn kiri_recipient(
+    State(s): State<Service>,
+    h: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<RecipientQuery>,
+) -> Result<Json<serde_json::Value>> {
+    let (owner, grant) = authorized(&s, &h, false).await?;
+    if s.config.kiri_recipient.is_none() {
+        let challenge = query
+            .challenge
+            .filter(|id| !id.is_nil())
+            .ok_or(Error::Invalid)?;
+        let value: serde_json::Value = s
+            .adapter
+            .post(
+                "/kiri-recipient",
+                &protocol::KiriRecipientRequest { grant, challenge },
+            )
+            .await?;
+        if value["protocol"] != "moosuri-google-runtime-v1"
+            || value["binding"]["account"] != owner.account.to_string()
+            || value["binding"]["tenant"] != owner.tenant.to_string()
+            || value["binding"]["challenge"] != challenge.to_string()
+            || value["binding"]["origin"] != s.config.assistant_origin
+        {
+            return Err(Error::Unauthorized);
+        }
+        return Ok(Json(value));
+    }
     let recipient = s
         .config
         .kiri_recipient

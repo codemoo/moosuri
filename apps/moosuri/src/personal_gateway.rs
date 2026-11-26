@@ -94,10 +94,17 @@ pub struct Options {
     /// Existing absolute owner-only 0400 file holding the random 64-hex adapter key.
     #[arg(long, requires = "vault_enrollment")]
     vault_adapter_key_file: Option<PathBuf>,
+    /// Installation-owned fresh Google browser socket (portable Kiri mode).
+    #[arg(long, requires = "google_runtime_installation")]
+    google_runtime_socket: Option<PathBuf>,
+    /// Identity from the installation-owned Google capsule configuration.
+    #[arg(long, requires = "google_runtime_socket")]
+    google_runtime_installation: Option<Uuid>,
 }
 #[derive(Clone)]
 struct Gateway {
     google_jobs: google_connection::Jobs,
+    google_runtime: Option<google_connection::portable::Runtime>,
     vault: Option<Arc<vault::Enrollment>>,
     origin: String,
     host: String,
@@ -228,6 +235,7 @@ impl Gateway {
         let vault = vault::Enrollment::new(options, vault_site_origin.as_deref())?.map(Arc::new);
         Ok(Self {
             google_jobs: Default::default(),
+            google_runtime: google_connection::portable::Runtime::new(options)?,
             vault,
             host: origin[8..].into(),
             origin,
@@ -1293,6 +1301,8 @@ mod tests {
             vault_all_members: false,
             vault_adapter_listen: None,
             vault_adapter_key_file: None,
+            google_runtime_socket: None,
+            google_runtime_installation: None,
         }
     }
     #[test]

@@ -44,6 +44,13 @@ pub struct AuthorityReply {
     pub operation: Option<Uuid>,
     pub digest: Option<String>,
 }
+/// Public recipient lookup, routed by the server-owned vault grant.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiriRecipientRequest {
+    pub grant: String,
+    pub challenge: Uuid,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Handoff {

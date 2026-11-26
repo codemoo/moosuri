@@ -9,6 +9,7 @@ const base = "/personal/google/kiri";
 const definiteRejection = (error:unknown) => error instanceof ApiFailure
   && error.status >= 400 && error.status < 500 && ![408,429].includes(error.status);
 const waiting: Record<string,string> = {
+  preparing:"Google 연결을 준비하고 있습니다.",
   validating:"볼트에서 선택한 Gmail 계정을 Kiri가 확인하고 있습니다.",
   opening:"볼트에서 선택한 계정으로 Kiri를 여는 중입니다.",
   vault:"볼트에서 Gmail 계정을 먼저 확인하고 있습니다.",
@@ -36,8 +37,8 @@ export async function connectInKiri(request:Request, account:string, email:strin
   const close = ()=>popup.close();
   signal.addEventListener("abort",close,{once:true});
   try {
-    // Start only reserves a member-bound challenge. The server does not launch
-    // Kiri until the vault has selected or stored a credential and delivers it.
+    // Start prepares the one-use recipient. Chrome starts only after the vault
+    // selected/stored the credential and the server reauthorized delivery.
     status(waiting.vault);
     let current = await call("start",{service,read});
     let deadline = Date.now()+725000;
@@ -55,7 +56,7 @@ export async function connectInKiri(request:Request, account:string, email:strin
       // If Deliver was accepted but its HTTP response was lost, the next
       // canonical status proves that Kiri already owns the sealed handoff.
       // Continue polling instead of treating the popup's close as cancellation.
-      if (current.state!=="vault" && !delivered) {
+      if (!["preparing","vault"].includes(current.state) && !delivered) {
         delivered=true;deadline=Date.now()+425000;close();
       }
       if (!delivering && !delivered && !deliveryUncertain && popup.closed) throw Error("볼트를 닫아 Google 연결을 취소했습니다.");

@@ -557,8 +557,71 @@ async fn adapter(
 fn adapter_router(g: Gateway) -> Router {
     Router::new()
         .route("/internal/v1/vault", post(adapter))
+        .route("/internal/v1/vault/kiri-recipient", post(kiri_recipient))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(g)
+}
+
+async fn kiri_recipient(
+    State(g): State<Gateway>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let result = async {
+        let v = g.vault.as_deref().ok_or(StatusCode::NOT_FOUND)?;
+        if !authorized(v, &headers) {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        if one(&headers, "content-type").and_then(|s| s.split(';').next())
+            != Some("application/json")
+        {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let request: moosuri_vault_protocol::KiriRecipientRequest =
+            serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        if request.challenge.is_nil() || !hex64(&request.grant) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let _permit = g
+            .inflight
+            .try_acquire()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let registered = v.token_scope(&request.grant, Kind::Grant)?;
+        let a = resolve(
+            &g,
+            runtime_registry::SessionDestination::Account(registered.account),
+        )
+        .await?;
+        if !v.enrolled(&a) {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        v.authorize(&request.grant, Kind::Grant, &a)?;
+        // Recheck the member's grant too: registry scope alone cannot establish
+        // that the originating vault login is still live after a logout.
+        let validation = Request::Validate {
+            grant: request.grant,
+        };
+        let payload = serde_json::to_vec(&validation).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let (status, bytes, _) = g
+            .proxy(&a, Method::POST, AUTHORITY_PATH, Some(&payload), None)
+            .await?;
+        recheck(&g, &a).await?;
+        if status != StatusCode::OK {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        let reply: Reply =
+            serde_json::from_slice(&bytes).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if reply.owner.account.to_string() != a.account_id
+            || reply.owner.tenant.to_string() != a.tenant_id
+            || !matches(&validation, &reply)
+        {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        let recipient = google_connection::portable::recipient(&g, &a, request.challenge)?;
+        Ok(response(StatusCode::OK, recipient.to_string().into_bytes()))
+    }
+    .await;
+    result.unwrap_or_else(failure)
 }
 
 /// Binds the fixed loopback listener at startup so misconfiguration fails closed.

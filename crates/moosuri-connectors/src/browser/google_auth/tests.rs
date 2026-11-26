@@ -148,6 +148,11 @@ async fn tampered_ciphertext_and_invalid_passwords_are_rejected() {
 #[test]
 fn malformed_bindings_and_extra_protocol_fields_are_rejected() {
     let mut b = binding();
+    b.epoch = 0;
+    assert!(b.valid(), "new registry members start at epoch zero");
+    b.epoch = -1;
+    assert!(!b.valid());
+    b.epoch = 0;
     for origin in [
         "http://example.test",
         "https://example.test/",

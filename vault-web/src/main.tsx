@@ -122,10 +122,10 @@ function App(){
     const epoch = generation.current, account = ownerRef.current.account;
     sentJob.current = googleJob;
     try {
-      const r = await fetch("/session/kiri-recipient", {cache:"no-store",credentials:"same-origin"});
+      const r = await fetch("/session/kiri-recipient?challenge="+encodeURIComponent(googleJob), {cache:"no-store",credentials:"same-origin"});
       if (!r.ok || epoch !== generation.current) throw Error();
       const recipient: KiriRecipient = await r.json();
-      const envelope = await sealGoogleLogin(recipient, account, googleEmail, googleJob, item, run);
+      const envelope = await sealGoogleLogin(recipient, account, googleEmail, googleJob, item, run, {tenant:ownerRef.current!.tenant,origin:assistant});
       if (epoch !== generation.current) return;
       window.opener.postMessage({kind:"moosuri-vault-kiri-sealed", job:googleJob, account, email:item.email, envelope}, assistant);
       setNotice("Kiri에서 이 계정으로 로그인하고 있습니다.");

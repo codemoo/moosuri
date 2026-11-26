@@ -99,7 +99,7 @@ Linux Kiri 안의 두 실제 클라이언트에서 무수리 Rust 모델 서비�
 
 등록한 회원의 인증 세션에서만 준비 상태와 일회용 인계가 반환된다. 볼트는 기존 회원 세션, 할당된 볼륨·세대와 권한을 쓰기마다 재검사한다. 로그아웃·정지·서버 재시작 후에는 회원 화면에서 다시 연다. 어댑터 없이 사이트 주소만 설정한 설치는 연결 준비 상태로 표시한다. 회원마다 별도 어댑터를 만들지 않고, 서버에 등록된 일회용 토큰으로 해당 회원의 런타임을 찾는다. 회원별 등록 한도로 한 회원의 과다 요청이 전체 토큰 용량을 독점하지 못하게 한다.
 
-이 설정은 볼트 인계·세션 분리를 지원한다. 현재 Google 브라우저/수신 키 도우미는 여전히 단일 회원 전용이므로 `--vault-all-members`만 켜서 여러 회원의 Google 연결을 사용할 수는 없다. 다중 회원 모드에서는 그 기존 도우미 접근을 거부한다. [새 설치 통합 작업](../../openspec/changes/automate-installation-google-app/tasks.md)
+이 설정은 볼트 인계·세션 분리를 지원한다. `--vault-all-members`만으로 Google 브라우저가 준비되지는 않는다. 공개 인증 실행기를 쓰려면 아래 설치 소켓과 동적 수신자 설정을 함께 구성한다. 기존 고정 회원 도우미는 다중 회원 모드에서 거부한다. [새 설치 통합 작업](../../openspec/changes/automate-installation-google-app/tasks.md)
 
 볼트 설정의 **CSV 가져오기**에서 사용자 이름에 포함할 문자열을 여러 개 지정할 수 있다. 대소문자를 구분하지 않으며 미리보기에서 대상과 남은 용량을 확인한다. 파일은 기기에서 처리한다. 이미 저장된 항목은 같은 파일을 다시 선택하면 중복으로 표시된다. 중단 전에 확정한 항목은 남는다. RFC 6238 인증 코드는 기기에서 계산하며 이름 없는 OTPAuth 주소와 기기 메타데이터가 있는 내보내기도 원본 URI를 보존한다.
 
@@ -110,3 +110,20 @@ Ubuntu 24.04 x86_64의 격리 VM에서 실제 무수리 Linux 바이너리로 UI
 실제 Kiri 회원 두 명의 로그인과 비밀번호 변경이 성공했다. 양방향 쿠키 교차 제출은 HTTP 401이었고 A를 재시작해도 두 사람의 세션과 B의 프로세스가 유지됐다. 별도 게이트웨이와 개인 CLI 통합 시험에서 양쪽의 임시 비밀번호 변경, 다른 회원 쿠키 거부, 개인 서비스 강제 종료 후 세션 재사용, 같은 세대의 라우팅 차단을 확인했다. 개인 볼륨의 소유자·세대를 DB 안에서도 대조하므로 다른 이름으로 복원한 DB는 정상 시작 처리를 수행하기 전에 거부한다. 디스크 용량 산정에는 SQLite의 검사 사본과 WAL, 첨부, 저널을 포함한다. [Linux 격리 재현 절차](linux-vm-smoke/README.md)
 
 정식 설치기의 자동 프로비저닝, 기존 운영 계정 이관, 전체 기능의 계정별 복구는 [전환 작업표](../../openspec/changes/isolate-account-runtime/tasks.md)에서 추적한다.
+
+
+## 공개 Google 인증 전송 구성
+
+이 구성은 수동으로 준비한 Kiri 0.2.2 설치의 연결 구성요소다. 공개 한 줄
+설치기나 OAuth 앱 자동 생성을 완료한 절차가 아니다. [전체 설치 작업표](../../openspec/changes/automate-installation-google-app/tasks.md)
+
+- 공식 Chrome의 `google-auth` 이미지를 Kiri에 적재하고, 검증한 이미지·망·프록시·seccomp·설치 UUID를 root 소유 `/etc/moosuri/google-browser.json`에 기록한다. 조회용 Chromium 구성과 구분한다.
+- [소켓](lifecycle/moosuri-google-browser.socket)과 [서비스](lifecycle/moosuri-google-browser@.service)는 root 게이트웨이만 받는다. `/etc/moosuri/public-origin.env`의 `MOOSURI_PUBLIC_ORIGIN`을 정확한 회원 HTTPS origin으로 설정한다.
+- 게이트웨이에 `--google-runtime-socket /run/moosuri-google-browser/runtime.sock --google-runtime-installation UUID`를 함께 지정한다. UUID는 인증 capsule 구성의 `owner`다. 볼트 백업 설치 UUID와는 별개다.
+- Vault 서비스의 고정 `--kiri-recipient-file`을 제거한다. 기존 회원 볼트 어댑터로 로그인 세션·계정·세대·challenge를 확인한 뒤 해당 시도의 일회용 공개키를 받는다.
+- 설치 Google 앱 파일은 `/var/lib/moosuri-control/registry/google-web-client.json`의 기존 등록 경로를 사용한다. 준비되지 않았으면 로그인 뒤 `setup_required`가 되며 Google 연결 완료로 표시하지 않는다.
+
+준비 상태는 회원당 하나이며 새 시작은 분당 네 번으로 제한한다. 같은 요청
+ID의 재전송은 추가 시작으로 세지 않는다. 취소·로그아웃·권한 변경·서비스
+종료는 준비된 키를 폐기한다. 비밀번호 입력을 시작한 뒤 정리가 확인되지
+않은 경우에는 기존 보수적 재시도 제한을 유지한다.

@@ -29,7 +29,7 @@ function setup(states:string[], options:{blocked?:boolean;wrongOrigin?:boolean;l
 it("reserves the job, checks the vault first, and starts Kiri only after credential delivery",async()=>{
   const {start,ops}=setup(["vault","validating","opening","consent","complete"]);
   const result=start();await vi.advanceTimersByTimeAsync(0);
-  // Start has only reserved the server challenge. No Deliver means no Kiri process.
+  // Start has only reserved the server challenge. No Deliver means no Chrome sign-in.
   expect(ops).toEqual(["start"]);
   const handoff=vi.mocked(postVaultForm).mock.calls[0][5]!;
   await handoff.receive({key:"sealed",iv:"nonce",body:"ciphertext"},"selected@example.test");
@@ -117,4 +117,15 @@ it("keeps polling the same Kiri attempt while Google waits for device verificati
   await vi.advanceTimersByTimeAsync(6600);
   expect((await result).email).toBe("selected@example.test");
   expect(ops.filter(op=>op==="start")).toHaveLength(1);expect(ops).not.toContain("cancel");expect(popup.closed).toBe(true);
+});
+
+it("keeps the popup open while the portable recipient is prepared",async()=>{
+  const {start,popup,ops}=setup(["preparing","preparing","vault","validating","complete"]);
+  const result=start();await vi.advanceTimersByTimeAsync(1400);
+  expect(popup.closed).toBe(false);expect(postVaultForm).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1300);expect(postVaultForm).toHaveBeenCalledOnce();
+  const handoff=vi.mocked(postVaultForm).mock.calls[0][5]!;
+  await handoff.receive({key:"sealed",iv:"nonce",body:"ciphertext"},"selected@example.test");
+  await vi.advanceTimersByTimeAsync(2700);expect((await result).email).toBe("selected@example.test");
+  expect(ops.filter(op=>op==="deliver")).toHaveLength(1);
 });

@@ -177,10 +177,17 @@ impl CapsuleReader {
                 observed = true;
                 if started.send(Ok(recipient)).is_ok() {
                     let deadline = tokio::time::Instant::now() + Duration::from_secs(22 * 60);
+                    let mut liveness = tokio::time::interval(Duration::from_secs(2));
                     loop {
                         let request = tokio::select! { biased;
                             _ = cancel.cancelled() => break,
                             _ = tokio::time::sleep_until(deadline) => break,
+                            // Child::wait closes its stdin before waiting. This
+                            // worker's stdin must remain open for later Deliver.
+                            _ = liveness.tick() => {
+                                if !matches!(child.try_wait(), Ok(None)) { break; }
+                                continue;
+                            },
                             request = requests.recv() => match request { Some(r) => r, None => break },
                         };
                         if request.reply.is_closed() {
@@ -244,6 +251,10 @@ async fn write(child: &mut Child, body: &Value) -> Result<(), BrowserError> {
     input.flush().await.map_err(|_| BrowserError::Protocol)
 }
 impl GoogleAttempt {
+    /// Resolves when the owning actor exits; does not consume cleanup proof.
+    pub async fn closed(&self) {
+        self.requests.closed().await;
+    }
     pub fn recipient(&self) -> &Recipient {
         &self.recipient
     }

@@ -1,15 +1,32 @@
 import type { Command, Summary } from "./types";
 import {validGoogleEmail} from "./google-login";
 
-export type KiriRecipient = { account: string; email: string; spki: string };
+type LegacyRecipient = { account: string; email: string; spki: string };
+type RuntimeRecipient = { protocol: "moosuri-google-runtime-v1"; spki: string; binding: {
+  installation:string; account:string; tenant:string; volume:string; generation:number; epoch:number;
+  challenge:string; email:string; origin:string;
+}};
+export type KiriRecipient = LegacyRecipient | RuntimeRecipient;
 export const validJob = (id: unknown): id is string => typeof id === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
 const encode = (data: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(data as ArrayBuffer)));
 
 export async function sealGoogleLogin(recipient: KiriRecipient, account: string, email: string, job: string,
-  item: Summary & {email:string}, run: <T>(command: Command) => Promise<T>) {
-  if (!validJob(job) || recipient.account !== account || recipient.email !== email || !validGoogleEmail(item.email)) throw Error("vault_unauthorized");
-  const label = new TextEncoder().encode(["moosuri-google-v2", job, account, email, item.email].join("\n"));
+  item: Summary & {email:string}, run: <T>(command: Command) => Promise<T>, owner?:{tenant:string;origin:string}) {
+  if (!validJob(job) || !validGoogleEmail(email) || !validGoogleEmail(item.email)) throw Error("vault_unauthorized");
+  let fields: (string|number)[];
+  if ("protocol" in recipient) {
+    const b=recipient.binding;
+    const uuid=(v:unknown)=>typeof v==="string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v) && v!=="00000000-0000-0000-0000-000000000000";
+    if(recipient.protocol!=="moosuri-google-runtime-v1" || !b || !owner || b.account!==account || b.email!==email || b.challenge!==job ||
+      b.tenant!==owner.tenant || b.origin!==owner.origin || ![b.installation,b.account,b.tenant,b.volume,b.challenge].every(uuid) ||
+      !Number.isSafeInteger(b.generation) || b.generation<1 || !Number.isSafeInteger(b.epoch) || b.epoch<0) throw Error("vault_unauthorized");
+    fields=["moosuri-google-v3",b.installation,b.account,b.tenant,b.volume,b.generation,b.epoch,b.challenge,b.email,item.email,b.origin];
+  } else {
+    if(recipient.account!==account || recipient.email!==email) throw Error("vault_unauthorized");
+    fields=["moosuri-google-v2",job,account,email,item.email];
+  }
+  const label = new TextEncoder().encode(fields.join("\n"));
   const publicKey = await crypto.subtle.importKey("spki", Uint8Array.from(atob(recipient.spki), c => c.charCodeAt(0)),
     { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
   if ((publicKey.algorithm as RsaKeyAlgorithm).modulusLength !== 3072) throw Error("vault_unavailable");

@@ -1,6 +1,7 @@
 //! One live Kiri attempt per enrolled member. A restart discards all pending work.
 //! The gateway transports only vault-sealed credentials. The private key stays in Kiri.
 use super::*;
+pub(super) mod portable;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -23,6 +24,7 @@ const MAX_MEMBER_VAULT_JOBS: usize = 8;
 const PROTOCOL: &str = "moosuri-google-connection-v3";
 pub(super) type Jobs = Arc<Mutex<Vec<Job>>>;
 pub(super) struct Job {
+    prepared: Option<portable::Prepared>,
     id: Uuid,
     challenge: Uuid,
     stop: Option<oneshot::Sender<()>>,
@@ -85,9 +87,15 @@ async fn authorize(
     a: &SessionAllocation,
     session: &str,
 ) -> Result<String, StatusCode> {
-    // The current browser/key helper is explicitly enrolled for one account.
-    // Installation-wide vault access alone does not authorize that helper.
-    if !g.vault.as_ref().is_some_and(|v| v.fixed_member(a)) {
+    // Portable transport is allocation-bound. The legacy helper remains
+    // restricted to its explicitly enrolled single account.
+    if !g.vault.as_ref().is_some_and(|v| {
+        if g.google_runtime.is_some() {
+            v.enrolled(a)
+        } else {
+            v.fixed_member(a)
+        }
+    }) {
         return Err(StatusCode::FORBIDDEN);
     }
     let (status, bytes, _) = g
@@ -286,11 +294,13 @@ fn expire_active_guests(jobs: &mut [Job], now: Instant) {
     {
         j.guest_active = false;
         j.guest_deadline = None;
+        j.prepared = None;
         j.stop.take();
         record_run_state(j, "unavailable", now);
     }
 }
 fn cancel_job(jobs: &mut Vec<Job>, position: usize) -> Value {
+    jobs[position].prepared = None;
     if terminal(jobs[position].state) {
         return jobs[position].receipt();
     }
@@ -465,9 +475,18 @@ async fn handle(
             // A rejected Start must not destroy another tab's pending reservation or
             // an unpolled terminal receipt. A successful Start supersedes stale
             // sessions/epochs and only then makes room for this reservation.
+            if let Some(runtime) = &g.google_runtime {
+                if jobs.iter().any(|j| {
+                    j.same_identity(&a, &email) && (j.state == "preparing" || j.prepared.is_some())
+                }) {
+                    return Err(StatusCode::CONFLICT);
+                }
+                runtime.admit(&a.account_id)?;
+            }
             reserve_member_vault(&mut jobs, &a, &session, &email)?;
             let challenge = Uuid::new_v4();
             let j = Job {
+                prepared: None,
                 id,
                 challenge,
                 stop: None,
@@ -479,7 +498,11 @@ async fn handle(
                 expires: Instant::now() + VAULT_JOB_LIFETIME,
                 // Reserving a member-bound job does not open Kiri. The vault
                 // must select or create a matching login before Deliver starts it.
-                state: "vault",
+                state: if g.google_runtime.is_some() {
+                    "preparing"
+                } else {
+                    "vault"
+                },
                 read,
                 flow: None,
                 service,
@@ -490,6 +513,9 @@ async fn handle(
             };
             let receipt = j.receipt();
             jobs.push(j);
+            if g.google_runtime.is_some() {
+                portable::prepare(&g, &a, &session, id, challenge, &email, service, &mut jobs)?;
+            }
             return Ok(receipt);
         }
         let position = jobs
@@ -535,7 +561,7 @@ async fn handle(
                 if member_has_live_job(&jobs, &a, &email, Some(position)) {
                     return Err(StatusCode::CONFLICT);
                 }
-                let (challenge, service, read, email, cancelled, budget) = {
+                let (challenge, service, read, email, cancelled, budget, prepared) = {
                     let j = &mut jobs[position];
                     let (expires, budget) = run_window(Instant::now());
                     j.expires = expires;
@@ -550,7 +576,15 @@ async fn handle(
                     j.google_email = Some(google_email.clone());
                     j.guest_active = true;
                     j.guest_deadline = Some(expires);
-                    (challenge, service, read, email, cancelled, budget)
+                    (
+                        challenge,
+                        service,
+                        read,
+                        email,
+                        cancelled,
+                        budget,
+                        j.prepared.take(),
+                    )
                 };
                 let gateway = g.clone();
                 let envelope = json!(envelope);
@@ -576,6 +610,7 @@ async fn handle(
                                 service,
                                 read,
                                 envelope,
+                                prepared,
                             ),
                         ) => match outcome {
                             Ok(Ok(run_state)) => (
@@ -625,6 +660,7 @@ mod tests {
     }
     fn pending(a: &SessionAllocation, state: &'static str) -> Job {
         Job {
+            prepared: None,
             id: Uuid::new_v4(),
             challenge: Uuid::new_v4(),
             stop: None,
@@ -643,6 +679,36 @@ mod tests {
             guest_active: false,
             guest_deadline: None,
         }
+    }
+
+    #[tokio::test]
+    async fn preparing_a_recipient_does_not_fence_retry_after_cancel() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mut options = super::super::tests::options(&root);
+        options.google_runtime_socket = Some(root.join("missing-test.sock"));
+        options.google_runtime_installation = Some(Uuid::new_v4());
+        let g = Gateway::new(&options).unwrap();
+        let a = owner(0);
+        let mut job = pending(&a, "preparing");
+        let (id, challenge) = (job.id, job.challenge);
+        job.email = "member@example.test".into();
+        let mut jobs = vec![job];
+        portable::prepare(
+            &g,
+            &a,
+            "session",
+            id,
+            challenge,
+            "member@example.test",
+            None,
+            &mut jobs,
+        )
+        .unwrap();
+        assert!(!jobs[0].guest_active);
+        assert_eq!(cancel_job(&mut jobs, 0), json!({"state":"cancelled"}));
+        assert!(jobs.is_empty());
+        assert!(reserve_member_vault(&mut jobs, &a, "session", "member@example.test").is_ok());
     }
 
     #[test]
@@ -1296,24 +1362,42 @@ async fn run(
     service: Option<&'static str>,
     read: Option<moosuri_store::MemberGoogleReadIntent>,
     envelope: Value,
+    prepared: Option<portable::Prepared>,
 ) -> Result<&'static str, StatusCode> {
-    let stream = UnixStream::connect(SOCKET).await.map_err(|_| UNAVAILABLE)?;
-    if stream.peer_cred().map_err(|_| UNAVAILABLE)?.uid() != 0 {
+    let modern = prepared.is_some();
+    if g.google_runtime.is_some() && !modern {
         return Err(UNAVAILABLE);
     }
-    let mut peer = BufReader::new(stream);
-    send(
+    let mut peer = if let Some(prepared) = prepared {
+        prepared.peer
+    } else {
+        let stream = UnixStream::connect(SOCKET).await.map_err(|_| UNAVAILABLE)?;
+        if stream.peer_cred().map_err(|_| UNAVAILABLE)?.uid() != 0 {
+            return Err(UNAVAILABLE);
+        }
+        let mut peer = BufReader::new(stream);
+        send(
         &mut peer,
         json!({"protocol":PROTOCOL,"job":challenge,"account":a.account_id,"email":email,"google_email":google_email,"service":service.unwrap_or("gmail")}),
     )
     .await?;
-    let state = authorized_phase(g, a, session, email, &mut peer, true).await?;
-    if state != "vault" {
-        return stopped(&state);
-    }
+        let state = authorized_phase(g, a, session, email, &mut peer, true).await?;
+        if state != "vault" {
+            return stopped(&state);
+        }
+        peer
+    };
     reauthorize(g, a, session, email).await?;
     require_state(g, id, challenge, "validating")?;
-    send(&mut peer, envelope).await?;
+    send(
+        &mut peer,
+        if modern {
+            json!({"google_email":google_email,"envelope":envelope})
+        } else {
+            envelope
+        },
+    )
+    .await?;
     let state = authorized_phase(g, a, session, email, &mut peer, false).await?;
     if state != "verified" {
         return stopped(&state);
@@ -1323,7 +1407,15 @@ async fn run(
     // exact job/challenge ownership transition succeeds. Sibling vault
     // reservations remain available until this attempt signs in successfully.
     begin_opening(g, id, challenge, a, session, email)?;
-    send(&mut peer, json!({"status":"proceed"})).await?;
+    send(
+        &mut peer,
+        if modern {
+            json!({"proceed":challenge})
+        } else {
+            json!({"status":"proceed"})
+        },
+    )
+    .await?;
     let mut awaiting_verification = false;
     let state = loop {
         let state = authorized_phase(g, a, session, email, &mut peer, false).await?;

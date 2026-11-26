@@ -313,8 +313,8 @@ production gateway/owner helper or close the blank-install exit gate.
 - [x] Fixed account and consent operations; no general CDP/script protocol.
 - [x] Cancellation, provider denial, wrong callback state and owned cleanup.
 - [x] Linux real-browser fixture and independent Claude review.
-- [ ] Authenticated installation socket, gateway reservations and dynamic vault
-  recipient integration; development drafts remain unpublished until accepted.
+- [x] Authenticated installation socket, gateway reservations and dynamic vault
+  recipient integration; Linux member transport acceptance and independent review.
 - [ ] Same-browser SDK/Console setup, public installer, real two-member Google
   consent/GWS read and matched production deployment.
 
@@ -360,3 +360,70 @@ Ubuntu already provided `/etc/apparmor.d/chrome`. Loading another differently
 named profile for the same executable caused a userns transition denial. Reuse
 that distro profile; `apparmor.chrome` is a fallback only. This is host path-based
 userns admission, not image attestation or a file/network sandbox.
+
+
+## Portable gateway and Vault integration — 2026-11-26
+
+The installation-owned socket now creates a guest-only recipient for the current
+member allocation and epoch. The gateway exposes `preparing` before `vault`, so
+the web client keeps its popup until the recipient is ready. The Vault service
+uses its existing authenticated adapter to retrieve exactly that challenge;
+legacy fixed-recipient deployments retain their earlier protocol. Credentials
+are sealed in the vault browser and only ciphertext crosses the gateway.
+
+Root peer credentials, installation/origin, allocation and epoch are checked.
+The same checks precede password release. New members have epoch zero; accepting
+that actual registry state fixed a fresh-member rejection without treating missing
+or unreadable registry records as zero. Only the installation-owned client file
+can select the OAuth identity. The existing callback remains the grant authority.
+
+Linux real-process/Kiri acceptance used the public `member-google.py`, two new
+member stores, the gateway, vault service and socket-activated-style brokers with
+official Chrome against an isolated synthetic TLS provider. **MG-01–10 passed**:
+
+| Case | Observed result |
+| --- | --- |
+| MG-01 | Concurrent new members receive separate guest-only recipients |
+| MG-02 | Cross-member recipient lookup is refused both ways |
+| MG-03 | Cancelling A invalidates its key while B stays usable |
+| MG-04 | One synthetic login; missing installation app remains `setup_required` |
+| MG-05 | Identical Deliver replay is idempotent; changed ciphertext is refused |
+| MG-06 | Gateway shutdown removes owned auth capsules; exact provider effects |
+| MG-07 | Immediate retry creates a fresh key; broker termination invalidates it |
+| MG-08 | Logout invalidates vault access and reclaims the idle capsule |
+| MG-09 | One preparing/prepared key per member preserves sibling capacity |
+| MG-10 | Cancelled preparations consume the per-member budget across logout/login |
+
+Expected and observed provider effects were one identifier and one password,
+zero consent, callback or wrong-password submissions. Only the fixture proxy
+remained before its final cleanup. This is not actual Google, browser UI,
+separate member UID, OAuth app creation, public installation or production evidence.
+Test image: `sha256:a0ecd2a4a3167763b5b3168d6a4ec57f947a1561368c198e66e74292958afdcf`.
+
+Independent Claude Sonnet 5.5 / medium reviews led to cancellation-fence fixes,
+one prepared key per member, a four-start/minute budget, bounded/revocable
+startup, expiry-independent idle cleanup, broker-death detection and a shared
+root-owned startup flock across broker processes. A trial child-exit monitor
+closed stdin prematurely; the real fixture and reviewer caught it. It now polls
+`try_wait`, preserving later delivery. The final delta review found no remaining
+high/medium defect. Existing engine inventory also caps auth capsules at two.
+Cleanup tolerates an already-reaped child; immutable IDs and ownership checks
+prevent a losing startup from removing another attempt. Unconfirmed removal
+fails closed; heavy-load availability and forced-kill orphan recovery remain
+limitations, not proof of successful cleanup.
+
+Linux regression evidence: gateway suite 58, then affected Google cases 27;
+auth crypto/script cases 7; vault HTTP 2 under private umask; Vault web 51; web
+connection/Workspace 34, then connection cases 21 after preparing-state coverage;
+latest capsule regressions 29. Relevant UI typechecks/builds passed. The first
+vault HTTP run failed with a permissive fixture umask; production starts with a
+private umask and no vault permission guard was weakened. Two later fixture
+failures used a post-login teardown fence and a pre-rotation synthetic password;
+fixture correction preserved those product guards. Planning/OpenSpec and secret
+checks passed. No dependency or license changed.
+
+This unit does not switch production or the public installer. Next: build all
+installation artifacts from public source, provision the Linux services, then
+implement same-profile SDK/Console app creation and actual member consent/GWS.
+The conservative post-login cleanup fence is retained; only key-only preparation
+can retry immediately. Overall clean-install and real-provider gates remain open.

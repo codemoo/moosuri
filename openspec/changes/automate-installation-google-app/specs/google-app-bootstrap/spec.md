@@ -18,6 +18,24 @@ vault recipient enrollment and browser transport from public project artifacts.
 - **WHEN** installation stops after allocating member storage or service configuration
 - **THEN** retry reconciles the same installation and preserves its keys, accounts and completed resources
 
+### Requirement: A prepared recipient belongs to a current member attempt
+The system SHALL bind each ephemeral recipient to the installation, member
+allocation, authorization epoch, challenge and callback origin. A new member's
+initial epoch zero SHALL be valid. Only a current authenticated vault grant for
+that allocation SHALL retrieve the key; key preparation SHALL NOT start Chrome.
+
+#### Scenario: A member cancels before delivering a password
+- **WHEN** the member cancels a prepared key and retries
+- **THEN** the old recipient becomes unusable and a bounded new attempt receives a different key without blocking another member
+
+#### Scenario: An idle prepared attempt loses its authorization or broker
+- **WHEN** the member logs out, the attempt expires, or its broker exits before delivery
+- **THEN** the gateway invalidates the recipient and the runtime removes the owned capsule without submitting a password
+
+#### Scenario: A member repeatedly requests new preparations
+- **WHEN** one member has a preparing or prepared key or exceeds the per-minute start budget
+- **THEN** another new preparation is refused while exact request replay and a different member's valid attempt remain isolated
+
 ### Requirement: Billing is not an assumed setup dependency
 The system SHALL inspect actual provider prerequisites and prefer a project
 without billing. Billing SHALL NOT be selected implicitly, and zero billing

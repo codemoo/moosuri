@@ -22,6 +22,7 @@ mod backup_snapshots;
 mod browser_relay;
 mod calls;
 mod engine_login;
+mod google_browser;
 mod gws_inbox;
 mod gws_relay;
 mod import_private;
@@ -99,6 +100,8 @@ enum Command {
     RuntimeBrowserRelay(browser_relay::Options),
     /// Handle one owner-bound fresh Google sign-in from a private systemd socket.
     KiriChromeSignin(kiri_chrome_signin::Options),
+    /// Serve one gateway-authorized Google browser attempt in a fresh Kiri capsule.
+    RuntimeGoogleBrowser(google_browser::Options),
     /// Serve fixed read-only Google OAuth/Gmail egress to isolated members.
     RuntimeGoogle(runtime_google::Options),
     /// Read public Google broker configuration or build a consent URL.
@@ -444,6 +447,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::KiriChromeSignin(options) = &cli.command {
         return kiri_chrome_signin::serve(options).await;
     }
+    if let Command::RuntimeGoogleBrowser(options) = &cli.command {
+        return google_browser::serve(options).await;
+    }
     if let Command::RuntimeBrowserRelay(options) = &cli.command {
         return browser_relay::run(options).await;
     }
@@ -640,6 +646,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             unreachable!("container helper does not open installation state")
         }
         Command::KiriChromeSignin(_)
+        | Command::RuntimeGoogleBrowser(_)
         | Command::RuntimeBrowserRelay(_)
         | Command::RuntimeGwsRelay(_)
         | Command::RuntimeGoogle(_)

@@ -41,7 +41,7 @@ impl Binding {
         .iter()
         .all(|id| !id.is_nil())
             && self.generation > 0
-            && self.epoch > 0
+            && self.epoch >= 0
             && valid_email(&self.email)
             && url::Url::parse(&self.origin).is_ok_and(|url| {
                 url.scheme() == "https"

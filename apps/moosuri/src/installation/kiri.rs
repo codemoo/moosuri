@@ -535,6 +535,40 @@ fn validate_supplied(layout: &Layout, cert: &Path, key: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// A valid PEM and matching private key alone do not make HTTPS usable. Check
+/// the actual leaf certificate's lifetime and both selected DNS names before
+/// installing the nginx configuration. Certificate/key matching remains nginx's
+/// responsibility; this does not assert trust by any external CA.
+fn validate_certificate(exec: &dyn Exec, cert: &Path, public: &str, vault: &str) -> Result<()> {
+    let (a, v) = render::origins(public, vault)?;
+    let cert = cert.to_str().ok_or("kiri_install_tls_path_invalid")?;
+    for host in [&a, &v] {
+        exec.run(
+            "openssl",
+            // x509 -checkhost prints a mismatch but exits zero in OpenSSL 3.
+            // verify has a failure exit status and also checks validity dates.
+            // Trust only the supplied leaf for this local consistency check.
+            &args(&[
+                "verify",
+                "-trusted",
+                cert,
+                "-partial_chain",
+                "-no-CAfile",
+                "-no-CApath",
+                "-no-CAstore",
+                "-purpose",
+                "sslserver",
+                "-verify_hostname",
+                host,
+                cert,
+            ]),
+            Input::None,
+            Duration::from_secs(10),
+        )?
+        .ok("kiri_install_certificate_expired_or_wrong_host")?;
+    }
+    Ok(())
+}
 fn configure_tls(
     layout: &Layout,
     exec: &dyn Exec,
@@ -590,6 +624,12 @@ fn configure_tls(
         )?
         .ok("kiri_install_certbot_failed")?;
     }
+    validate_certificate(
+        exec,
+        Path::new(&tls.paths().0),
+        &r.public_origin,
+        &r.vault_origin,
+    )?;
     apply(&final_text, std::slice::from_ref(&challenge_hash))
 }
 
@@ -800,6 +840,7 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
         "chgrp",
         "mkfs.ext4",
         "blkid",
+        "openssl",
     ] {
         host::find_tool(tool)?;
     }
@@ -833,6 +874,12 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
     let owner = receipt.installation_id.to_string();
     if let render::Tls::Supplied { certificate, key } = receipt.tls() {
         validate_supplied(&layout, &certificate, &key)?;
+        validate_certificate(
+            &exec,
+            &certificate,
+            &receipt.public_origin,
+            &receipt.vault_origin,
+        )?;
     }
 
     // Nothing below executes the bundle's own payloads except through fixed commands.

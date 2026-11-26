@@ -238,10 +238,16 @@ impl Docker<'_> {
             || v["Image"] != image
             || v["Config"]["Labels"][OWNER] != owner
             || v["Config"]["Labels"][PROJECT] != plan.project
-            || nets[&internal]["IPAddress"]
-                .as_str()
-                .is_some_and(|ip| ip != plan.proxy_ip)
-            || (nets[&internal].is_null() && v["State"]["Running"] == true)
+            || nets[&internal]["NetworkID"] != network
+            // Kiri allocates the actual IP on start. A stopped newly-created
+            // proxy must already request the exact address; it has no IP yet.
+            || if v["State"]["Running"] == true {
+                nets[&internal]["IPAddress"] != plan.proxy_ip
+            } else {
+                nets[&internal]["IPAMConfig"]["IPv4Address"] != plan.proxy_ip
+                    || !matches!(nets[&internal]["IPAddress"].as_str(), Some("") | None)
+                        && nets[&internal]["IPAddress"] != plan.proxy_ip
+            }
         {
             return Err("kiri_install_proxy_conflict".into());
         }

@@ -42,6 +42,9 @@ fn command(root: &Path, binary: &str) -> Check<Command> {
             .env_remove("DOCKER_CERT_PATH")
             .env_remove("BUILDX_BUILDER");
     }
+    if binary == "tar" {
+        command.env_remove("TAR_OPTIONS");
+    }
     command.current_dir(root).stdin(Stdio::null());
     Ok(command)
 }
@@ -99,6 +102,58 @@ fn digest(path: &Path, cap: u64) -> Check<String> {
     }
     ensure(total == meta.len(), "kiri_bundle_artifact_changed")?;
     Ok(format!("{:x}", sha.finalize()))
+}
+
+/// Kiri identifies images by the config JSON digest. With Docker's containerd
+/// image store, even image inspect .Id may instead be an OCI index digest.
+/// Read the saved archive's config without extracting any path to the host.
+fn image_config_id(root: &Path, archive: &Path) -> Check<String> {
+    let member = |name: &str| {
+        capture(
+            root,
+            "tar",
+            &[
+                "--extract",
+                "--to-stdout",
+                "--occurrence=1",
+                "--file",
+                path(archive)?,
+                "--",
+                name,
+            ],
+        )
+    };
+    let manifest: serde_json::Value = serde_json::from_str(&member("manifest.json")?)
+        .map_err(|_| "kiri_bundle_image_manifest_invalid")?;
+    let items = manifest
+        .as_array()
+        .filter(|a| a.len() == 1)
+        .ok_or("kiri_bundle_single_image_required")?;
+    let config = items[0]["Config"]
+        .as_str()
+        .ok_or("kiri_bundle_image_config_invalid")?;
+    let expected = config
+        .strip_prefix("blobs/sha256/")
+        .or_else(|| config.strip_suffix(".json"))
+        .filter(|h| {
+            h.len() == 64
+                && h.bytes()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        })
+        .ok_or("kiri_bundle_image_config_invalid")?;
+    let bytes = member(config)?;
+    let digest = format!("{:x}", Sha256::digest(bytes.as_bytes()));
+    ensure(
+        digest == expected,
+        "kiri_bundle_image_config_digest_mismatch",
+    )?;
+    let config: serde_json::Value =
+        serde_json::from_str(&bytes).map_err(|_| "kiri_bundle_image_config_invalid")?;
+    ensure(
+        config["os"] == "linux" && config["architecture"] == "amd64",
+        "kiri_bundle_image_platform_invalid",
+    )?;
+    Ok(format!("sha256:{digest}"))
 }
 
 pub fn run(root: &Path, args: &[String]) -> Check<()> {
@@ -244,6 +299,13 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
         output.join("seccomp.json"),
     )
     .map_err(|_| "kiri_bundle_copy_failed")?;
+    // Git archives may retain group-write bits from the source checkout. Bundle
+    // admission correctly refuses those, so normalize our newly copied payload.
+    fs::set_permissions(
+        output.join("seccomp.json"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .map_err(|_| "kiri_bundle_copy_failed")?;
     let mut images = BTreeMap::new();
     for (name, file, target) in [
         ("member", "deployment/kiri/Dockerfile", None),
@@ -283,7 +345,8 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
                 id,
             ],
         )?;
-        images.insert(name.replace('-', "_"), id.to_owned());
+        let config_id = image_config_id(&source, &output.join(format!("{name}.tar")))?;
+        images.insert(name.replace('-', "_"), config_id);
     }
     let mut files = BTreeMap::new();
     for name in [
@@ -309,6 +372,8 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
     let manifest = json!({"format":1,"source_revision":revision,"files":files,"images":images});
     for name in ["LICENSE-APACHE", "LICENSE-MIT"] {
         fs::copy(source.join(name), output.join(name)).map_err(|_| "kiri_bundle_copy_failed")?;
+        fs::set_permissions(output.join(name), fs::Permissions::from_mode(0o644))
+            .map_err(|_| "kiri_bundle_copy_failed")?;
     }
     // Only our newly created archive/build tree is removed; image cache is retained.
     fs::remove_dir_all(&scratch).map_err(|_| "kiri_bundle_staging_cleanup_failed")?;
@@ -331,4 +396,60 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
         output.display()
     );
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docker_legacy_and_containerd_archives_use_the_config_digest() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let content =
+            br#"{"os":"linux","architecture":"amd64","rootfs":{"type":"layers","diff_ids":[]}}"#;
+        let hash = format!("{:x}", Sha256::digest(content));
+        let archive = root.join("image.tar");
+        fs::create_dir_all(root.join("blobs/sha256")).unwrap();
+        for config in [format!("{hash}.json"), format!("blobs/sha256/{hash}")] {
+            fs::write(root.join(&config), content).unwrap();
+            fs::write(
+                root.join("manifest.json"),
+                json!([{"Config":config,"Layers":[]}]).to_string(),
+            )
+            .unwrap();
+            run_command(
+                root,
+                "tar",
+                &["-cf", path(&archive).unwrap(), "manifest.json", &config],
+            )
+            .unwrap();
+            assert_eq!(
+                image_config_id(root, &archive).unwrap(),
+                format!("sha256:{hash}")
+            );
+            // The name must identify these exact config bytes, not a manifest/index digest.
+            fs::write(root.join(&config), b"{}").unwrap();
+            run_command(
+                root,
+                "tar",
+                &["-cf", path(&archive).unwrap(), "manifest.json", &config],
+            )
+            .unwrap();
+            assert!(image_config_id(root, &archive).is_err());
+        }
+        for invalid in [
+            json!([{"Config":"../../host.json"}]),
+            json!([{"Config":format!("{hash}.json")},{"Config":format!("{hash}.json")}]),
+        ] {
+            fs::write(root.join("manifest.json"), invalid.to_string()).unwrap();
+            run_command(
+                root,
+                "tar",
+                &["-cf", path(&archive).unwrap(), "manifest.json"],
+            )
+            .unwrap();
+            assert!(image_config_id(root, &archive).is_err());
+        }
+    }
 }

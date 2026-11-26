@@ -251,6 +251,68 @@ fn supplied_tls_must_be_a_private_canonical_pair() {
     assert!(validate_supplied(&layout, &link, &key).is_err());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn https_certificate_must_cover_both_origins_and_not_be_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    let exec = System {
+        docker_config: dir.path().into(),
+    };
+    let cert = dir.path().join("cert.pem");
+    let key = dir.path().join("key.pem");
+    exec.run(
+        "openssl",
+        &args(&[
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "2",
+            "-subj",
+            "/CN=assistant.example.com",
+            "-addext",
+            "subjectAltName=DNS:assistant.example.com,DNS:vault.example.com",
+            "-keyout",
+            key.to_str().unwrap(),
+            "-out",
+            cert.to_str().unwrap(),
+        ]),
+        Input::None,
+        Duration::from_secs(15),
+    )
+    .unwrap()
+    .ok("fixture_certificate")
+    .unwrap();
+    let public = "https://assistant.example.com";
+    let vault = "https://vault.example.com";
+    validate_certificate(&exec, &cert, public, vault).unwrap();
+    assert!(validate_certificate(&exec, &cert, "https://wrong.example.com", vault).is_err());
+    assert!(validate_certificate(&exec, &cert, public, "https://wrong.example.com").is_err());
+    let expired = dir.path().join("expired.pem");
+    exec.run(
+        "openssl",
+        &args(&[
+            "x509",
+            "-in",
+            cert.to_str().unwrap(),
+            "-signkey",
+            key.to_str().unwrap(),
+            "-days",
+            "-1",
+            "-out",
+            expired.to_str().unwrap(),
+        ]),
+        Input::None,
+        Duration::from_secs(10),
+    )
+    .unwrap()
+    .ok("fixture_expired_certificate")
+    .unwrap();
+    assert!(validate_certificate(&exec, &expired, public, vault).is_err());
+}
+
 #[test]
 fn nginx_never_adopts_a_name_served_elsewhere() {
     let (_tmp, layout) = temp();

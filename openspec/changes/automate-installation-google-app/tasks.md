@@ -97,6 +97,109 @@ Proceed by usable units, without turning each small test into a new task:
 
 Component checks and existing-owner experiments cannot close these exit gates.
 
+### Clean installation implementation — acceptance in progress
+
+The source-only path is `deployment/kiri/install-from-source.sh` → Rust `xtask
+kiri-host` / `kiri-bundle` → `moosuri setup-kiri`. It reuses the existing registry,
+member storage, first invitation and authenticated administrator bootstrap.
+The [source installation guide](../../../deployment/kiri/source-install.md)
+records requirements and the still-open fresh-user gates. This implementation
+is not production deployment or completed OAuth setup.
+
+Initial Linux checks: 16 new installer tests and the existing installation/admin
+tests compile; after enforcing the documented private test umask, 53 matching
+unit tests and two integration cases passed. The ordinary guided-setup tests
+initially rejected a 624 MiB debug executable at the production bundle size
+limit; both passed using the same executable with debug sections removed.
+Independent Claude Sonnet 5.5 / medium reviews found premature onboard success,
+transient-login classification, cached package recovery, service readiness and
+source-revision/attribute handling defects. The implementation addresses those
+findings. The actual probe replaces the draft identity-only evidence hash.
+
+| Installation scenario | Expected result | Acceptance |
+| --- | --- | --- |
+| CI-01 empty Ubuntu/public source | no prepared Kiri, Docker, GWS, app state or developer helper; build and install | running |
+| CI-02 first administrator | HTTPS login works, initial password adopted through ordinary auth; role is admin | pending |
+| CI-03 interruption/retry | same installation, invitation, UID, volume and adapter authority retained | pending |
+| CI-04 conflicting inputs/artifact | changed origins or corrupt bundle refused without replacing member data | pending |
+| CI-05 second member | installed timer prepares independent UID/volume; Vault and GWS inherit installation origins | pending |
+| CI-06 dynamic Google recipient | each authenticated member gets a fresh scoped Kiri recipient; cancel/logout closes it | pending |
+| CI-07 restart | installed services and isolated browser proxies recover; identities remain unchanged | pending |
+| CI-08 exposure | synthetic password absent from receipt, argv and journals; cross-member Vault access refused | pending |
+
+The first empty-VM execution stopped at tracked Vault asset symlinks before
+installing dependencies. The two assets now contain the same bytes as regular
+files. The next execution is building from its selected commit on the empty VM.
+
+That source build completed, then actual installation found three integration
+defects: the copied seccomp file retained group-write permission; Docker's new
+containerd image store reported an index digest where Kiri needs the config
+digest; and a newly created stopped proxy has its requested IP in IPAMConfig
+but no actual IP until start. The builder now normalizes file modes and derives
+the image ID from the saved config bytes; the installer checks the requested
+address before start and the actual address afterward. Linux installer tests
+passed 17 cases and the archive test covers both legacy and OCI save layouts,
+wrong digests, path traversal and multiple image entries.
+
+Applying the two packaging corrections to the disposable built bundle allowed
+an intentional interruption and same-identity resume; that run exposed the
+proxy check and is not complete installation acceptance. No member data was
+created. A new source-built candidate must exercise all fixes automatically;
+the manually corrected diagnostic bundle does not close CI-01.
+
+Fresh-user completion additionally requires automatic shared model service and
+member socket provisioning. The source installer currently prepares neither
+`runtime-model` nor `model_sockets_root`; a web engine setting alone cannot close
+that gate. Keep it as a separate usable unit after the Google path, then converge
+the default public entry point. Do not treat this installer unit as full product
+onboarding.
+
+The supplied-certificate path now validates both HTTPS hostnames and validity
+dates with the installed OpenSSL. A real Linux certificate scenario covers a
+valid pair of names, each wrong name and expiry. Its first run caught OpenSSL
+`x509 -checkhost` returning exit zero for a mismatch; the implementation uses
+`verify -verify_hostname` with the supplied certificate as the local trust
+anchor. This is a consistency check, not a claim of external CA trust. The
+empty-VM source build still uses the earlier candidate; this delta is not yet
+included in its running bundle.
+
+Next Google unit: branch within the existing signed-in attempt before a missing
+client ends the job; reuse the registry's reviewed lease/intent/replay guards,
+the authoritative atomic client writer and current GWS distribution. Keep the
+SDK inside the disposable authentication image, with an empty tmpfs config,
+fixed commands and exact account checks. Provider pages and the client secret
+must remain outside model output and public receipts. Console selectors and
+client-secret response-loss recovery still require actual discovery.
+
+Separate unpublished next-unit drafts now contain the unbilled registry
+checkpoint and a fixed-command Rust Cloud SDK runner. The checkpoint retains
+used-run IDs, leases, fresh administrator checks and uncertain intents; billing
+selection is removed and the order is project, APIs, branding, audience, client,
+registration. Linux administrator/storage checks passed 22 cases, including nine
+checkpoint scenarios. Legacy-schema fixtures were updated to remove the new
+tables before their deliberate downgrade; no production migration guard was
+relaxed. The SDK's nine synthetic cases passed, but browser/controller integration
+and real provider operations are still missing.
+
+The versioned official SDK 594.0.1 archive is separately pinned to SHA-256
+`8fc798fd0638428551f80277a568112d08afcf9cafd967d1cf39ae0918df2a1d`;
+the older unversioned archive's hash below must not be substituted. Inspection
+of that SDK confirms `--no-launch-browser` uses an auth-proxy/code flow. The new
+candidate instead keeps the normal loopback flow and redirects the browser-open
+request to the same private Chrome. SDK execution/URL compatibility in the image
+is still under acceptance. No SDK credentials or Console client have been created
+by these component tests.
+
+Official documentation rechecked on 2026-11-26:
+[SDK login](https://docs.cloud.google.com/sdk/gcloud/reference/auth/login)
+supports browser authorization with controlled launch; its precise callback mode
+must match the pinned SDK. [Project creation](https://docs.cloud.google.com/sdk/gcloud/reference/projects/create)
+supports a caller-selected stable project ID and labels without requiring a
+parent by default. [OAuth best practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-creation-and-configuration-of-oauth-clients)
+requires Cloud Console client creation/configuration and explicit terms; do not
+invent an unsupported client-creation API. These docs do not prove that the
+unobserved Console steps or a never-used Google account already work.
+
 The draft checkpoint now permits a confirmed unbilled project, distinguishes a
 provider-required billing account from no available account, and preserves that
 decision across an uncertain create/restart. Linux checkpoint scenarios: 10

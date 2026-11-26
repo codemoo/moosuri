@@ -106,13 +106,20 @@ impl Receipt {
         )
     }
     fn tls(&self) -> render::Tls {
-        match self.tls.strip_prefix("supplied:").and_then(|p| p.split_once('|')) {
+        match self
+            .tls
+            .strip_prefix("supplied:")
+            .and_then(|p| p.split_once('|'))
+        {
             Some((c, k)) => render::Tls::Supplied {
                 certificate: c.into(),
                 key: k.into(),
             },
             None => render::Tls::Certbot {
-                name: format!("moosuri-kiri-{}", &self.installation_id.simple().to_string()[..12]),
+                name: format!(
+                    "moosuri-kiri-{}",
+                    &self.installation_id.simple().to_string()[..12]
+                ),
             },
         }
     }
@@ -205,18 +212,25 @@ pub fn pick_uids(count: u32, free: impl Fn(u32) -> bool) -> Result<Vec<u32>> {
     Ok(pool)
 }
 fn valid_email(e: &str) -> bool {
-    !e.starts_with('-') && e.len() <= 254
+    !e.starts_with('-')
+        && e.len() <= 254
         && e.trim() == e
         && !e.chars().any(|c| c.is_control() || c.is_whitespace())
         && e.split_once('@')
             .is_some_and(|(l, d)| !l.is_empty() && d.contains('.') && !d.contains('@'))
 }
 fn valid_name(n: &str) -> bool {
-    !n.is_empty() && !n.starts_with('-') && n.chars().count() <= 100 && n.trim() == n && !n.chars().any(char::is_control)
+    !n.is_empty()
+        && !n.starts_with('-')
+        && n.chars().count() <= 100
+        && n.trim() == n
+        && !n.chars().any(char::is_control)
 }
 fn prompt(label: &str) -> Result<String> {
     print!("{label}");
-    std::io::stdout().flush().map_err(|_| "kiri_install_prompt_failed")?;
+    std::io::stdout()
+        .flush()
+        .map_err(|_| "kiri_install_prompt_failed")?;
     let mut line = String::new();
     std::io::stdin()
         .lock()
@@ -339,7 +353,8 @@ fn load_receipt(layout: &Layout) -> Result<Option<(Receipt, Vec<u8>)>> {
     Ok(Some((receipt, bytes)))
 }
 fn save_receipt(layout: &Layout, receipt: &Receipt, previous: Option<&[u8]>) -> Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(receipt).map_err(|_| "kiri_install_receipt_invalid")?;
+    let mut bytes =
+        serde_json::to_vec_pretty(receipt).map_err(|_| "kiri_install_receipt_invalid")?;
     bytes.push(b'\n');
     let old: Vec<String> = previous.map(host::sha256_bytes).into_iter().collect();
     layout.write_file(&layout.at(RECEIPT), &bytes, 0o600, &old)
@@ -368,15 +383,35 @@ fn lay_down(
         layout.ensure_dir(&storage, 0o700)?;
     }
     bundle.install_file(layout, "moosuri", &layout.at(BIN), 0o755)?;
-    bundle.install_file(layout, "moosuri-vault-service", &layout.at(VAULT_BIN), 0o755)?;
-    bundle.install_file(layout, "seccomp.json", &layout.at("/etc/moosuri/seccomp.json"), 0o644)?;
+    bundle.install_file(
+        layout,
+        "moosuri-vault-service",
+        &layout.at(VAULT_BIN),
+        0o755,
+    )?;
+    bundle.install_file(
+        layout,
+        "seccomp.json",
+        &layout.at("/etc/moosuri/seccomp.json"),
+        0o644,
+    )?;
     ensure_adapter_key(layout)?;
     for (name, bytes) in r.profile(&bundle.images.member) {
-        layout.write_file(&layout.at(&format!("{}/{name}", render::ETC)), &bytes, 0o600, &[])?;
+        layout.write_file(
+            &layout.at(&format!("{}/{name}", render::ETC)),
+            &bytes,
+            0o600,
+            &[],
+        )?;
     }
     if let Some((browser, google)) = capsules {
         layout.write_file(&layout.at("/etc/moosuri/browser.json"), browser, 0o600, &[])?;
-        layout.write_file(&layout.at("/etc/moosuri/google-browser.json"), google, 0o600, &[])?;
+        layout.write_file(
+            &layout.at("/etc/moosuri/google-browser.json"),
+            google,
+            0o600,
+            &[],
+        )?;
     }
     let id = r.installation_id.to_string();
     let values = render::Values {
@@ -401,7 +436,9 @@ fn ensure_adapter_key(layout: &Layout) -> Result<()> {
     let path = layout.at(KEY);
     if layout.exists(&path)? {
         let (mut file, len) = host::open_regular(&path, 65)?;
-        let m = file.metadata().map_err(|_| "kiri_install_key_unavailable")?;
+        let m = file
+            .metadata()
+            .map_err(|_| "kiri_install_key_unavailable")?;
         let mut text = String::new();
         (&mut file)
             .read_to_string(&mut text)
@@ -423,7 +460,10 @@ fn systemctl(exec: &dyn Exec, items: &[&str], reason: &str) -> Result<()> {
         .map(|_| ())
 }
 fn start(exec: &dyn Exec, unit: &str) -> Result<()> {
-    let reason = format!("kiri_install_unit_failed_{}", unit.replace(['.', '-', '@'], "_"));
+    let reason = format!(
+        "kiri_install_unit_failed_{}",
+        unit.replace(['.', '-', '@'], "_")
+    );
     systemctl(exec, &["enable", "--now", unit], &reason)?;
     systemctl(exec, &["is-active", "--quiet", unit], &reason)
 }
@@ -431,7 +471,11 @@ fn start(exec: &dyn Exec, unit: &str) -> Result<()> {
 fn reload_nginx(exec: &dyn Exec) -> Result<()> {
     exec.run("nginx", &args(&["-t"]), Input::None, QUICK)?
         .ok("kiri_install_nginx_config_rejected")?;
-    systemctl(exec, &["reload-or-restart", "nginx"], "kiri_install_nginx_reload_failed")
+    systemctl(
+        exec,
+        &["reload-or-restart", "nginx"],
+        "kiri_install_nginx_reload_failed",
+    )
 }
 /// Refuse a name already served by another nginx file.
 fn nginx_conflicts(layout: &Layout, hosts: &[&str]) -> Result<()> {
@@ -443,7 +487,9 @@ fn nginx_conflicts(layout: &Layout, hosts: &[&str]) -> Result<()> {
         }
     }
     for file in files.into_iter().filter(|f| *f != ours) {
-        let Ok(text) = fs::read_to_string(&file) else { continue };
+        let Ok(text) = fs::read_to_string(&file) else {
+            continue;
+        };
         // Conservative text scan, including one-line and commented declarations.
         for declaration in text.split("server_name").skip(1) {
             let names = declaration.split(';').next().unwrap_or("");
@@ -464,13 +510,17 @@ fn validate_supplied(layout: &Layout, cert: &Path, key: &Path) -> Result<()> {
     for (path, cap, secret) in [(cert, 256 * 1024u64, false), (key, 64 * 1024, true)] {
         if !path.is_absolute()
             || fs::canonicalize(path).ok().as_deref() != Some(path)
-            || path.to_string_lossy().contains(['|', ' ', ';', '{', '}', '"', '\'', '$', '\\'])
+            || path
+                .to_string_lossy()
+                .contains(['|', ' ', ';', '{', '}', '"', '\'', '$', '\\'])
         {
             return Err("kiri_install_tls_path_invalid".into());
         }
         layout.safe_ancestors(path)?;
         let (mut file, _) = host::open_regular(path, cap)?;
-        let m = file.metadata().map_err(|_| "kiri_install_tls_unavailable")?;
+        let m = file
+            .metadata()
+            .map_err(|_| "kiri_install_tls_unavailable")?;
         let mut head = String::new();
         (&mut file)
             .take(64)
@@ -517,9 +567,23 @@ fn configure_tls(
         exec.run(
             "certbot",
             &args(&[
-                "certonly", "--webroot", "-w", render::ACME_ROOT, "--cert-name", name, "-d", &a,
-                "-d", &v, "--non-interactive", "--agree-tos", "-m", email,
-                "--keep-until-expiring", "--deploy-hook", "systemctl reload nginx",
+                "certonly",
+                "--webroot",
+                "-w",
+                render::ACME_ROOT,
+                "--cert-name",
+                name,
+                "-d",
+                &a,
+                "-d",
+                &v,
+                "--non-interactive",
+                "--agree-tos",
+                "-m",
+                email,
+                "--keep-until-expiring",
+                "--deploy-hook",
+                "systemctl reload nginx",
             ]),
             Input::None,
             Duration::from_secs(15 * 60),
@@ -530,7 +594,11 @@ fn configure_tls(
 }
 
 fn onboard(exec: &dyn Exec, r: &Receipt, secret: &Zeroizing<String>) -> Result<()> {
-    let uid = r.uid_pool.first().ok_or("kiri_install_receipt_invalid")?.to_string();
+    let uid = r
+        .uid_pool
+        .first()
+        .ok_or("kiri_install_receipt_invalid")?
+        .to_string();
     let request = r.request_id.to_string();
     for attempt in 0..6 {
         let mut input = Zeroizing::new(secret.as_bytes().to_vec());
@@ -538,25 +606,47 @@ fn onboard(exec: &dyn Exec, r: &Receipt, secret: &Zeroizing<String>) -> Result<(
         let out = exec.run(
             BIN,
             &args(&[
-                "kiri-onboard", "--experimental", "--config", MEMBERS, "--request-id", &request,
-                "--first-name", &r.admin_name, "--first-email", &r.admin_email, "--uid", &uid,
-                "--operations-root", "/var/lib/moosuri-control/invitations", "--enable-local-gws", "--password-stdin",
+                "kiri-onboard",
+                "--experimental",
+                "--config",
+                MEMBERS,
+                "--request-id",
+                &request,
+                "--first-name",
+                &r.admin_name,
+                "--first-email",
+                &r.admin_email,
+                "--uid",
+                &uid,
+                "--operations-root",
+                "/var/lib/moosuri-control/invitations",
+                "--enable-local-gws",
+                "--password-stdin",
             ]),
             Input::Secret(input),
             Duration::from_secs(30 * 60),
         )?;
         if out.code == 0 {
-            let stage = out.stdout.split(|b| *b == b'\n').rev()
+            let stage = out
+                .stdout
+                .split(|b| *b == b'\n')
+                .rev()
                 .find_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
                 .ok_or("kiri_install_first_member_reply_invalid")?;
-            if stage["ready"] == true || stage["stage"] == "ready" { return Ok(()); }
+            if stage["ready"] == true || stage["stage"] == "ready" {
+                return Ok(());
+            }
             match stage["stage"].as_str() {
                 Some("service_waiting" | "initialization_waiting") if attempt < 5 => {
                     std::thread::sleep(Duration::from_secs(5));
                     continue;
                 }
-                Some("preparation_required") => return Err("kiri_install_first_member_preparation_required".into()),
-                Some("password_required") => return Err("kiri_install_first_member_password_required".into()),
+                Some("preparation_required") => {
+                    return Err("kiri_install_first_member_preparation_required".into());
+                }
+                Some("password_required") => {
+                    return Err("kiri_install_first_member_password_required".into());
+                }
                 _ => return Err("kiri_install_first_member_not_ready".into()),
             }
         }
@@ -624,21 +714,35 @@ fn plan_fresh(
     ));
     used.extend(browser::host_networks(&String::from_utf8_lossy(
         &exec
-            .run("ip", &args(&["-4", "-o", "addr", "show"]), Input::None, QUICK)?
+            .run(
+                "ip",
+                &args(&["-4", "-o", "addr", "show"]),
+                Input::None,
+                QUICK,
+            )?
             .ok("kiri_install_network_inventory_failed")?,
     )));
     used.extend(docker.used_subnets()?);
     let browser_plan = browser::plan(&used, &[], format!("moosuri-browser-{id}"))?;
-    let google_plan = browser::plan(&used, std::slice::from_ref(&browser_plan), format!("moosuri-google-{id}"))?;
-    let conf = fs::read_to_string(layout.at("/etc/nginx/nginx.conf")).map_err(|_| "kiri_install_nginx_missing")?;
-    let groups = fs::read_to_string(layout.at("/etc/group")).map_err(|_| "kiri_install_nginx_group_unknown")?;
+    let google_plan = browser::plan(
+        &used,
+        std::slice::from_ref(&browser_plan),
+        format!("moosuri-google-{id}"),
+    )?;
+    let conf = fs::read_to_string(layout.at("/etc/nginx/nginx.conf"))
+        .map_err(|_| "kiri_install_nginx_missing")?;
+    let groups = fs::read_to_string(layout.at("/etc/group"))
+        .map_err(|_| "kiri_install_nginx_group_unknown")?;
     let tls = match (&o.tls_certificate, &o.tls_key) {
         (Some(c), Some(k)) => {
             validate_supplied(layout, c, k)?;
             format!("supplied:{}|{}", c.display(), k.display())
         }
         _ => {
-            let email = o.certbot_email.as_deref().ok_or("kiri_install_tls_choice_required")?;
+            let email = o
+                .certbot_email
+                .as_deref()
+                .ok_or("kiri_install_tls_choice_required")?;
             if !valid_email(email) {
                 return Err("kiri_install_certbot_email_invalid".into());
             }
@@ -657,7 +761,9 @@ fn plan_fresh(
         manifest_sha256: bundle.manifest_sha256.clone(),
         member_capacity: o.member_capacity,
         member_volume_bytes: o.member_volume_gib << 30,
-        uid_pool: pick_uids(o.member_capacity, |u| crate::kiri_storage::unused_uid(u).is_ok())?,
+        uid_pool: pick_uids(o.member_capacity, |u| {
+            crate::kiri_storage::unused_uid(u).is_ok()
+        })?,
         tls,
         proxy_gid: nginx_group(&conf, &groups)?,
         browser: browser_plan,
@@ -674,7 +780,9 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
         return Err("kiri_install_tls_choice_required".into());
     }
     let bundle = bundle::validate(&layout, &o.bundle)?;
-    bundle.require_running(&std::env::current_exe().map_err(|_| "kiri_install_executable_unknown")?)?;
+    bundle.require_running(
+        &std::env::current_exe().map_err(|_| "kiri_install_executable_unknown")?,
+    )?;
     let who = identity(o)?;
     let secret = password(o)?;
     let docker_config = tempfile::Builder::new()
@@ -684,7 +792,15 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
     let exec = System {
         docker_config: docker_config.path().into(),
     };
-    for tool in ["docker", "ip", "nginx", "systemctl", "chgrp", "mkfs.ext4", "blkid"] {
+    for tool in [
+        "docker",
+        "ip",
+        "nginx",
+        "systemctl",
+        "chgrp",
+        "mkfs.ext4",
+        "blkid",
+    ] {
         host::find_tool(tool)?;
     }
     if o.certbot_email.is_some() {
@@ -696,7 +812,9 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
     let (receipt, previous) = match load_receipt(&layout)? {
         Some((existing, bytes)) => {
             let probe = plan_inputs(&existing, o, &bundle, &who);
-            if probe.inputs() != existing.inputs() || existing.source_revision != bundle.source_revision {
+            if probe.inputs() != existing.inputs()
+                || existing.source_revision != bundle.source_revision
+            {
                 return Err("kiri_install_conflicting_existing_installation".into());
             }
             if existing.complete {
@@ -728,12 +846,11 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
             return Err("kiri_install_artifact_changed_during_install".into());
         }
     }
-    let (browser_network, browser_proxy) = docker.capsule(&bundle.images.browser, &receipt.browser, &owner)?;
-    let (google_network, google_proxy) = docker.capsule(&bundle.images.google_auth, &receipt.google, &owner)?;
-    let capsule = |image: &str,
-                   plan: &browser::NetPlan,
-                   network: &str,
-                   proxy: &str| {
+    let (browser_network, browser_proxy) =
+        docker.capsule(&bundle.images.browser, &receipt.browser, &owner)?;
+    let (google_network, google_proxy) =
+        docker.capsule(&bundle.images.google_auth, &receipt.google, &owner)?;
+    let capsule = |image: &str, plan: &browser::NetPlan, network: &str, proxy: &str| {
         browser::capsule_json(&browser::Capsule {
             image_id: image,
             network_id: network,
@@ -742,8 +859,18 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
             owner: &owner,
         })
     };
-    let browser_json = capsule(&bundle.images.browser, &receipt.browser, &browser_network, &browser_proxy);
-    let google_json = capsule(&bundle.images.google_auth, &receipt.google, &google_network, &google_proxy);
+    let browser_json = capsule(
+        &bundle.images.browser,
+        &receipt.browser,
+        &browser_network,
+        &browser_proxy,
+    );
+    let google_json = capsule(
+        &bundle.images.google_auth,
+        &receipt.google,
+        &google_network,
+        &google_proxy,
+    );
     // Install the trusted seccomp profile before the real browser startup probes.
     // Capsule configs are published only when both engines and owned cleanup pass.
     lay_down(&layout, &bundle, &receipt, None)?;
@@ -751,20 +878,54 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
         use moosuri_connectors::browser::capsule::{CapsuleConfig, CapsuleReader};
         let config: CapsuleConfig = serde_json::from_slice(&bytes)
             .map_err(|_| "kiri_install_capsule_invalid".to_owned())?;
-        CapsuleReader::verify_installation(config, google, &moosuri_connectors::model::CancellationToken::new())
-            .await.map_err(|_| if google { "kiri_install_google_browser_probe_failed".to_owned() } else { "kiri_install_browser_probe_failed".to_owned() })
+        CapsuleReader::verify_installation(
+            config,
+            google,
+            &moosuri_connectors::model::CancellationToken::new(),
+        )
+        .await
+        .map_err(|_| {
+            if google {
+                "kiri_install_google_browser_probe_failed".to_owned()
+            } else {
+                "kiri_install_browser_probe_failed".to_owned()
+            }
+        })
     };
     let (browser_config, browser_evidence) = probe(browser_json, false).await?;
     let (google_config, google_evidence) = probe(google_json, true).await?;
-    let browser_json = serde_json::to_vec_pretty(&browser_config).map_err(|_| "kiri_install_capsule_invalid")?;
-    let google_json = serde_json::to_vec_pretty(&google_config).map_err(|_| "kiri_install_capsule_invalid")?;
-    for (name, evidence) in [("browser-smoke.json", browser_evidence), ("google-browser-smoke.json", google_evidence)] {
-        layout.write_file(&layout.at(&format!("/etc/moosuri/{name}")), &evidence, 0o600, &[])?;
+    let browser_json =
+        serde_json::to_vec_pretty(&browser_config).map_err(|_| "kiri_install_capsule_invalid")?;
+    let google_json =
+        serde_json::to_vec_pretty(&google_config).map_err(|_| "kiri_install_capsule_invalid")?;
+    for (name, evidence) in [
+        ("browser-smoke.json", browser_evidence),
+        ("google-browser-smoke.json", google_evidence),
+    ] {
+        layout.write_file(
+            &layout.at(&format!("/etc/moosuri/{name}")),
+            &evidence,
+            0o600,
+            &[],
+        )?;
     }
-    lay_down(&layout, &bundle, &receipt, Some((&browser_json, &google_json)))?;
+    lay_down(
+        &layout,
+        &bundle,
+        &receipt,
+        Some((&browser_json, &google_json)),
+    )?;
 
-    systemctl(&exec, &["daemon-reload"], "kiri_install_daemon_reload_failed")?;
-    for unit in ["moosuri-kiri-gws.service", "moosuri-kiri-browser.service", "moosuri-google-browser.socket"] {
+    systemctl(
+        &exec,
+        &["daemon-reload"],
+        "kiri_install_daemon_reload_failed",
+    )?;
+    for unit in [
+        "moosuri-kiri-gws.service",
+        "moosuri-kiri-browser.service",
+        "moosuri-google-browser.socket",
+    ] {
         start(&exec, unit)?;
     }
     onboard(&exec, &receipt, &secret)?;
@@ -786,12 +947,20 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
     println!("Moosuri Kiri is installed.");
     println!("Assistant: {}", receipt.public_origin);
     println!("Vault: {}", receipt.vault_origin);
-    println!("Sign in as {} with the password you entered; it was not stored.", receipt.admin_email);
+    println!(
+        "Sign in as {} with the password you entered; it was not stored.",
+        receipt.admin_email
+    );
     println!("Google OAuth application setup is a separate next step.");
     Ok(())
 }
 /// Re-derive the operator inputs of an invocation for comparison with the receipt.
-fn plan_inputs(existing: &Receipt, o: &Options, bundle: &bundle::Bundle, who: &(String, String)) -> Receipt {
+fn plan_inputs(
+    existing: &Receipt,
+    o: &Options,
+    bundle: &bundle::Bundle,
+    who: &(String, String),
+) -> Receipt {
     let mut probe = existing.clone();
     probe.admin_email.clone_from(&who.0);
     probe.admin_name.clone_from(&who.1);

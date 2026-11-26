@@ -18,8 +18,22 @@ if [[ $# == 0 ]]; then
 fi
 source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 cd -- "$source_root"
+for key in ${!GIT_@}; do unset "$key"; done
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_ATTR_NOSYSTEM=1
+for directory in "$source_root" "$source_root/.git"; do
+    owner=$(stat -c %u "$directory")
+    mode=$(stat -c %a "$directory")
+    if [[ ! -d $directory || -L $directory || ( $owner != 0 && $owner != "${SUDO_UID:-0}" ) ]] || (( (8#$mode & 8#022) != 0 )); then
+        echo 'Refusing an unowned or shared source checkout.' >&2
+        exit 1
+    fi
+done
+if [[ -e .git/info/attributes || -L .git/info/attributes ]]; then
+    echo 'Local archive attributes require review before building.' >&2
+    exit 1
+fi
 revision=$(git -c "safe.directory=$source_root" rev-parse --verify HEAD)
-if git -c "safe.directory=$source_root" ls-tree -r HEAD | /usr/bin/grep -E '^(120000|160000) |[[:space:]](.*/)?\.gitattributes$' >/dev/null; then
+if git -c "safe.directory=$source_root" ls-tree -r "$revision" | /usr/bin/grep -E '^(120000|160000) |[[:space:]](.*/)?\.gitattributes$' >/dev/null; then
     echo 'Source links, submodules and archive attributes require review before building.' >&2
     exit 1
 fi
@@ -37,11 +51,11 @@ DEBIAN_FRONTEND=noninteractive apt-get update </dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker.io docker-buildx ca-certificates </dev/null
 systemctl enable --now docker.service </dev/null
 mkdir -m 700 "$stage/source" "$stage/docker-config"
-git -c "safe.directory=$source_root" archive --format=tar HEAD | tar -xf - -C "$stage/source"
+git -c "safe.directory=$source_root" -c core.attributesFile=/dev/null archive --format=tar "$revision" | tar -xf - -C "$stage/source"
 docker --host=unix:///var/run/docker.sock --config "$stage/docker-config" build \
     --file "$stage/source/deployment/kiri/build-installation.Dockerfile" \
     --target bundle-tool --output "type=local,dest=$stage/tool" "$stage/source" </dev/null
 "$stage/tool/xtask" kiri-host </dev/null
-"$stage/tool/xtask" kiri-bundle --output "$stage/bundle" </dev/null
+"$stage/tool/xtask" kiri-bundle --output "$stage/bundle" --revision "$revision" </dev/null
 echo "Bundle ready. To resume setup, use: $stage/bundle/moosuri setup-kiri --bundle $stage/bundle [the same options]"
 exec "$stage/bundle/moosuri" setup-kiri --bundle "$stage/bundle" "$@"

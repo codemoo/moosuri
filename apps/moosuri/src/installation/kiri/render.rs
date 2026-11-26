@@ -169,10 +169,9 @@ pub enum Tls {
 impl Tls {
     pub fn paths(&self) -> (String, String) {
         match self {
-            Tls::Supplied { certificate, key } => (
-                certificate.display().to_string(),
-                key.display().to_string(),
-            ),
+            Tls::Supplied { certificate, key } => {
+                (certificate.display().to_string(), key.display().to_string())
+            }
             Tls::Certbot { name } => (
                 format!("/etc/letsencrypt/live/{name}/fullchain.pem"),
                 format!("/etc/letsencrypt/live/{name}/privkey.pem"),
@@ -222,10 +221,9 @@ pub fn nginx_challenge(public_origin: &str, vault_origin: &str) -> Result<String
 pub fn nginx_final(public_origin: &str, vault_origin: &str, tls: &Tls) -> Result<String> {
     let (a, b) = origins(public_origin, vault_origin)?;
     let (cert, key) = tls.paths();
-    if [&cert, &key]
-        .iter()
-        .any(|p| p.contains([' ', ';', '{', '}', '"', '\'', '$', '\n', '\\']) || !p.starts_with('/'))
-    {
+    if [&cert, &key].iter().any(|p| {
+        p.contains([' ', ';', '{', '}', '"', '\'', '$', '\n', '\\']) || !p.starts_with('/')
+    }) {
         return Err("kiri_install_tls_path_invalid".into());
     }
     let tls_block = |host: &str, limit: &str, upstream: &str| {
@@ -294,7 +292,10 @@ mod tests {
         let mut text = String::new();
         for (name, template) in UNITS {
             let t = unit(template, &v).unwrap();
-            assert!(!t.contains("@PUBLIC") && !t.contains("@PROXY") && !t.contains("@INSTALL"), "{name}");
+            assert!(
+                !t.contains("@PUBLIC") && !t.contains("@PROXY") && !t.contains("@INSTALL"),
+                "{name}"
+            );
             text.push_str(&t);
         }
         for expected in [
@@ -312,14 +313,19 @@ mod tests {
     }
     #[test]
     fn nginx_preserves_host_overwrites_real_ip_and_does_not_log() {
-        let tls = Tls::Certbot { name: "moosuri-kiri-test".into() };
+        let tls = Tls::Certbot {
+            name: "moosuri-kiri-test".into(),
+        };
         let text = nginx_final("https://a.example.com", "https://v.example.com", &tls).unwrap();
         assert!(text.contains("proxy_set_header Host $http_host;"));
         assert!(text.contains("proxy_set_header X-Real-IP $remote_addr;"));
         assert!(text.contains("access_log off;"));
         assert!(!text.contains("default_server"));
         assert_eq!(text.matches("listen 443").count(), 2);
-        let bad = Tls::Supplied { certificate: "/x/a b.pem".into(), key: "/x/k.pem".into() };
+        let bad = Tls::Supplied {
+            certificate: "/x/a b.pem".into(),
+            key: "/x/k.pem".into(),
+        };
         assert!(nginx_final("https://a.example.com", "https://v.example.com", &bad).is_err());
     }
 }

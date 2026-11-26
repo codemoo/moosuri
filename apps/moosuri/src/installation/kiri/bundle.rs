@@ -50,16 +50,20 @@ pub struct Bundle {
 }
 
 fn image_id(s: &str) -> bool {
-    s.strip_prefix("sha256:").is_some_and(|h| host::is_hex(h, 64))
+    s.strip_prefix("sha256:")
+        .is_some_and(|h| host::is_hex(h, 64))
 }
 
 /// Validate every artifact before anything is executed or copied.
 pub fn validate(layout: &Layout, dir: &Path) -> Result<Bundle> {
     if !dir.is_absolute()
         || dir.to_str().is_none()
-        || dir
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir))
+        || dir.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
         || fs::canonicalize(dir).ok().as_deref() != Some(dir)
     {
         return Err("kiri_install_bundle_path_invalid".into());
@@ -103,7 +107,10 @@ pub fn validate(layout: &Layout, dir: &Path) -> Result<Bundle> {
         // Hash streaming never loads an image archive into memory.
         let actual = host::sha256_file(&dir.join(name), cap)?;
         if &actual != expected {
-            return Err(format!("kiri_install_artifact_hash_mismatch_{}", name.replace(['.', '-'], "_")));
+            return Err(format!(
+                "kiri_install_artifact_hash_mismatch_{}",
+                name.replace(['.', '-'], "_")
+            ));
         }
     }
     if manifest.files["seccomp.json"] != SECCOMP_SHA256 {
@@ -206,14 +213,24 @@ mod tests {
         let mut bad = manifest.clone();
         bad["images"]["browser"] = bad["images"]["google_auth"].clone();
         write(&dir, &bad);
-        assert_eq!(validate(&layout, &dir).unwrap_err(), "kiri_install_manifest_invalid");
+        assert_eq!(
+            validate(&layout, &dir).unwrap_err(),
+            "kiri_install_manifest_invalid"
+        );
         let mut extra = manifest.clone();
         extra["files"]["hook.sh"] = json!("0".repeat(64));
         write(&dir, &extra);
-        assert_eq!(validate(&layout, &dir).unwrap_err(), "kiri_install_manifest_invalid");
+        assert_eq!(
+            validate(&layout, &dir).unwrap_err(),
+            "kiri_install_manifest_invalid"
+        );
         write(&dir, &manifest);
         fs::write(dir.join("member.tar"), b"changed").unwrap();
-        assert!(validate(&layout, &dir).unwrap_err().contains("hash_mismatch_member_tar"));
+        assert!(
+            validate(&layout, &dir)
+                .unwrap_err()
+                .contains("hash_mismatch_member_tar")
+        );
     }
     #[test]
     fn rejects_symlink_hardlink_and_shared_directory() {

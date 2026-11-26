@@ -19,7 +19,14 @@ fn temp() -> (tempfile::TempDir, Layout) {
     let root = fs::canonicalize(tmp.path()).unwrap();
     dirs(
         &root,
-        &["/etc", "/usr/local/bin", "/etc/systemd/system", "/usr/lib/systemd/system", "/var/lib", "/srv"],
+        &[
+            "/etc",
+            "/usr/local/bin",
+            "/etc/systemd/system",
+            "/usr/lib/systemd/system",
+            "/var/lib",
+            "/srv",
+        ],
     );
     let layout = Layout::under(&root);
     (tmp, layout)
@@ -76,14 +83,27 @@ fn receipt() -> Receipt {
 #[test]
 fn unsupported_hosts_and_uid_or_group_inputs_are_clear() {
     assert!(parse_os_release("ID=ubuntu\nVERSION_ID=\"24.04\"\n").is_ok());
-    for bad in ["ID=ubuntu\nVERSION_ID=\"22.04\"\n", "ID=debian\nVERSION_ID=\"12\"\n", ""] {
-        assert_eq!(parse_os_release(bad).unwrap_err(), "kiri_install_requires_ubuntu_24_04");
+    for bad in [
+        "ID=ubuntu\nVERSION_ID=\"22.04\"\n",
+        "ID=debian\nVERSION_ID=\"12\"\n",
+        "",
+    ] {
+        assert_eq!(
+            parse_os_release(bad).unwrap_err(),
+            "kiri_install_requires_ubuntu_24_04"
+        );
     }
     let groups = "root:x:0:\nwww-data:x:33:\nnginx:x:0:\n";
-    assert_eq!(nginx_group("user www-data;\nevents {}", groups).unwrap(), 33);
+    assert_eq!(
+        nginx_group("user www-data;\nevents {}", groups).unwrap(),
+        33
+    );
     assert!(nginx_group("user nginx;", groups).is_err());
     assert!(nginx_group("events {}", groups).is_err());
-    assert_eq!(pick_uids(3, |u| u != 20001).unwrap(), vec![20000, 20002, 20003]);
+    assert_eq!(
+        pick_uids(3, |u| u != 20001).unwrap(),
+        vec![20000, 20002, 20003]
+    );
     assert!(pick_uids(2, |_| false).is_err());
 }
 
@@ -95,9 +115,18 @@ fn fresh_install_refuses_every_foreign_or_existing_path() {
     fs::create_dir(layout.at("/etc/moosuri")).unwrap();
     require_fresh(&layout).unwrap();
     fs::write(layout.at("/etc/moosuri/other"), b"x").unwrap();
-    assert!(require_fresh(&layout).unwrap_err().starts_with("kiri_install_conflicting_path:"));
+    assert!(
+        require_fresh(&layout)
+            .unwrap_err()
+            .starts_with("kiri_install_conflicting_path:")
+    );
     fs::remove_file(layout.at("/etc/moosuri/other")).unwrap();
-    for path in [BIN, "/etc/nginx-placeholder", render::NGINX_CONF, "/var/lib/moosuri-vault"] {
+    for path in [
+        BIN,
+        "/etc/nginx-placeholder",
+        render::NGINX_CONF,
+        "/var/lib/moosuri-vault",
+    ] {
         if path == "/etc/nginx-placeholder" {
             continue;
         }
@@ -122,11 +151,17 @@ fn lay_down_is_resumable_and_never_replaces_changed_files_or_secrets() {
     let key = fs::read(layout.at(KEY)).unwrap();
     assert_eq!(key.len(), 65);
     assert_eq!(fs::metadata(layout.at(KEY)).unwrap().mode() & 0o777, 0o400);
-    let gateway = fs::read_to_string(layout.at("/etc/systemd/system/moosuri-kiri-gateway.service")).unwrap();
+    let gateway =
+        fs::read_to_string(layout.at("/etc/systemd/system/moosuri-kiri-gateway.service")).unwrap();
     assert!(gateway.contains("--vault-all-members") && gateway.contains("--proxy-gid 33"));
     assert!(!gateway.contains(std::str::from_utf8(&key[..64]).unwrap()));
     let lifecycle = fs::read_to_string(layout.at(MEMBERS)).unwrap();
-    for field in ["vault_origin", "public_origin", "google_sockets_root", "browser_sockets_root"] {
+    for field in [
+        "vault_origin",
+        "public_origin",
+        "google_sockets_root",
+        "browser_sockets_root",
+    ] {
         assert!(lifecycle.contains(field), "{field}");
     }
     // Same invocation: identical result, same random key, no write.
@@ -161,12 +196,18 @@ fn changed_bundle_file_is_not_installed() {
 #[test]
 fn receipt_identity_blocks_changed_origins_bundle_or_capacity() {
     let (_tmp, layout) = temp();
-    layout.ensure_dir(&layout.at("/etc/moosuri"), 0o700).unwrap();
+    layout
+        .ensure_dir(&layout.at("/etc/moosuri"), 0o700)
+        .unwrap();
     let r = receipt();
     save_receipt(&layout, &r, None).unwrap();
     let (loaded, bytes) = load_receipt(&layout).unwrap().unwrap();
     assert!(loaded == r);
-    assert!(!String::from_utf8_lossy(&bytes).to_lowercase().contains("password"));
+    assert!(
+        !String::from_utf8_lossy(&bytes)
+            .to_lowercase()
+            .contains("password")
+    );
     // Case differences in the same email are the same invocation.
     let mut same = r.clone();
     same.admin_email = "admin@example.com".into();
@@ -198,7 +239,10 @@ fn supplied_tls_must_be_a_private_canonical_pair() {
     fs::write(&key, b"-----BEGIN PRIVATE KEY-----\nAAAA\n").unwrap();
     fs::set_permissions(&cert, fs::Permissions::from_mode(0o644)).unwrap();
     fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
-    assert_eq!(validate_supplied(&layout, &cert, &key).unwrap_err(), "kiri_install_tls_file_invalid");
+    assert_eq!(
+        validate_supplied(&layout, &cert, &key).unwrap_err(),
+        "kiri_install_tls_file_invalid"
+    );
     fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
     validate_supplied(&layout, &cert, &key).unwrap();
     assert!(validate_supplied(&layout, &key, &cert).is_err());
@@ -227,7 +271,14 @@ fn nginx_never_adopts_a_name_served_elsewhere() {
 #[test]
 fn identity_validation_bounds_prompts_and_arguments() {
     assert!(valid_email("a@example.com"));
-    for bad in ["a", "@example.com", "a@b", "a b@example.com", "a@@example.com", " a@example.com"] {
+    for bad in [
+        "a",
+        "@example.com",
+        "a@b",
+        "a b@example.com",
+        "a@@example.com",
+        " a@example.com",
+    ] {
         assert!(!valid_email(bad), "{bad}");
     }
     assert!(valid_name("Kim Admin"));

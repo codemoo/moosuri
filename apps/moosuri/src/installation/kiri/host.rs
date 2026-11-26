@@ -104,7 +104,14 @@ impl Layout {
         previous: &[String],
     ) -> Result<()> {
         let digest = hex(&Sha256::digest(bytes));
-        self.write_stream(path, &mut &bytes[..], bytes.len() as u64, &digest, mode, previous)
+        self.write_stream(
+            path,
+            &mut &bytes[..],
+            bytes.len() as u64,
+            &digest,
+            mode,
+            previous,
+        )
     }
     /// Stream `source` into a same-directory temporary file, verify length and
     /// SHA-256, then atomically publish without clobbering an unrelated file.
@@ -168,7 +175,8 @@ impl Layout {
             .sync_all()
             .map_err(|_| "kiri_install_write_failed")?;
         if existing {
-            temp.persist(path).map_err(|_| "kiri_install_write_failed")?;
+            temp.persist(path)
+                .map_err(|_| "kiri_install_write_failed")?;
         } else {
             temp.persist_noclobber(path)
                 .map_err(|_| "kiri_install_path_appeared")?;
@@ -183,7 +191,9 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 pub fn is_hex(s: &str, len: usize) -> bool {
-    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == len
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 pub fn sha256_bytes(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
@@ -197,7 +207,9 @@ pub fn open_regular(path: &Path, cap: u64) -> Result<(File, u64)> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
         .map_err(|_| "kiri_install_file_unavailable")?;
-    let m = file.metadata().map_err(|_| "kiri_install_file_unavailable")?;
+    let m = file
+        .metadata()
+        .map_err(|_| "kiri_install_file_unavailable")?;
     if !m.is_file()
         || m.nlink() != 1
         || m.uid() != euid()
@@ -346,7 +358,9 @@ impl Exec for System {
             }
         };
         Ok(Out {
-            code: status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+            code: status
+                .code()
+                .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
             stdout: stdout.join().unwrap_or_default(),
             stderr: stderr.join().unwrap_or_default(),
         })
@@ -374,7 +388,9 @@ pub mod fake {
     }
     impl Exec for Fake {
         fn run(&self, program: &str, a: &[String], _: Input, _: Duration) -> Result<Out> {
-            self.calls.borrow_mut().push(format!("{program} {}", a.join(" ")));
+            self.calls
+                .borrow_mut()
+                .push(format!("{program} {}", a.join(" ")));
             let (code, stdout) = self
                 .replies
                 .borrow_mut()

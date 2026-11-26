@@ -80,7 +80,11 @@ impl Docker<'_> {
         let mut used = Vec::new();
         let ids = String::from_utf8_lossy(
             &self
-                .run(&["network", "ls", "--quiet", "--no-trunc"], Input::None, QUICK)?
+                .run(
+                    &["network", "ls", "--quiet", "--no-trunc"],
+                    Input::None,
+                    QUICK,
+                )?
                 .ok("kiri_install_network_inventory_failed")?,
         )
         .split_whitespace()
@@ -97,7 +101,11 @@ impl Docker<'_> {
             let out = self
                 .run(&a, Input::None, QUICK)?
                 .ok("kiri_install_network_inventory_failed")?;
-            used.extend(String::from_utf8_lossy(&out).split_whitespace().filter_map(cidr));
+            used.extend(
+                String::from_utf8_lossy(&out)
+                    .split_whitespace()
+                    .filter_map(cidr),
+            );
         }
         Ok(used)
     }
@@ -149,33 +157,71 @@ impl Docker<'_> {
         ]);
         self.run(&create, Input::None, QUICK)?
             .ok("kiri_install_network_create_failed")?;
-        check(&self.json(&inspect)?.ok_or("kiri_install_network_create_failed")?)
+        check(
+            &self
+                .json(&inspect)?
+                .ok_or("kiri_install_network_create_failed")?,
+        )
     }
     /// Returns (network ID, proxy container ID). Existing resources must match exactly.
-    pub fn capsule(
-        &self,
-        image: &str,
-        plan: &NetPlan,
-        owner: &str,
-    ) -> Result<(String, String)> {
+    pub fn capsule(&self, image: &str, plan: &NetPlan, owner: &str) -> Result<(String, String)> {
         let internal = format!("{}_browser", plan.project);
         let public = format!("{}_public", plan.project);
-        let network = self.network(&internal, true, Some(&plan.subnet), owner, &plan.project, "browser")?;
+        let network = self.network(
+            &internal,
+            true,
+            Some(&plan.subnet),
+            owner,
+            &plan.project,
+            "browser",
+        )?;
         self.network(&public, false, None, owner, &plan.project, "public")?;
         let name = format!("{}-proxy-1", plan.project);
-        let inspect = ["container", "inspect", "--format", "{{json .}}", name.as_str()];
+        let inspect = [
+            "container",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            name.as_str(),
+        ];
         if self.json(&inspect)?.is_none() {
             let ip = format!("--ip={}", plan.proxy_ip);
             let owner_label = format!("{OWNER}={owner}");
             let project_label = format!("{PROJECT}={}", plan.project);
             self.run(
                 &[
-                    "container", "create", "--name", &name, "--entrypoint", "/usr/bin/tini",
-                    "--user", "10001:10001", "--read-only", "--cap-drop", "ALL", "--security-opt",
-                    "no-new-privileges:true", "--network", &internal, &ip, "--pids-limit", "64",
-                    "--memory", "128m", "--cpus", "1", "--restart", "unless-stopped", "--label",
-                    &owner_label, "--label", &project_label, "--label",
-                    "com.docker.compose.service=proxy", image, "--",
+                    "container",
+                    "create",
+                    "--name",
+                    &name,
+                    "--entrypoint",
+                    "/usr/bin/tini",
+                    "--user",
+                    "10001:10001",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges:true",
+                    "--network",
+                    &internal,
+                    &ip,
+                    "--pids-limit",
+                    "64",
+                    "--memory",
+                    "128m",
+                    "--cpus",
+                    "1",
+                    "--restart",
+                    "unless-stopped",
+                    "--label",
+                    &owner_label,
+                    "--label",
+                    &project_label,
+                    "--label",
+                    "com.docker.compose.service=proxy",
+                    image,
+                    "--",
                     "/usr/local/bin/browser-proxy",
                 ],
                 Input::None,
@@ -183,14 +229,18 @@ impl Docker<'_> {
             )?
             .ok("kiri_install_proxy_create_failed")?;
         }
-        let mut v = self.json(&inspect)?.ok_or("kiri_install_proxy_unavailable")?;
+        let mut v = self
+            .json(&inspect)?
+            .ok_or("kiri_install_proxy_unavailable")?;
         let nets = v["NetworkSettings"]["Networks"].clone();
         let id = v["Id"].as_str().unwrap_or("").to_owned();
         if !host::is_hex(&id, 64)
             || v["Image"] != image
             || v["Config"]["Labels"][OWNER] != owner
             || v["Config"]["Labels"][PROJECT] != plan.project
-            || nets[&internal]["IPAddress"].as_str().is_some_and(|ip| ip != plan.proxy_ip)
+            || nets[&internal]["IPAddress"]
+                .as_str()
+                .is_some_and(|ip| ip != plan.proxy_ip)
             || (nets[&internal].is_null() && v["State"]["Running"] == true)
         {
             return Err("kiri_install_proxy_conflict".into());
@@ -203,7 +253,9 @@ impl Docker<'_> {
             self.run(&["container", "start", &name], Input::None, QUICK)?
                 .ok("kiri_install_proxy_start_failed")?;
         }
-        v = self.json(&inspect)?.ok_or("kiri_install_proxy_unavailable")?;
+        v = self
+            .json(&inspect)?
+            .ok_or("kiri_install_proxy_unavailable")?;
         let n = &v["NetworkSettings"]["Networks"];
         if v["State"]["Running"] != true
             || n[&internal]["IPAddress"] != plan.proxy_ip
@@ -225,7 +277,11 @@ pub fn cidr(text: &str) -> Option<(u32, u8)> {
 }
 pub fn overlaps(a: (u32, u8), b: (u32, u8)) -> bool {
     let len = a.1.min(b.1);
-    let mask = if len == 0 { 0 } else { u32::MAX << (32 - u32::from(len)) };
+    let mask = if len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(len))
+    };
     a.0 & mask == b.0 & mask
 }
 /// Parse `ip -4 route/addr` text, retaining only IPv4 networks and addresses.
@@ -241,7 +297,9 @@ pub fn plan(used: &[(u32, u8)], taken: &[NetPlan], project: String) -> Result<Ne
         let base = (10u32 << 24) | (second << 16) | (17 << 8);
         let candidate = (base, 24u8);
         if used.iter().any(|u| overlaps(*u, candidate))
-            || taken.iter().any(|t| cidr(&t.subnet).is_some_and(|c| overlaps(c, candidate)))
+            || taken
+                .iter()
+                .any(|t| cidr(&t.subnet).is_some_and(|c| overlaps(c, candidate)))
         {
             continue;
         }
@@ -289,27 +347,42 @@ mod tests {
 
     #[test]
     fn subnet_plan_skips_every_overlap_and_other_capsule() {
-        let used = [cidr("10.100.17.0/24").unwrap(), cidr("10.101.0.0/16").unwrap()];
+        let used = [
+            cidr("10.100.17.0/24").unwrap(),
+            cidr("10.101.0.0/16").unwrap(),
+        ];
         let first = plan(&used, &[], "moosuri-browser-a".into()).unwrap();
         assert_eq!(first.subnet, "10.102.17.0/24");
         assert_eq!(first.proxy_ip, "10.102.17.2");
         let second = plan(&used, &[first], "moosuri-google-a".into()).unwrap();
         assert_eq!(second.subnet, "10.103.17.0/24");
         assert!(plan(&[cidr("10.0.0.0/8").unwrap()], &[], "p".into()).is_err());
-        assert_eq!(host_networks("default via 10.1.2.3 dev eth0\n10.9.0.0/16 dev x"), vec![
-            cidr("10.1.2.3").unwrap(),
-            cidr("10.9.0.0/16").unwrap()
-        ]);
+        assert_eq!(
+            host_networks("default via 10.1.2.3 dev eth0\n10.9.0.0/16 dev x"),
+            vec![cidr("10.1.2.3").unwrap(), cidr("10.9.0.0/16").unwrap()]
+        );
     }
     #[test]
     fn exact_kiri_version_and_image_id_are_required() {
         let fake = Fake::default();
         let docker = Docker { exec: &fake };
-        fake.reply(0, r#"{"Platform":{"Name":"Docker Engine"},"Components":[]}"#);
-        assert_eq!(docker.require_kiri().unwrap_err(), "kiri_install_engine_not_kiri_0_2_2");
-        fake.reply(0, r#"{"Platform":{"Name":"Kiri"},"Components":[{"Name":"Kiri","Version":"0.2.1"}]}"#);
+        fake.reply(
+            0,
+            r#"{"Platform":{"Name":"Docker Engine"},"Components":[]}"#,
+        );
+        assert_eq!(
+            docker.require_kiri().unwrap_err(),
+            "kiri_install_engine_not_kiri_0_2_2"
+        );
+        fake.reply(
+            0,
+            r#"{"Platform":{"Name":"Kiri"},"Components":[{"Name":"Kiri","Version":"0.2.1"}]}"#,
+        );
         assert!(docker.require_kiri().is_err());
-        fake.reply(0, r#"{"Platform":{"Name":"Kiri"},"Components":[{"Name":"Kiri","Version":"0.2.2"}]}"#);
+        fake.reply(
+            0,
+            r#"{"Platform":{"Name":"Kiri"},"Components":[{"Name":"Kiri","Version":"0.2.2"}]}"#,
+        );
         docker.require_kiri().unwrap();
         let id = format!("sha256:{}", "a".repeat(64));
         // Missing locally, load succeeds, but the engine reports a different config ID.
@@ -317,7 +390,9 @@ mod tests {
         fake.reply(0, "");
         fake.reply(0, &format!("sha256:{}\n", "b".repeat(64)));
         assert_eq!(
-            docker.ensure_image(Path::new("/nonexistent.tar"), &id).unwrap_err(),
+            docker
+                .ensure_image(Path::new("/nonexistent.tar"), &id)
+                .unwrap_err(),
             "kiri_install_image_id_mismatch"
         );
     }

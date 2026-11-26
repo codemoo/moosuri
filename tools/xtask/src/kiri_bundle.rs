@@ -14,12 +14,28 @@ use std::{
 fn command(root: &Path, binary: &str) -> Check<Command> {
     let mut command = Command::new(binary);
     if binary == "git" {
-        command.arg("-c").arg(format!("safe.directory={}", root.display()));
+        for (key, _) in
+            std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("GIT_"))
+        {
+            command.env_remove(key);
+        }
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_ATTR_NOSYSTEM", "1")
+            .args(["-c", "core.attributesFile=/dev/null"])
+            .arg("-c")
+            .arg(format!("safe.directory={}", root.display()));
     }
     if binary == "docker" {
         command
             .args(["--host=unix:///var/run/docker.sock", "--config"])
-            .arg(root.parent().ok_or("kiri_bundle_staging_failed")?.join("docker-config"))
+            .arg(
+                root.parent()
+                    .ok_or("kiri_bundle_staging_failed")?
+                    .join("docker-config"),
+            )
             .env_remove("DOCKER_CONTEXT")
             .env_remove("DOCKER_HOST")
             .env_remove("DOCKER_TLS_VERIFY")
@@ -86,20 +102,28 @@ fn digest(path: &Path, cap: u64) -> Check<String> {
 }
 
 pub fn run(root: &Path, args: &[String]) -> Check<()> {
-    let root = root.canonicalize().map_err(|_| "kiri_bundle_checkout_missing")?;
+    let root = root
+        .canonicalize()
+        .map_err(|_| "kiri_bundle_checkout_missing")?;
     let root = root.as_path();
     ensure(
         cfg!(all(target_os = "linux", target_arch = "x86_64")),
         "kiri_bundle_linux_amd64_required",
     )?;
     ensure(
-        args.len() == 2 && args[0] == "--output",
-        "usage: kiri-bundle --output NEW_ABSOLUTE_DIRECTORY",
+        (args.len() == 2 || (args.len() == 4 && args[2] == "--revision")) && args[0] == "--output",
+        "usage: kiri-bundle --output NEW_ABSOLUTE_DIRECTORY [--revision COMMIT]",
     )?;
     let output = PathBuf::from(&args[1]);
     ensure(
-        output.is_absolute() && !output.starts_with(root)
-            && output.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_))),
+        output.is_absolute()
+            && !output.starts_with(root)
+            && output.components().all(|c| {
+                matches!(
+                    c,
+                    std::path::Component::RootDir | std::path::Component::Normal(_)
+                )
+            }),
         "kiri_bundle_output_outside_checkout_required",
     )?;
     let parent = output.parent().ok_or("kiri_bundle_output_invalid")?;
@@ -108,7 +132,36 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
         "kiri_bundle_canonical_parent_required",
     )?;
     path(&output)?;
-    let revision = capture(root, "git", &["rev-parse", "--verify", "HEAD"])?;
+    let uid = unsafe { libc::geteuid() };
+    let owner = std::env::var("SUDO_UID")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(uid);
+    for dir in [root.to_owned(), root.join(".git")] {
+        let m = fs::symlink_metadata(&dir).map_err(|_| "kiri_bundle_checkout_untrusted")?;
+        ensure(
+            m.is_dir() && m.mode() & 0o022 == 0 && (m.uid() == uid || m.uid() == owner),
+            "kiri_bundle_checkout_untrusted",
+        )?;
+    }
+    ensure(
+        !root
+            .join(".git/info/attributes")
+            .try_exists()
+            .map_err(|_| "kiri_bundle_checkout_untrusted")?,
+        "kiri_bundle_archive_attributes_require_review",
+    )?;
+    let selected = args.get(3).map(String::as_str).unwrap_or("HEAD");
+    ensure(
+        selected == "HEAD"
+            || (selected.len() == 40 && selected.bytes().all(|b| b.is_ascii_hexdigit())),
+        "kiri_bundle_revision_invalid",
+    )?;
+    let revision = capture(
+        root,
+        "git",
+        &["rev-parse", "--verify", &format!("{selected}^{{commit}}")],
+    )?;
     let revision = revision.trim();
     ensure(
         revision.len() == 40 && revision.bytes().all(|c| c.is_ascii_hexdigit()),
@@ -116,7 +169,7 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
     )?;
     // A Git archive excludes ignored build assets, credentials and editor state.
     // Reject symlinks before extraction instead of following them as build inputs.
-    let tree = capture(root, "git", &["ls-tree", "-r", "HEAD"])?;
+    let tree = capture(root, "git", &["ls-tree", "-r", revision])?;
     ensure(
         !tree
             .lines()
@@ -125,7 +178,10 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
     )?;
     // Avoid archive rules silently changing the source selected by the revision.
     ensure(
-        !tree.lines().any(|s| s.split_once('\t').is_some_and(|(_, p)| p == ".gitattributes" || p.ends_with("/.gitattributes"))),
+        !tree.lines().any(|s| {
+            s.split_once('\t')
+                .is_some_and(|(_, p)| p == ".gitattributes" || p.ends_with("/.gitattributes"))
+        }),
         "kiri_bundle_archive_attributes_require_review",
     )?;
     fs::DirBuilder::new()
@@ -206,7 +262,11 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
         command.push(".");
         run_command(&source, "docker", &command)?;
         let id = fs::read_to_string(&iid).map_err(|_| "kiri_bundle_image_missing")?;
-        let id = capture(&source, "docker", &["image", "inspect", "--format", "{{.Id}}", id.trim()])?;
+        let id = capture(
+            &source,
+            "docker",
+            &["image", "inspect", "--format", "{{.Id}}", id.trim()],
+        )?;
         let id = id.trim();
         ensure(
             id.strip_prefix("sha256:")
@@ -254,11 +314,18 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
     fs::remove_dir_all(&scratch).map_err(|_| "kiri_bundle_staging_cleanup_failed")?;
     let pending = output.join("manifest.pending");
     let mut file = File::create(&pending).map_err(|_| "kiri_bundle_manifest_write_failed")?;
-    file.write_all(&serde_json::to_vec_pretty(&manifest).map_err(|_| "kiri_bundle_manifest_invalid")?)
-        .and_then(|_| file.sync_all()).map_err(|_| "kiri_bundle_manifest_write_failed")?;
-    fs::rename(pending, output.join("manifest.json")).map_err(|_| "kiri_bundle_manifest_write_failed")?;
-    fs::remove_file(output.join(".incomplete")).map_err(|_| "kiri_bundle_staging_cleanup_failed")?;
-    File::open(&output).and_then(|f| f.sync_all()).map_err(|_| "kiri_bundle_manifest_write_failed")?;
+    file.write_all(
+        &serde_json::to_vec_pretty(&manifest).map_err(|_| "kiri_bundle_manifest_invalid")?,
+    )
+    .and_then(|_| file.sync_all())
+    .map_err(|_| "kiri_bundle_manifest_write_failed")?;
+    fs::rename(pending, output.join("manifest.json"))
+        .map_err(|_| "kiri_bundle_manifest_write_failed")?;
+    fs::remove_file(output.join(".incomplete"))
+        .map_err(|_| "kiri_bundle_staging_cleanup_failed")?;
+    File::open(&output)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| "kiri_bundle_manifest_write_failed")?;
     println!(
         "Source-built bundle ready: {}. Hashes are not a release signature or host acceptance.",
         output.display()

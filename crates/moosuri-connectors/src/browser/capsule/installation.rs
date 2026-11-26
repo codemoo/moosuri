@@ -14,7 +14,8 @@ impl CapsuleReader {
         }
         // Provisional admission is confined to this function and never persisted.
         config.verified = true;
-        config.smoke_evidence_sha256 = format!("{:x}", Sha256::digest(b"installation-probe-pending"));
+        config.smoke_evidence_sha256 =
+            format!("{:x}", Sha256::digest(b"installation-probe-pending"));
         let reader = Self::new(config.clone())?;
         let local = cancel.child_token();
         let _drop = CancelOnDrop(local.clone());
@@ -25,16 +26,25 @@ impl CapsuleReader {
             let tenant = Uuid::new_v4();
             let name = format!("moosuri-install-probe-{}", identity.simple());
             let mut command = reader.worker_command_mode(tenant, identity, &name, None, google);
-            if google { command.arg("--google-installation-probe"); }
-            let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped())
-                .stderr(Stdio::null()).kill_on_drop(true).spawn().map_err(|_| BrowserError::Setup)?;
+            if google {
+                command.arg("--google-installation-probe");
+            }
+            let mut child = command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|_| BrowserError::Setup)?;
             let mut observed = false;
             let operation = async {
                 let mut stdout = BufReader::new(child.stdout.take().ok_or(BrowserError::Setup)?);
                 let ready = read_line(&mut stdout, 2048).await?;
-                if ready["ready"] != true || ready["tenant"] != tenant.to_string()
+                if ready["ready"] != true
+                    || ready["tenant"] != tenant.to_string()
                     || ready["javascript_enabled"] != config.javascript_enabled
-                    || (google && ready["chrome"] != "158.0.8127.88") {
+                    || (google && ready["chrome"] != "158.0.8127.88")
+                {
                     return Err(BrowserError::Setup);
                 }
                 observed = true;
@@ -44,7 +54,9 @@ impl CapsuleReader {
                 _ = local.cancelled() => Err(BrowserError::Cancelled),
                 result = tokio::time::timeout(Duration::from_secs(50), operation) => result.unwrap_or(Err(BrowserError::Timeout)),
             };
-            reader.cleanup(&mut child, &name, identity, observed, false).await?;
+            reader
+                .cleanup(&mut child, &name, identity, observed, false)
+                .await?;
             result?;
             let evidence = serde_json::to_vec_pretty(&json!({
                 "format": 1, "probe": "actual-browser-start-and-owned-cleanup-v1",
@@ -53,7 +65,8 @@ impl CapsuleReader {
                 "owner": config.owner, "role": if google { "google-auth" } else { "browser" },
                 "kernel_confinement": true, "browser_started": true, "owned_cleanup": true,
                 "google_chrome_version": if google { Some("158.0.8127.88") } else { None },
-            })).map_err(|_| BrowserError::Setup)?;
+            }))
+            .map_err(|_| BrowserError::Setup)?;
             config.smoke_evidence_sha256 = format!("{:x}", Sha256::digest(&evidence));
             Ok((config, evidence))
         });

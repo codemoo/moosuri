@@ -2,6 +2,8 @@
 
 운영 게이트웨이·회원 실행본과 Google 연결 확인은 2026-11-26, 운영 모델 설정 확인은 2026-11-21 기준이다. 운영 Linux는 **회원마다 컨테이너 하나를 쓰는 Kiri 0.2.1**로 서비스한다. 공개 한 줄 설치기는 **표준 서버 개발판**을 설치한다. [설치판 안내](install.md) · [Kiri 운영 안내](../deployment/kiri/README.md)
 
+새 설치의 목표는 기존 Cloud 프로젝트·OAuth 앱·결제 계정·GWS 설정·개인 개발 파일 없이 공개 프로젝트만 받아 사용하는 것이다. 현재 Google 연결에는 개인 Kiri 도우미와 고정 회원 등록 의존성이 남아 있어 이 조건을 만족하지 못한다. 11월 26일 Linux에서 개발자 경로를 제외하자 연결·등록 도우미가 공개 소스에 없는 `fresh_browser` import에서 실패했다. 설치 패키징, 회원별 볼트·브라우저 준비, 새 Google 앱 자동 설정과 두 회원의 실제 연결을 하나의 열린 작업으로 관리한다. [명세와 검증 시나리오](../openspec/changes/automate-installation-google-app/tasks.md)
+
 ## 운영 중인 Kiri
 
 11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트에 Google 로그인 항목을 암호화 저장했다. Google Workspace 설치 앱과 회원 권한은 미등록이다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)

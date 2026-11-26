@@ -8,6 +8,22 @@
 - [ ] Validate Linux scenarios, obtain independent Claude review, deploy and publish.
 - [ ] Complete real OAuth registration, member consent and one GWS Gmail read.
 
+Implementation order within the public-installation gate (do not treat an
+individual prerequisite as completion of Google setup):
+
+1. Member-aware vault enrollment and lifecycle — published; production keeps
+   single-member routing pending the portable Google transport.
+2. Public browser launcher on verified Kiri — implementation and Linux browser
+   acceptance and independent review complete; published as the browser prerequisite.
+3. Member provisioning/lifecycle compatibility with the verified Kiri version,
+   preserving existing allocation identities.
+4. Public installation packaging and member/attempt-bound fresh official Chrome
+   and credential recipient; remove private Python imports and owner socket.
+5. Fresh unbilled Google project, OAuth branding/client and shared installation
+   configuration, then same-browser per-member consent/GWS readiness.
+6. Blank-server and two-member end-to-end acceptance, production rollout and
+   actual Gmail read. Provider-required verification remains a visible pause.
+
 Acceptance scenarios (run results must replace pending, not imply success):
 
 | Feature | Scenarios | Result |
@@ -159,3 +175,75 @@ is available and tested, but enabling it in production awaits the member-aware
 Google browser/recipient transport. A shared vault origin does not enroll a
 Google recipient or make OAuth/GWS ready. The overall clean-install gates above
 remain open.
+
+
+## 2026-11-26 public browser prerequisite
+
+The public Rust capsule launcher now selects fixed local Docker or Kiri sockets.
+Kiri requires the observed 0.2.2 component, the current reviewed seccomp profile,
+and ephemeral workspaces. The old Docker configuration serialization is retained.
+The production worker checks actual read-only mounts, noexec/nosuid writable
+mounts, clone3 denial and cgroup-v2 memory/PID/CPU limits before browser launch.
+This is the public Chromium research worker, not the Google sign-in Chrome runtime.
+
+Linux acceptance used the same test image
+`sha256:65e60d0682fdab3f0fff308e123f3204965a6a36cd2ad0a1d2107473c3185207`
+on host Docker and fresh Ubuntu 24.04.5 / kernel 6.8.0-147 / Kiri 0.2.2.
+The official Kiri amd64 package SHA-256 was
+`24798125ee50bb24db86594a9ee1469b1032d9b2ffd7da616b06e40763c723b9`.
+The Kiri VM had no shared host files, production data or credentials. Ubuntu's
+application-specific Chromium user-namespace policy was installed in that VM;
+no global AppArmor or namespace restriction was disabled.
+
+| Scenario | Docker | Kiri 0.2.2 |
+| --- | --- | --- |
+| KL-01 public Rust launcher renders the owned fixture | passed | passed |
+| KL-02 two members have separate pages; third worker exceeds capacity | passed | passed |
+| KL-03 one member shuts down while the other remains usable | passed | passed |
+| KL-04 stopped slots can be reused and all owned workers removed | passed | passed |
+| Worker JS/negation/PNG and stale/cross-worker handles | passed | passed |
+| Private and loopback live canaries, DNS rebinding, direct egress denial | passed | passed |
+| Worker-only cookie recovery, blank restore and form-value omission | passed | passed |
+
+Two earlier Docker launcher attempts failed with Timeout/CleanupUnconfirmed.
+A bounded diagnostic captured synthetic worker readiness and rendered output,
+then all four launcher scenarios passed with clean owned inventory. The final
+complete Docker smoke also passed. A subsequent synthetic diagnostic exposed Docker auto-removal racing the
+launcher. Ready workers now receive up to 2.5 seconds of graceful shutdown and
+failed immutable-ID removals receive bounded absence reconciliation instead of
+failing after 200 ms. Never-ready cancellation retains its earlier short bound.
+The diagnostic does not identify every earlier timeout or establish reliability
+under load. Kiri's final complete smoke passed. Rust Kiri profile recovery remains
+explicitly refused despite the lower-level worker cookie test passing.
+
+Linux browser coverage now has 50 cases. The first revised run passed 49 and
+exposed a cancellation deadline regression; retaining the short bound before
+readiness fixed it. All 29 affected capsule tests then passed, including delayed
+auto-removal and Kiri recovery rejection. Other browser tests were unchanged. Browser relay: 7 passed. Harness regressions: 5 passed.
+`verify-plan` passed. Changed Rust files were formatted; full-workspace formatting
+has pre-existing differences outside this unit. Security review/publication status
+is recorded after the final review below. No production engine upgrade occurred.
+
+
+Final uninstrumented Docker and Kiri smoke passed after the shutdown correction.
+Observed AppArmor labels: Docker worker and Chromium `docker-default (enforce)`;
+Kiri worker `unconfined`, Chromium `moosuri-chromium (unconfined)`. These are
+observations, not an image attestation or a claim of additional AppArmor file or
+network confinement. Kernel namespace/capability/seccomp/cgroup and actual
+network-denial checks remain the containment gates.
+
+Independent Claude Sonnet 5.5 / medium reviews found and led to the engine-specific
+profile gate, effective kernel checks, Kiri recovery rejection, explicit cgroup
+namespace and corrected AppArmor scope. The final follow-up independently found
+the same cancellation deadline regression; it was fixed in product behavior,
+without relaxing the existing test. The reviewer found no high/medium defect in
+the separately drafted member engine compatibility change; its VM acceptance is
+still the next gate. Existing short Docker query deadlines can still fail closed
+under host load, and pre-readiness cleanup uncertainty masks a primary startup
+failure. Neither is treated as success or automatically retried through another
+engine. The operator-asserted smoke hash is not a signed attestation. Existing
+profile-path TOCTOU and load/reliability work remain outside this browser unit.
+
+The browser prerequisite is published without a production Kiri upgrade.
+Member provisioning on 0.2.2, official Google Chrome, portable recipient delivery,
+clean installation packaging and actual OAuth/GWS acceptance remain open.

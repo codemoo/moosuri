@@ -5,6 +5,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY apps ./apps
 COPY tools ./tools
+COPY community ./community
 RUN cargo build --locked --release -p moosuri-connectors --example browser_worker --example browser_proxy
 
 FROM debian:bookworm-slim AS runtime

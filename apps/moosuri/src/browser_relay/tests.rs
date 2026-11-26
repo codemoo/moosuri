@@ -36,6 +36,7 @@ async fn socket_admission_binds_process_uid_registry_generation_and_epoch() {
         peer_uid: uid,
     };
     let config = CapsuleConfig {
+        engine: Default::default(),
         image_id: format!("sha256:{}", "a".repeat(64)),
         network_id: "b".repeat(64),
         proxy_container_id: "c".repeat(64),

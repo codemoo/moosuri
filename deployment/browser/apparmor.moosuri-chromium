@@ -1,0 +1,10 @@
+# Ubuntu 24.04+ host-wide, path-based Chromium user-namespace admission.
+# This does not pin an image or add file/network confinement. It attaches on
+# exec from an unconfined task; an existing Docker profile remains authoritative.
+# Container mounts, seccomp, cgroups and zero capabilities still apply.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile moosuri-chromium /usr/lib/chromium/chromium flags=(unconfined) {
+  userns,
+}

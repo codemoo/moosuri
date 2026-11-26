@@ -17,7 +17,8 @@ dns_private = False
 
 def dns():
     server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server.bind(("0.0.0.0", 53))
+    # Leave the engine's loopback DNS listener intact (Kiri uses port 53 too).
+    server.bind((PROXY, 53))
     while True:
         packet, address = server.recvfrom(4096)
         try:

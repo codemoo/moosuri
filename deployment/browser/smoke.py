@@ -2,12 +2,16 @@
 
 This module is import-safe for pure harness unit tests. Docker runs only in main.
 """
+import argparse
 import base64
+import hashlib
 import ipaddress
 import json
 import os
 from pathlib import Path
 import selectors
+import re
+import tempfile
 import subprocess
 import sys
 import time
@@ -39,7 +43,13 @@ def choose_subnet(requested, occupied):
 
 
 def run_output(args, env, timeout=30):
-    result = subprocess.run(args, env=env, text=True, capture_output=True, timeout=timeout, check=True)
+    try:
+        result = subprocess.run(args, env=env, text=True, capture_output=True, timeout=timeout, check=True)
+    except subprocess.CalledProcessError as error:
+        # This harness contains synthetic data only. Preserve bounded daemon
+        # diagnostics so an unsupported engine option is not mistaken for a wait.
+        print("synthetic engine command failed: " + error.stderr[-4096:], file=sys.stderr)
+        raise
     if len(result.stdout) > 16 * 1024 * 1024:
         raise RuntimeError("Docker inspection output exceeds bound")
     return result.stdout
@@ -91,18 +101,29 @@ class JsonPipe:
 
 
 class Harness:
-    def __init__(self):
-        self.owner = uuid.uuid4().hex
+    def __init__(self, engine="docker", image=None):
+        endpoints = {"docker": "unix:///var/run/docker.sock", "kiri": "unix:///run/kiri/docker.sock"}
+        if engine not in endpoints or (image is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", image)):
+            raise ValueError("select a local engine and an exact prebuilt image ID")
+        if engine == "kiri" and image is None:
+            raise ValueError("build the test image and load it into Kiri before this smoke")
+        self.engine, self.image = engine, image
+        self.config_dir = tempfile.TemporaryDirectory(prefix="moosuri-browser-engine-")
+        self.docker = ["/usr/bin/docker", "--host=" + endpoints[engine], "--config=" + self.config_dir.name]
+        self.override = None
+        self.owner = str(uuid.uuid4())
         self.project = "moosuri-browser-smoke-" + self.owner
-        self.env = dict(os.environ, MOOSURI_BROWSER_OWNER=self.owner,
+        self.env = dict({k:v for k,v in os.environ.items() if not k.startswith(("DOCKER_", "COMPOSE_"))}, MOOSURI_BROWSER_OWNER=self.owner,
                         MOOSURI_BROWSER_TENANT=str(uuid.uuid4()), MOOSURI_BROWSER_JAVASCRIPT="enabled")
-        self.compose = ["docker", "compose", "-p", self.project, "-f", str(HERE / "compose.yaml"), "-f", str(HERE / "compose.test.yaml")]
+        if engine == "kiri":
+            self.env["DOCKER_API_VERSION"] = "1.47"
+        self.compose = self.docker + ["compose", "--env-file", "/dev/null", "-p", self.project, "-f", str(HERE / "compose.yaml"), "-f", str(HERE / "compose.test.yaml")]
         self.workers = []
         self.volumes = []
 
     def profile_volume(self):
         name = self.project + "-profile-" + uuid.uuid4().hex
-        run_output(["docker", "volume", "create", "--label", f"{OWNER_LABEL}={self.owner}", "--label", f"{PROJECT_LABEL}={self.project}", name], self.env)
+        run_output(self.docker + [ "volume", "create", "--label", f"{OWNER_LABEL}={self.owner}", "--label", f"{PROJECT_LABEL}={self.project}", name], self.env)
         self.volumes.append(name)
         self.verify_owned("volume", [name])
         return name
@@ -111,21 +132,22 @@ class Harness:
         return run_output(self.compose + list(args), self.env, timeout)
 
     def resource_ids(self, kind):
-        command = ["docker", "ps", "-aq"] if kind == "container" else ["docker", "network", "ls", "-q"]
+        command = self.docker + [ "ps", "-aq"] if kind == "container" else self.docker + [ "network", "ls", "-q"]
         return run_output(command + ["--filter", f"label={PROJECT_LABEL}={self.project}"], self.env).split()
 
     def verify_owned(self, kind, ids):
         if not ids:
             return
-        rows = json.loads(run_output(["docker", kind, "inspect", *ids], self.env))
+        rows = json.loads(run_output(self.docker + [ kind, "inspect", *ids], self.env))
         for row in rows:
             labels = row.get("Config", {}).get("Labels", {}) if kind == "container" else row.get("Labels", {})
             if labels.get(PROJECT_LABEL) != self.project or labels.get(OWNER_LABEL) != self.owner:
                 raise RuntimeError("ownership label mismatch; refusing cleanup or exec")
 
-    def exec_owned(self, container, *args):
+    def exec_owned(self, container, *args, user=None):
         self.verify_owned("container", [container])
-        return run_output(["docker", "exec", container, *args], self.env)
+        options = [] if user is None else ["--user", user]
+        return run_output(self.docker + [ "exec", *options, container, *args], self.env)
 
     def proxy_exec(self, code):
         ids = self.run("ps", "-q", "proxy").split()
@@ -138,13 +160,49 @@ class Harness:
         assert path in {"counts", "rebind", "reset-counts", "positive-control"}
         return self.proxy_exec("import urllib.request;u=urllib.request.build_opener(urllib.request.ProxyHandler({}));print(u.open('http://93.184.216.34/" + path + "',timeout=2).read(4096).decode())")
 
+    def check_launcher(self, binary):
+        if not Path(binary).is_absolute():
+            raise ValueError("launcher binary path must be absolute")
+        ids = self.run("ps", "-q", "proxy").split()
+        assert len(ids) == 1
+        self.verify_owned("container", ids)
+        proxy = json.loads(run_output(self.docker + ["inspect", ids[0]], self.env))[0]
+        network = next(n for n in proxy["NetworkSettings"]["Networks"].values()
+                       if n["IPAddress"] == self.env["MOOSURI_BROWSER_PROXY_IP"])
+        self.verify_owned("network", [network["NetworkID"]])
+        seccomp = Path(self.config_dir.name) / "seccomp.json"
+        seccomp.write_bytes((HERE / "seccomp.json").read_bytes())
+        seccomp.chmod(0o600)
+        config = dict(engine=self.engine, image_id=proxy["Image"], network_id=network["NetworkID"],
+                      proxy_container_id=proxy["Id"], proxy_ip=self.env["MOOSURI_BROWSER_PROXY_IP"],
+                      owner=self.owner, project=self.project, seccomp_file=str(seccomp),
+                      verified=True, smoke_evidence_sha256=hashlib.sha256(self.engine.encode() + proxy["Image"].encode() + Path(__file__).read_bytes()).hexdigest(),
+                      javascript_enabled=True)
+        subprocess.run([binary], input=json.dumps(config), text=True, env=self.env, check=True, timeout=180)
+        # Real launcher cleanup must leave only the harness's original proxy.
+        remaining = self.resource_ids("container")
+        assert len(remaining) == 1 and proxy["Id"].startswith(remaining[0]), "launcher left a worker behind"
+
     def configure(self):
+        if self.engine == "kiri":
+            version = json.loads(run_output(self.docker + ["version", "--format", "{{json .Server}}"], self.env))
+            components = [p for p in version.get("Components", []) if p.get("Name") == "Kiri"]
+            if version.get("Platform", {}).get("Name") != "Kiri" or len(components) != 1 or components[0].get("Version") != "0.2.2":
+                raise RuntimeError("this capsule requires Kiri 0.2.2 with custom seccomp enforcement")
+        if self.image:
+            observed = run_output(self.docker + ["image", "inspect", self.image, "--format", "{{.Id}}"], self.env).strip()
+            if observed != self.image:
+                raise RuntimeError("prebuilt test image identity mismatch")
+            self.override = tempfile.NamedTemporaryFile(mode="w", suffix=".json")
+            json.dump({"services": {key: {"image": self.image, "pull_policy": "never"} for key in ("proxy", "browser")}}, self.override)
+            self.override.flush()
+            self.compose += ["-f", self.override.name]
         if self.resource_ids("container") or self.resource_ids("network"):
             raise RuntimeError("generated project name already exists")
-        network_ids = run_output(["docker", "network", "ls", "-q"], self.env).split()
+        network_ids = run_output(self.docker + [ "network", "ls", "-q"], self.env).split()
         occupied = []
         if network_ids:
-            for row in json.loads(run_output(["docker", "network", "inspect", *network_ids], self.env)):
+            for row in json.loads(run_output(self.docker + [ "network", "inspect", *network_ids], self.env)):
                 for config in row.get("IPAM", {}).get("Config", []) or []:
                     if config.get("Subnet"):
                         network = ipaddress.ip_network(config["Subnet"], strict=False)
@@ -184,8 +242,8 @@ class Harness:
             errors.append(error)
         # A failed Compose down still permits cleanup of individually rechecked
         # owned resources. Failure of one worker/container never skips the rest.
-        for kind, command in (("container", ["docker", "rm", "-f"]),
-                              ("network", ["docker", "network", "rm"])):
+        for kind, command in (("container", self.docker + [ "rm", "-f"]),
+                              ("network", self.docker + [ "network", "rm"])):
             try:
                 ids = self.resource_ids(kind)
             except BaseException as error:
@@ -200,7 +258,7 @@ class Harness:
         for name in self.volumes:
             try:
                 self.verify_owned("volume", [name])
-                run_output(["docker", "volume", "rm", name], self.env)
+                run_output(self.docker + [ "volume", "rm", name], self.env)
             except BaseException as error:
                 errors.append(error)
         return errors
@@ -253,6 +311,24 @@ class Worker:
                     self.p.wait(timeout=3)
             self.p.stdin.close()
             self.p.stdout.close()
+
+    def apparmor_evidence(self):
+        # Only labels/executable classes from this owned synthetic container.
+        # Never emit command lines, page data or environment values.
+        code = '''import json,os
+from pathlib import Path
+labels={"worker":set(),"chromium":set()}
+for p in Path("/proc").iterdir():
+ if not p.name.isdigit(): continue
+ try:
+  name=(p/"comm").read_text().strip()
+  kind="worker" if name=="browser-worker-" else "chromium" if name=="chromium" else None
+  if kind: labels[kind].add((p/"attr/current").read_text()[:256].strip())
+ except (PermissionError,FileNotFoundError,ProcessLookupError): continue
+assert all(labels.values()), "missing live worker/Chromium AppArmor evidence"
+print(json.dumps({k:sorted(v) for k,v in labels.items()}))'''
+        result = json.loads(self.harness.exec_owned(self.name, "python3", "-c", code, user="10001:10001"))
+        print(f"EVIDENCE engine={self.harness.engine} apparmor=" + json.dumps(result), flush=True)
 
 
 def check_page(reply):
@@ -316,14 +392,22 @@ def exercise_member_tabs(harness):
 
 
 def main():
-    harness = Harness()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--engine", choices=["docker", "kiri"], default="docker")
+    parser.add_argument("--image", help="exact ID of an already loaded public test-target image")
+    parser.add_argument("--launcher", help="absolute path to the built browser_capsule_smoke example")
+    args = parser.parse_args()
+    if args.engine == "kiri" and not args.launcher:
+        parser.error("Kiri acceptance requires --launcher")
+    harness = Harness(args.engine, args.image)
     configured = False
     try:
         harness.configure()
         configured = True
         # Build output is inherited (not buffered without a bound by this script).
-        subprocess.run(harness.compose + ["build"], env=harness.env, check=True, timeout=1200)
-        harness.run("up", "-d", "proxy")
+        if not harness.image:
+            subprocess.run(harness.compose + ["build"], env=harness.env, check=True, timeout=1200)
+        harness.run("up", "--no-build", "-d", "proxy")
         for attempt in range(40):
             try:
                 harness.fixture_get("positive-control")
@@ -338,8 +422,11 @@ def main():
         harness.fixture_get("reset-counts")
         probe = json.loads(harness.run("run", "--rm", "-T", "--no-deps", "browser", "--network-probe").strip())
         assert probe == {"direct_egress_blocked": True, "proxy_reachable": True}, probe
+        if args.launcher:
+            harness.check_launcher(args.launcher)
         first = Worker(harness)
         result = check_page(first.ask({"op": "open", "url": "http://93.184.216.34/"}))
+        first.apparmor_evidence()
         handle = result["handle"]
         screenshot = first.ask({"op": "screenshot", "handle": handle})
         assert screenshot["ok"], screenshot
@@ -449,9 +536,12 @@ def main():
             assert worker.loopback_hits() == 0, "browser request bypassed proxy to loopback canary"
         assert first.ask({"op": "close", "handle": handle})["ok"]
         assert not first.ask({"op": "read", "handle": handle})["ok"]
-        print("PASS: JS/negation/PNG, scoped/stale handles, persistent cookie workspace/human input/form omission, owned live canaries, proxy DNS rebind, direct-egress deny")
+        print(f"PASS engine={harness.engine} launcher={'passed' if args.launcher else 'SKIPPED'}: JS/negation/PNG, scoped/stale handles, persistent cookie workspace/human input/form omission, owned live canaries, proxy DNS rebind, direct-egress deny")
     finally:
         errors = harness.cleanup() if configured else []
+        if harness.override:
+            harness.override.close()
+        harness.config_dir.cleanup()
         for error in errors:
             print(f"owned smoke cleanup error: {error}", file=sys.stderr)
         if errors and sys.exc_info()[0] is None:

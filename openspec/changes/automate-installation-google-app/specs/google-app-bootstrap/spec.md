@@ -89,3 +89,25 @@ The authority protocol SHALL NOT accept a member selector from the caller.
 #### Scenario: Vault enrollment does not enroll a browser
 - **WHEN** installation-wide vault access is enabled but only an owner-specific Google helper exists
 - **THEN** the helper does not receive another member's request
+
+### Requirement: The public browser launcher pins one local engine
+The installation SHALL select its supported local engine in trusted deployment
+configuration. Launch, inspection, profile lifecycle and cleanup SHALL use the
+same engine. Engine support SHALL require actual Linux containment and Rust
+launcher acceptance, preserving the browser sandbox and private-network denial.
+
+#### Scenario: A legacy Docker configuration is loaded
+- **WHEN** the deployment JSON omits engine selection
+- **THEN** the Docker endpoint and prior deployment fingerprint remain unchanged
+
+#### Scenario: A Kiri browser deployment starts
+- **WHEN** the selected engine is Kiri
+- **THEN** the launcher requires the supported actual Kiri component version and uses its fixed local socket for all resource operations
+
+#### Scenario: A member tries to supply an engine endpoint
+- **WHEN** an arbitrary socket path or remote URL is supplied as engine selection
+- **THEN** configuration is rejected before launching a worker
+
+#### Scenario: One of two members closes their worker
+- **WHEN** the first member's worker shuts down in an accepted Linux deployment
+- **THEN** the second member's page stays available and the cleaned slot can be reused

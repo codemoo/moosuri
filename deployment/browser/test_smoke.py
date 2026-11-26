@@ -20,6 +20,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_ownership_mismatch_blocks_destructive_cleanup(self):
         harness = smoke.Harness()
+        self.addCleanup(harness.config_dir.cleanup)
         harness.workers = []
         harness.resource_ids = Mock(return_value=["foreign"])
         harness.run = Mock()
@@ -31,6 +32,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_worker_stop_and_compose_failure_do_not_skip_owned_cleanup(self):
         harness = smoke.Harness()
+        self.addCleanup(harness.config_dir.cleanup)
         first, second = Mock(), Mock()
         first.stop.side_effect = RuntimeError("synthetic failed stop")
         harness.workers = [first, second]
@@ -43,9 +45,25 @@ class HarnessTests(unittest.TestCase):
         first.stop.assert_called_once()
         second.stop.assert_called_once()
         self.assertEqual([c.args[0] for c in command.call_args_list], [
-            ["docker", "rm", "-f", "owned-container"],
-            ["docker", "network", "rm", "owned-network"],
+            harness.docker + ["rm", "-f", "owned-container"],
+            harness.docker + ["network", "rm", "owned-network"],
         ])
+
+    def test_engine_selection_is_explicit_and_kiri_needs_a_pinned_image(self):
+        with self.assertRaises(ValueError):
+            smoke.Harness("kiri")
+        with self.assertRaises(ValueError):
+            smoke.Harness("tcp://example.test:2375")
+        with patch.dict(smoke.os.environ, {"DOCKER_HOST":"tcp://example.test:2375", "DOCKER_CONTEXT":"foreign", "COMPOSE_FILE":"foreign.yaml"}):
+            harness = smoke.Harness("kiri", "sha256:" + "a" * 64)
+        self.addCleanup(harness.config_dir.cleanup)
+        self.assertEqual(harness.docker[:2], ["/usr/bin/docker", "--host=unix:///run/kiri/docker.sock"])
+        self.assertEqual(harness.docker[2], "--config=" + harness.config_dir.name)
+        self.assertNotIn("DOCKER_HOST", harness.env)
+        self.assertNotIn("DOCKER_CONTEXT", harness.env)
+        self.assertNotIn("COMPOSE_FILE", harness.env)
+        self.assertIn("/dev/null", harness.compose)
+        self.assertEqual(harness.env["DOCKER_API_VERSION"], "1.47")
 
     def test_worker_stdout_missing_newline_is_bounded_and_deadline_enforced(self):
         p = subprocess.Popen([sys.executable, "-c", "import os,time;os.write(1,b'x'*100);time.sleep(2)"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)

@@ -1,0 +1,79 @@
+//! Check effective kernel restrictions before starting a browser, not just
+//! options echoed by the container engine.
+#[cfg(target_os = "linux")]
+pub(super) fn enforced() -> bool {
+    use std::{ffi::CStr, mem::MaybeUninit};
+    fn mounted_with(path: &CStr, required: libc::c_ulong) -> bool {
+        let mut stat = MaybeUninit::<libc::statvfs>::uninit();
+        // SAFETY: static NUL-terminated paths and a valid output allocation.
+        if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        // SAFETY: statvfs initialized the output on success.
+        unsafe { stat.assume_init().f_flag & required == required }
+    }
+    let restricted = libc::ST_NOEXEC | libc::ST_NOSUID;
+    if !mounted_with(c"/", libc::ST_RDONLY)
+        || ![c"/profiles", c"/tmp", c"/run"]
+            .iter()
+            .all(|path| mounted_with(path, restricted))
+    {
+        return false;
+    }
+    // A null clone3 argument cannot create a child. Require the explicit denial
+    // used by the profile; libc can then use the separately filtered clone path.
+    if unsafe { libc::syscall(libc::SYS_clone3, std::ptr::null::<u8>(), 0usize) } != -1
+        || std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOSYS)
+    {
+        return false;
+    }
+    let read = |name| std::fs::read_to_string(format!("/sys/fs/cgroup/{name}")).ok();
+    match (read("memory.max"), read("pids.max"), read("cpu.max")) {
+        (Some(memory), Some(pids), Some(cpu)) => limits(&memory, &pids, &cpu),
+        _ => false,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn enforced() -> bool {
+    false
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn limits(memory: &str, pids: &str, cpu: &str) -> bool {
+    let bounded = |raw: &str, maximum| {
+        raw.trim()
+            .parse::<u64>()
+            .is_ok_and(|v| v > 0 && v <= maximum)
+    };
+    let parts: Vec<_> = cpu.split_whitespace().collect();
+    bounded(memory, 768 * 1024 * 1024)
+        && bounded(pids, 256)
+        && parts.len() == 2
+        && parts[1]
+            .parse::<u64>()
+            .is_ok_and(|period| period > 0 && bounded(parts[0], period))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn missing_unlimited_or_excessive_kernel_limits_are_refused() {
+        assert!(limits("805306368\n", "256\n", "100000 100000\n"));
+        assert!(limits("268435456", "64", "50000 100000"));
+        for (memory, pids, cpu) in [
+            ("max", "256", "100000 100000"),
+            ("805306369", "256", "100000 100000"),
+            ("805306368", "max", "100000 100000"),
+            ("805306368", "257", "100000 100000"),
+            ("805306368", "256", "max 100000"),
+            ("805306368", "256", "100001 100000"),
+            ("0", "256", "100000 100000"),
+            ("805306368", "256", "0 0"),
+            ("805306368", "256", "100000 100000 extra"),
+        ] {
+            assert!(!limits(memory, pids, cpu));
+        }
+    }
+}

@@ -23,15 +23,54 @@ pub use workspace::{
     CapsuleWorkspace, OpenedTab, TabCommand, WorkspaceFrame, WorkspaceInput, WorkspaceKey,
     WorkspaceObservation, WorkspaceTab, WorkspaceTabs,
 };
-const SECCOMP_DIGEST: &str = "18c6523f4de6aebb9d220d98fea8a03edb381d97237f954ed9d1f47d233f661c";
+// Retain the deployed Docker profile. The current profile normalizes null args
+// and explicitly denies clone3 with ENOSYS for libc's filtered-clone fallback.
+const SECCOMP_DIGESTS: [&str; 2] = [
+    "18c6523f4de6aebb9d220d98fea8a03edb381d97237f954ed9d1f47d233f661c",
+    "25a51bedbc152a36eb3ec4557231c18928f640ea61c9131499b3bc5491e03dc2",
+];
 const OWNER: &str = "io.moosuri.browser.owner";
 const READ: &str = "io.moosuri.browser.read";
 const PROJECT: &str = "com.docker.compose.project";
 const MAX_RESPONSE: usize = 64 * 1024;
 const DOCKER_CONFIG: &str = "/run/moosuri-browser-empty-docker-config";
+fn supported_kiri(bytes: &[u8]) -> bool {
+    let Ok(server) = serde_json::from_slice::<Value>(bytes) else {
+        return false;
+    };
+    server["Platform"]["Name"] == "Kiri"
+        && server["Components"].as_array().is_some_and(|parts| {
+            parts.iter().filter(|p| p["Name"] == "Kiri").count() == 1
+                && parts
+                    .iter()
+                    .any(|p| p["Name"] == "Kiri" && p["Version"] == "0.2.2")
+        })
+}
+/// Installation-owned engine selection; requests cannot supply a socket or URL.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Engine {
+    #[default]
+    Docker,
+    Kiri,
+}
+impl Engine {
+    fn is_docker(&self) -> bool {
+        *self == Self::Docker
+    }
+    fn socket(self) -> &'static str {
+        match self {
+            Self::Docker => "unix:///var/run/docker.sock",
+            Self::Kiri => "unix:///run/kiri/docker.sock",
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapsuleConfig {
+    #[serde(default, skip_serializing_if = "Engine::is_docker")]
+    pub engine: Engine,
     pub image_id: String,
     pub network_id: String,
     pub proxy_container_id: String,
@@ -96,6 +135,7 @@ impl CapsuleConfig {
     }
     fn validate(&self) -> Result<(), BrowserError> {
         if !self.verified
+            || (self.engine == Engine::Kiri && self.recover_workspaces)
             || !hex64(&self.smoke_evidence_sha256)
             || self.smoke_evidence_sha256.bytes().all(|b| b == b'0')
             || !self.image_id.strip_prefix("sha256:").is_some_and(hex64)
@@ -118,10 +158,10 @@ impl CapsuleConfig {
             return Err(BrowserError::IsolationRequired);
         }
         private_proxy(&self.proxy_ip)?;
-        validate_seccomp(&self.seccomp_file)
+        validate_seccomp(&self.seccomp_file, self.engine)
     }
 }
-fn validate_seccomp(path: &Path) -> Result<(), BrowserError> {
+fn validate_seccomp(path: &Path, engine: Engine) -> Result<(), BrowserError> {
     use std::io::Read;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -153,7 +193,10 @@ fn validate_seccomp(path: &Path) -> Result<(), BrowserError> {
     file.take(65537)
         .read_to_end(&mut bytes)
         .map_err(|_| BrowserError::IsolationRequired)?;
-    if format!("{:x}", Sha256::digest(&bytes)) != SECCOMP_DIGEST {
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    if !SECCOMP_DIGESTS.contains(&digest.as_str())
+        || (engine == Engine::Kiri && digest != SECCOMP_DIGESTS[1])
+    {
         return Err(BrowserError::IsolationRequired);
     }
     Ok(())
@@ -276,7 +319,7 @@ impl CapsuleReader {
                 .env("PATH", "/usr/bin:/bin");
             return c;
         }
-        let mut c = docker();
+        let mut c = self.docker();
         c.args([
             "run",
             "--rm",
@@ -287,6 +330,7 @@ impl CapsuleReader {
             "--network",
             &self.config.network_id,
             "--read-only",
+            "--cgroupns=private",
             "--cap-drop=ALL",
             "--cap-add=NET_ADMIN",
             "--cap-add=SETUID",
@@ -340,12 +384,25 @@ impl CapsuleReader {
         c
     }
     async fn validate_resources(&self, cancel: &CancellationToken) -> Result<(), BrowserError> {
-        let net = docker_output(
-            &["network", "inspect", &self.config.network_id],
-            cancel,
-            Duration::from_secs(3),
-        )
-        .await?;
+        if self.config.engine == Engine::Kiri {
+            let version = self
+                .docker_output(
+                    &["version", "--format", "{{json .Server}}"],
+                    cancel,
+                    Duration::from_secs(3),
+                )
+                .await?;
+            if !supported_kiri(&version) {
+                return Err(BrowserError::IsolationRequired);
+            }
+        }
+        let net = self
+            .docker_output(
+                &["network", "inspect", &self.config.network_id],
+                cancel,
+                Duration::from_secs(3),
+            )
+            .await?;
         let rows: Vec<Value> =
             serde_json::from_slice(&net).map_err(|_| BrowserError::IsolationRequired)?;
         let network = rows
@@ -359,18 +416,19 @@ impl CapsuleReader {
         {
             return Err(BrowserError::IsolationRequired);
         }
-        let proxy = docker_output(
-            &[
-                "container",
-                "inspect",
-                "--format",
-                PROXY_FORMAT,
-                &self.config.proxy_container_id,
-            ],
-            cancel,
-            Duration::from_secs(3),
-        )
-        .await?;
+        let proxy = self
+            .docker_output(
+                &[
+                    "container",
+                    "inspect",
+                    "--format",
+                    PROXY_FORMAT,
+                    &self.config.proxy_container_id,
+                ],
+                cancel,
+                Duration::from_secs(3),
+            )
+            .await?;
         let proxy: Value =
             serde_json::from_slice(&proxy).map_err(|_| BrowserError::IsolationRequired)?;
         let attached = proxy["networks"].as_object().is_some_and(|nets| {
@@ -405,12 +463,14 @@ impl CapsuleReader {
             .await;
             drop(input);
         }
-        let reaped = match tokio::time::timeout(
-            Duration::from_millis(if profile { 2500 } else { 250 }),
-            child.wait(),
-        )
-        .await
-        {
+        // A ready Chromium worker can take more than 250 ms to shut down.
+        // A stalled, never-ready CLI still gets the short cancellation bound.
+        let grace = Duration::from_millis(if creation_observed || profile {
+            2500
+        } else {
+            250
+        });
+        let reaped = match tokio::time::timeout(grace, child.wait()).await {
             Ok(Ok(_)) => true,
             _ => {
                 let _ = child.start_kill();
@@ -433,21 +493,22 @@ impl CapsuleReader {
         // Reconcile boundedly and remove an immutable ID only after exact identity
         // checks. Before readiness, never-observed absence remains uncertain.
         for attempt in 0..3 {
-            let listed = docker_output(
-                &[
-                    "container",
-                    "ls",
-                    "--all",
-                    "--no-trunc",
-                    "--format",
-                    OWNED_LIST_FORMAT,
-                    "--filter",
-                    &format!("name=^/{name}$"),
-                ],
-                &cancel,
-                Duration::from_millis(500),
-            )
-            .await?;
+            let listed = self
+                .docker_output(
+                    &[
+                        "container",
+                        "ls",
+                        "--all",
+                        "--no-trunc",
+                        "--format",
+                        OWNED_LIST_FORMAT,
+                        "--filter",
+                        &format!("name=^/{name}$"),
+                    ],
+                    &cancel,
+                    Duration::from_millis(500),
+                )
+                .await?;
             match cleanup_decision(
                 &listed,
                 name,
@@ -464,32 +525,34 @@ impl CapsuleReader {
                     };
                 }
                 CleanupDecision::Remove(id) => {
-                    let removed = docker_output(
-                        &["container", "rm", "--force", &id],
-                        &cancel,
-                        Duration::from_secs(1),
-                    )
-                    .await;
+                    let removed = self
+                        .docker_output(
+                            &["container", "rm", "--force", &id],
+                            &cancel,
+                            Duration::from_secs(1),
+                        )
+                        .await;
                     // --rm can finish (or start removal) after the list above.
                     // A failed removal is not proof of either presence or absence.
                     // Reconcile only the already observed immutable ID; never
                     // remove a replacement with the same name.
                     confirm_removal(removed, || async {
-                        let remaining = docker_output(
-                            &[
-                                "container",
-                                "ls",
-                                "--all",
-                                "--no-trunc",
-                                "--format",
-                                OWNED_LIST_FORMAT,
-                                "--filter",
-                                &format!("id={id}"),
-                            ],
-                            &cancel,
-                            Duration::from_millis(250),
-                        )
-                        .await?;
+                        let remaining = self
+                            .docker_output(
+                                &[
+                                    "container",
+                                    "ls",
+                                    "--all",
+                                    "--no-trunc",
+                                    "--format",
+                                    OWNED_LIST_FORMAT,
+                                    "--filter",
+                                    &format!("id={id}"),
+                                ],
+                                &cancel,
+                                Duration::from_millis(250),
+                            )
+                            .await?;
                         match cleanup_decision(
                             &remaining,
                             name,
@@ -533,7 +596,10 @@ where
             return Ok(());
         }
         if attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // The daemon may still be removing the already observed immutable
+            // ID. Absence must be observed; an "already in progress" error alone
+            // is not success. Keep this wait bounded without failing at 200 ms.
+            tokio::time::sleep(Duration::from_millis(750)).await;
         }
     }
     Err(BrowserError::CleanupUnconfirmed)
@@ -609,60 +675,64 @@ fn empty_docker_config(path: &Path) -> Result<(), BrowserError> {
     }
     Ok(())
 }
-fn docker() -> Command {
-    let mut c = Command::new("/usr/bin/docker");
-    c.env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("LANG", "C.UTF-8")
-        .args([
-            "--host=unix:///var/run/docker.sock",
-            "--config=/run/moosuri-browser-empty-docker-config",
-        ]);
-    c
-}
-async fn docker_output(
-    args: &[&str],
-    cancel: &CancellationToken,
-    deadline: Duration,
-) -> Result<Vec<u8>, BrowserError> {
-    empty_docker_config(Path::new(DOCKER_CONFIG))?;
-    let mut c = docker();
-    c.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let mut child = c.spawn().map_err(|_| BrowserError::Setup)?;
-    let operation = async {
-        let mut bytes = Vec::new();
-        child
-            .stdout
-            .take()
-            .ok_or(BrowserError::Setup)?
-            .take(MAX_RESPONSE as u64 + 1)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| BrowserError::Setup)?;
-        if bytes.len() > MAX_RESPONSE {
-            return Err(BrowserError::OutputTooLarge);
+impl CapsuleReader {
+    fn docker(&self) -> Command {
+        let mut c = Command::new("/usr/bin/docker");
+        c.env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LANG", "C.UTF-8")
+            .arg(format!("--host={}", self.config.engine.socket()))
+            .arg("--config=/run/moosuri-browser-empty-docker-config");
+        if self.config.engine == Engine::Kiri {
+            c.env("DOCKER_API_VERSION", "1.47");
         }
-        let status = child.wait().await.map_err(|_| BrowserError::Setup)?;
-        if !status.success() {
-            return Err(BrowserError::Setup);
-        }
-        Ok(bytes)
-    };
-    let result = tokio::select! {biased;_=cancel.cancelled()=>Err(BrowserError::Cancelled),result=tokio::time::timeout(deadline,operation)=>result.unwrap_or(Err(BrowserError::Timeout))};
-    if !matches!(child.try_wait(), Ok(Some(_))) {
-        let _ = child.start_kill();
-        if !matches!(
-            tokio::time::timeout(Duration::from_millis(500), child.wait()).await,
-            Ok(Ok(_))
-        ) {
-            return Err(BrowserError::Setup);
-        }
+        c
     }
-    result
+    async fn docker_output(
+        &self,
+        args: &[&str],
+        cancel: &CancellationToken,
+        deadline: Duration,
+    ) -> Result<Vec<u8>, BrowserError> {
+        empty_docker_config(Path::new(DOCKER_CONFIG))?;
+        let mut c = self.docker();
+        c.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let mut child = c.spawn().map_err(|_| BrowserError::Setup)?;
+        let operation = async {
+            let mut bytes = Vec::new();
+            child
+                .stdout
+                .take()
+                .ok_or(BrowserError::Setup)?
+                .take(MAX_RESPONSE as u64 + 1)
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|_| BrowserError::Setup)?;
+            if bytes.len() > MAX_RESPONSE {
+                return Err(BrowserError::OutputTooLarge);
+            }
+            let status = child.wait().await.map_err(|_| BrowserError::Setup)?;
+            if !status.success() {
+                return Err(BrowserError::Setup);
+            }
+            Ok(bytes)
+        };
+        let result = tokio::select! {biased;_=cancel.cancelled()=>Err(BrowserError::Cancelled),result=tokio::time::timeout(deadline,operation)=>result.unwrap_or(Err(BrowserError::Timeout))};
+        if !matches!(child.try_wait(), Ok(Some(_))) {
+            let _ = child.start_kill();
+            if !matches!(
+                tokio::time::timeout(Duration::from_millis(500), child.wait()).await,
+                Ok(Ok(_))
+            ) {
+                return Err(BrowserError::Setup);
+            }
+        }
+        result
+    }
 }
 struct CancelOnDrop(CancellationToken);
 impl Drop for CancelOnDrop {

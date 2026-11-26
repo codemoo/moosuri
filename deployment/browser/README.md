@@ -45,14 +45,27 @@ commands, not JavaScript. There is no model-supplied evaluate, click, type, form
 upload, authenticated-profile attach or download interface. No generic browser action can send an approved mail draft;
 mail remains a separate typed broker requiring final explicit user approval.
 
-Production prerequisites: Linux Docker Engine/Compose, iptables/ip6tables in the
+Production prerequisites: Linux with cgroup v2 and private cgroup namespaces,
+Docker Engine or Kiri 0.2.2, Docker CLI/Compose, iptables/ip6tables in the
 container namespace, unprivileged Chromium user namespaces supported by the host
 kernel/AppArmor policy, and permission to build the optional Chromium image.
+On Ubuntu 24.04+, the capsule executable needs an AppArmor profile granting
+`userns`. The supplied [executable policy](apparmor.moosuri-chromium) attaches only
+to `/usr/lib/chromium/chromium`, following Ubuntu's application-specific browser
+policy. Install it as `/etc/apparmor.d/moosuri-chromium` and load it with
+`apparmor_parser -r /etc/apparmor.d/moosuri-chromium` during host provisioning.
+Review an existing profile before replacing it. This is a host-wide path policy,
+not an image pin: a host process executing that path from an unconfined task can
+also gain user-namespace admission. Its `unconfined` flag supplies no file/network
+confinement. A process already under `docker-default` retains that policy instead.
+Record the worker and Chromium AppArmor labels from the actual engine smoke.
+Container capabilities, seccomp and cgroups still apply.
 The entrypoint installs default-deny IPv4/IPv6 firewall rules, allows loopback
 control traffic inside the capsule and TCP only to the egress proxy, then drops
 all capabilities, UID/GID and privilege escalation. Failure is fatal; there is no
 `--no-sandbox`, privileged-container or host-network fallback. Host kernel policy
-must be configured by the operator; do not weaken it automatically.
+must be configured during provisioning; do not disable AppArmor or global
+unprivileged-user-namespace restrictions to make a failed test pass.
 
 The browser has only a private Docker network. A separate unprivileged proxy has
 external connectivity. HTTP/CONNECT targets are parsed and every DNS answer must
@@ -160,11 +173,55 @@ The seccomp profile derives from Microsoft's Apache-2.0 Playwright
 v1.56.1 Docker profile:
 https://github.com/microsoft/playwright/blob/v1.56.1/utils/docker/seccomp_profile.json
 Upstream SHA-256: `cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849`.
-Derived SHA-256: `18c6523f4de6aebb9d220d98fea8a03edb381d97237f954ed9d1f47d233f661c`.
+Derived SHA-256: `25a51bedbc152a36eb3ec4557231c18928f640ea61c9131499b3bc5491e03dc2`.
 It extends the Docker default profile to permit Chromium user namespaces. Its
 compatibility with the actual distro Chromium/kernel is part of the Linux gate.
+The current profile represents an empty argument list as `[]` and explicitly
+denies `clone3` with ENOSYS for libc's filtered-clone fallback. The earlier Docker
+profile remains accepted for existing pinned images; a new worker image requires
+the current profile and new acceptance. Use the current file for Kiri.
+The runtime clone3 probe checks this denial, not the identity of a seccomp profile.
 The complete upstream Apache-2.0 license and attribution accompany the profile in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Engine selection
+
+The installation-owned capsule JSON accepts `"engine":"kiri"` or
+`"engine":"docker"`. Omission preserves the existing Docker deployment pin.
+Every launch, inspection, profile operation and cleanup uses that same engine's
+fixed local socket. Request parameters cannot provide an endpoint. Kiri uses
+`/run/kiri/docker.sock`, API 1.47 and the actual Kiri component version 0.2.2.
+Kiri 0.2.1 does not enforce the required custom profile and is refused. A future
+engine release needs its own acceptance before this version pin is changed.
+Kiri currently accepts ephemeral workspaces only. `recover_workspaces: true`
+is rejected until Rust profile allocation/recovery/retirement is accepted on
+Kiri; a worker-level cookie test does not establish that host lifecycle.
+
+Before Chromium starts, the production worker checks effective read-only root,
+noexec/nosuid scratch mounts, clone3 denial, bounded memory/PIDs/CPU, all five
+zero capability sets, NoNewPrivs, seccomp and the namespace-firewall marker.
+
+Build the public `test` target with the Dockerfile above, load that image archive
+into Kiri and record its exact config ID. Build the host acceptance executable
+with `cargo build --locked -p moosuri-connectors --example browser_capsule_smoke`.
+On the disposable Kiri test host, run:
+
+```sh
+sudo python3 deployment/browser/smoke.py --engine kiri \
+  --image "$TEST_IMAGE_ID" --launcher /absolute/path/browser_capsule_smoke
+```
+
+Kiri acceptance requires the real Rust launcher; Compose-only success cannot
+close the gate. The test uses an empty engine config, ignores ambient Docker and
+Compose configuration, never pulls a replacement image, and checks owner labels
+before cleanup. Its transient candidate hash is not an installation smoke receipt;
+deployment must record the completed result, engine version, image and profile.
+
+Engine selection is for a new, separately verified deployment, not live profile
+migration. Before replacing an existing deployment, stop admission and drain its
+workers and retained profiles through the old engine. Verify its owned inventory
+is empty before retiring that configuration. No automatic cross-engine cleanup
+or cookie/profile migration is provided.
 
 Local authoring checks (no Docker or Linux browser launch):
 
@@ -181,7 +238,7 @@ repository records a successful synthetic test on a different image/host.
 
 
 The unchanged upstream profile is retained as `seccomp-upstream.json`. The derived
-`seccomp.json` adds only unconditional `chroot` syscall permission for Chromium's
+`seccomp.json` adds unconditional `chroot` syscall permission for Chromium's
 zygote after entering its user namespace; the upstream CAP_SYS_CHROOT-conditional
 rule prevents that sandbox startup under `cap_drop: ALL`. This grants no host
 capability. Entrypoint still clears every capability set, uses UID10001 and

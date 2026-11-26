@@ -132,20 +132,21 @@ impl CapsuleReader {
     ) -> Result<CapsuleWorkspace, BrowserError> {
         let _start = self.member_start.lock().await;
         let prefix = format!("moosuri-kiri-browser-{}-", self.config.owner.simple());
-        let names = docker_output(
-            &[
-                "container",
-                "ls",
-                "--all",
-                "--format",
-                "{{.Names}}",
-                "--filter",
-                &format!("name=^/{prefix}[01]$"),
-            ],
-            cancel,
-            Duration::from_secs(3),
-        )
-        .await?;
+        let names = self
+            .docker_output(
+                &[
+                    "container",
+                    "ls",
+                    "--all",
+                    "--format",
+                    "{{.Names}}",
+                    "--filter",
+                    &format!("name=^/{prefix}[01]$"),
+                ],
+                cancel,
+                Duration::from_secs(3),
+            )
+            .await?;
         let slot = free_member_slot(&prefix, &names)?;
         self.start_workspace_inner(account, None, Some(slot), cancel)
             .await

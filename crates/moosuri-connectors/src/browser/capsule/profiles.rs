@@ -11,12 +11,13 @@ impl CapsuleReader {
     }
     async fn profile_inspect(&self, workspace: Uuid, account: Uuid) -> Result<(), BrowserError> {
         let name = self.profile_name(workspace);
-        let bytes = docker_output(
-            &["volume", "inspect", &name],
-            &CancellationToken::new(),
-            Duration::from_secs(2),
-        )
-        .await?;
+        let bytes = self
+            .docker_output(
+                &["volume", "inspect", &name],
+                &CancellationToken::new(),
+                Duration::from_secs(2),
+            )
+            .await?;
         let rows: Value = serde_json::from_slice(&bytes).map_err(|_| BrowserError::Setup)?;
         let row = rows
             .as_array()
@@ -63,7 +64,7 @@ impl CapsuleReader {
             {
                 return Err(BrowserError::IsolationRequired);
             }
-            docker_output(
+            self.docker_output(
                 &[
                     "volume",
                     "create",
@@ -88,50 +89,52 @@ impl CapsuleReader {
         self.profile_inspect(workspace, account).await
     }
     async fn list_profiles(&self) -> Result<Vec<String>, BrowserError> {
-        let bytes = docker_output(
-            &[
-                "volume",
-                "ls",
-                "--format",
-                "{{.Name}}",
-                "--filter",
-                &format!("label={OWNER}={}", self.config.owner),
-                "--filter",
-                &format!("label={PROJECT}={}", self.config.project),
-                "--filter",
-                &format!("label={KIND}={VALUE}"),
-            ],
-            &CancellationToken::new(),
-            Duration::from_secs(2),
-        )
-        .await?;
+        let bytes = self
+            .docker_output(
+                &[
+                    "volume",
+                    "ls",
+                    "--format",
+                    "{{.Name}}",
+                    "--filter",
+                    &format!("label={OWNER}={}", self.config.owner),
+                    "--filter",
+                    &format!("label={PROJECT}={}", self.config.project),
+                    "--filter",
+                    &format!("label={KIND}={VALUE}"),
+                ],
+                &CancellationToken::new(),
+                Duration::from_secs(2),
+            )
+            .await?;
         let text = String::from_utf8(bytes).map_err(|_| BrowserError::Setup)?;
         let mut rows = text.lines().map(str::to_owned).collect::<Vec<_>>();
         rows.sort();
         Ok(rows)
     }
     async fn stop_profile_workers(&self, workspace: Uuid) -> Result<(), BrowserError> {
-        let bytes = docker_output(
-            &[
-                "container",
-                "ls",
-                "--all",
-                "--no-trunc",
-                "--format",
-                "{{.ID}}",
-                "--filter",
-                &format!("label={OWNER}={}", self.config.owner),
-                "--filter",
-                &format!("label={PROJECT}={}", self.config.project),
-                "--filter",
-                &format!("label={PROFILE}={workspace}"),
-                "--filter",
-                &format!("label={KIND}={VALUE}"),
-            ],
-            &CancellationToken::new(),
-            Duration::from_secs(2),
-        )
-        .await?;
+        let bytes = self
+            .docker_output(
+                &[
+                    "container",
+                    "ls",
+                    "--all",
+                    "--no-trunc",
+                    "--format",
+                    "{{.ID}}",
+                    "--filter",
+                    &format!("label={OWNER}={}", self.config.owner),
+                    "--filter",
+                    &format!("label={PROJECT}={}", self.config.project),
+                    "--filter",
+                    &format!("label={PROFILE}={workspace}"),
+                    "--filter",
+                    &format!("label={KIND}={VALUE}"),
+                ],
+                &CancellationToken::new(),
+                Duration::from_secs(2),
+            )
+            .await?;
         let text = String::from_utf8(bytes).map_err(|_| BrowserError::Setup)?;
         if text.lines().count() > 16 {
             return Err(BrowserError::Capacity);
@@ -140,18 +143,19 @@ impl CapsuleReader {
             if !hex64(id) {
                 return Err(BrowserError::IsolationRequired);
             }
-            let bytes = docker_output(
-                &["container", "inspect", id],
-                &CancellationToken::new(),
-                Duration::from_secs(2),
-            )
-            .await?;
+            let bytes = self
+                .docker_output(
+                    &["container", "inspect", id],
+                    &CancellationToken::new(),
+                    Duration::from_secs(2),
+                )
+                .await?;
             let rows: Value = serde_json::from_slice(&bytes).map_err(|_| BrowserError::Setup)?;
             let row = &rows[0];
             if row["Id"] != id || !labels(&row["Config"]["Labels"], self, workspace, None) {
                 return Err(BrowserError::IsolationRequired);
             }
-            docker_output(
+            self.docker_output(
                 &["container", "rm", "--force", id],
                 &CancellationToken::new(),
                 Duration::from_secs(2),
@@ -166,19 +170,20 @@ impl CapsuleReader {
             return Ok(());
         }
         let name = self.profile_name(workspace);
-        let found = docker_output(
-            &[
-                "volume",
-                "ls",
-                "--format",
-                "{{.Name}}",
-                "--filter",
-                &format!("name={name}"),
-            ],
-            &CancellationToken::new(),
-            Duration::from_secs(2),
-        )
-        .await?;
+        let found = self
+            .docker_output(
+                &[
+                    "volume",
+                    "ls",
+                    "--format",
+                    "{{.Name}}",
+                    "--filter",
+                    &format!("name={name}"),
+                ],
+                &CancellationToken::new(),
+                Duration::from_secs(2),
+            )
+            .await?;
         if !String::from_utf8(found)
             .map_err(|_| BrowserError::Setup)?
             .lines()
@@ -188,7 +193,7 @@ impl CapsuleReader {
         }
         self.profile_inspect(workspace, account).await?;
         self.stop_profile_workers(workspace).await?;
-        docker_output(
+        self.docker_output(
             &["volume", "rm", &name],
             &CancellationToken::new(),
             Duration::from_secs(2),
@@ -219,12 +224,13 @@ impl CapsuleReader {
                     .strip_prefix(&prefix)
                     .and_then(|v| Uuid::parse_str(v).ok())
                     .ok_or(BrowserError::IsolationRequired)?;
-                let bytes = docker_output(
-                    &["volume", "inspect", name],
-                    &CancellationToken::new(),
-                    Duration::from_secs(2),
-                )
-                .await?;
+                let bytes = self
+                    .docker_output(
+                        &["volume", "inspect", name],
+                        &CancellationToken::new(),
+                        Duration::from_secs(2),
+                    )
+                    .await?;
                 let rows: Value =
                     serde_json::from_slice(&bytes).map_err(|_| BrowserError::Setup)?;
                 let account = rows[0]["Labels"][ACCOUNT]

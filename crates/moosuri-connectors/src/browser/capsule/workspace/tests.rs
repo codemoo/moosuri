@@ -2,6 +2,7 @@ use super::*;
 use std::sync::atomic::Ordering;
 fn fixture(account: Uuid, responses: &[Value]) -> CapsuleReader {
     let config = CapsuleConfig {
+        engine: Default::default(),
         image_id: format!("sha256:{}", "a".repeat(64)),
         network_id: "b".repeat(64),
         proxy_container_id: "c".repeat(64),

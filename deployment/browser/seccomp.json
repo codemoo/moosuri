@@ -51,6 +51,13 @@
 	],
 	"syscalls": [
 		{
+			"comment": "Keep clone3 denied with ENOSYS so libc uses the filtered clone syscall",
+			"names": ["clone3"],
+			"action": "SCMP_ACT_ERRNO",
+			"errnoRet": 38,
+			"args": []
+		},
+		{
 			"comment": "Allow create user namespaces",
 			"names": [
 				"clone",
@@ -410,7 +417,7 @@
 				"ptrace"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": null,
+			"args": [],
 			"comment": "",
 			"includes": {
 				"minKernel": "4.8"

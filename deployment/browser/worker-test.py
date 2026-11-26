@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 """Test target only: owned-target network probes and a real local canary."""
 import ipaddress
+import ctypes
+import errno
 import json
 import os
 import socket
@@ -21,6 +23,10 @@ for field in ("CapEff", "CapPrm", "CapInh", "CapAmb", "CapBnd"):
     assert int(status[field].strip(), 16) == 0, field
 assert status["NoNewPrivs"].strip() == "1"
 assert status["Seccomp"].strip() == "2"
+# clone3 stays denied. ENOSYS makes libc use the filtered clone path, including
+# on Kiri, whose compiler does not add libseccomp's unknown-syscall fallback.
+libc = ctypes.CDLL(None, use_errno=True)
+assert libc.syscall(435, None, 0) == -1 and ctypes.get_errno() == errno.ENOSYS
 try:
     os.chroot("/")
 except PermissionError as error:

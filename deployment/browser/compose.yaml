@@ -25,6 +25,7 @@ services:
       dockerfile: deployment/browser/Dockerfile
       target: runtime
     stdin_open: true
+    cgroup: private
     read_only: true
     cap_drop: [ALL]
     # Entrypoint installs firewall, then drops all capabilities before Chromium.

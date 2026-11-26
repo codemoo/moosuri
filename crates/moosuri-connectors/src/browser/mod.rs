@@ -3,6 +3,7 @@
 //! No arbitrary script, click, type, upload, credential or download API is exposed.
 pub mod capsule;
 mod cdp;
+mod confinement;
 mod net;
 pub mod proxy;
 pub mod workspace;
@@ -716,7 +717,7 @@ fn capsule_health(config: &BrowserConfig) -> Result<(), BrowserError> {
     }
     let status = std::fs::read_to_string("/proc/self/status")
         .map_err(|_| BrowserError::IsolationRequired)?;
-    if !capsule_status_confined(&status) {
+    if !capsule_status_confined(&status) || !confinement::enforced() {
         return Err(BrowserError::IsolationRequired);
     }
     // Entrypoint writes this root-owned marker only after installing namespace firewall.

@@ -2,6 +2,7 @@ use super::*;
 use std::sync::atomic::Ordering;
 fn config() -> CapsuleConfig {
     CapsuleConfig {
+        engine: Default::default(),
         image_id: format!("sha256:{}", "a".repeat(64)),
         network_id: "b".repeat(64),
         proxy_container_id: "c".repeat(64),
@@ -211,7 +212,13 @@ fn health_requires_all_five_capability_sets_and_restrictions() {
 fn docker_config_cannot_inject_proxy_environment_or_credentials() {
     let path = std::env::temp_dir().join(format!("moosuri-empty-docker-test-{}", Uuid::new_v4()));
     assert!(empty_docker_config(&path).is_ok());
-    std::fs::create_dir(&path).unwrap();
+    let mut directory = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        directory.mode(0o700);
+    }
+    directory.create(&path).unwrap();
     assert!(empty_docker_config(&path).is_ok());
     std::fs::write(
         path.join("config.json"),
@@ -227,6 +234,21 @@ fn docker_config_cannot_inject_proxy_environment_or_credentials() {
         assert!(empty_docker_config(&path).is_err());
         std::fs::remove_file(path).unwrap();
     }
+}
+
+#[test]
+fn kiri_requires_the_verified_engine_with_custom_seccomp_support() {
+    let mut server =
+        json!({"Platform":{"Name":"Kiri"},"Components":[{"Name":"Kiri","Version":"0.2.2"}]});
+    assert!(supported_kiri(&serde_json::to_vec(&server).unwrap()));
+    for version in ["0.2.1", "27.5.1", "0.2.3", ""] {
+        server["Components"][0]["Version"] = json!(version);
+        assert!(!supported_kiri(&serde_json::to_vec(&server).unwrap()));
+    }
+    server["Components"][0]["Version"] = json!("0.2.2");
+    server["Platform"]["Name"] = json!("Docker");
+    assert!(!supported_kiri(&serde_json::to_vec(&server).unwrap()));
+    assert!(!supported_kiri(b"kiri\n"));
 }
 
 #[test]
@@ -308,4 +330,100 @@ fn recovery_opt_in_preserves_historical_config_bytes_and_changes_enabled_pin() {
         CapsuleReader::new(old).unwrap().deployment_pin(),
         CapsuleReader::new(enabled).unwrap().deployment_pin()
     );
+}
+
+#[tokio::test]
+async fn slow_daemon_auto_removal_is_confirmed_without_deleting_a_replacement() {
+    let began = tokio::time::Instant::now();
+    confirm_removal(Err(BrowserError::Setup), || {
+        std::future::ready(Ok(began.elapsed() >= Duration::from_millis(600)))
+    })
+    .await
+    .unwrap();
+    assert!(began.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
+fn omitted_engine_preserves_legacy_deployment_pin_and_kiri_changes_it() {
+    let config = config();
+    let wire = serde_json::to_string(&config).unwrap();
+    assert!(!wire.contains("engine"));
+    let legacy = CapsuleConfig::from_json(&wire).unwrap();
+    let first = CapsuleReader::new(legacy).unwrap();
+    let mut kiri = config.clone();
+    kiri.engine = Engine::Kiri;
+    let next = CapsuleReader::new(kiri).unwrap();
+    assert_ne!(first.deployment_pin(), next.deployment_pin());
+    let explicit = wire.replacen('{', "{\"engine\":\"docker\",", 1);
+    assert_eq!(
+        first.deployment_pin(),
+        CapsuleReader::new(CapsuleConfig::from_json(&explicit).unwrap())
+            .unwrap()
+            .deployment_pin()
+    );
+}
+
+#[test]
+fn engine_selector_rejects_arbitrary_remote_or_local_destinations() {
+    for engine in [
+        "tcp://example.test:2375",
+        "unix:///tmp/engine.sock",
+        "Kiri",
+        "auto",
+        "",
+    ] {
+        let mut wire = serde_json::to_value(config()).unwrap();
+        wire["engine"] = json!(engine);
+        assert!(CapsuleConfig::from_json(&wire.to_string()).is_err());
+    }
+}
+
+#[test]
+fn kiri_refuses_unaccepted_profile_recovery() {
+    let mut cfg = config();
+    cfg.recover_workspaces = true;
+    assert!(CapsuleReader::new(cfg.clone()).is_ok());
+    cfg.engine = Engine::Kiri;
+    assert!(matches!(
+        CapsuleReader::new(cfg),
+        Err(BrowserError::IsolationRequired)
+    ));
+}
+
+#[test]
+fn selected_engine_pins_control_and_worker_commands_without_ambient_configuration() {
+    for (engine, socket) in [
+        (Engine::Docker, "unix:///var/run/docker.sock"),
+        (Engine::Kiri, "unix:///run/kiri/docker.sock"),
+    ] {
+        let mut cfg = config();
+        cfg.engine = engine;
+        let reader = CapsuleReader::new(cfg).unwrap();
+        let control = reader.docker();
+        let worker = reader.worker_command(Uuid::new_v4(), Uuid::new_v4(), "test-worker", None);
+        for command in [control, worker] {
+            let command = command.as_std();
+            let args: Vec<_> = command.get_args().map(|s| s.to_str().unwrap()).collect();
+            assert_eq!(args[0], format!("--host={socket}"));
+            assert_eq!(args[1], "--config=/run/moosuri-browser-empty-docker-config");
+            let env: Vec<_> = command
+                .get_envs()
+                .map(|(k, v)| (k.to_str().unwrap(), v.map(|s| s.to_str().unwrap())))
+                .collect();
+            assert!(
+                !env.iter()
+                    .any(|(k, _)| matches!(*k, "DOCKER_HOST" | "DOCKER_CONTEXT" | "DOCKER_CONFIG"))
+            );
+            assert_eq!(
+                env.iter()
+                    .find(|(k, _)| *k == "DOCKER_API_VERSION")
+                    .map(|(_, v)| *v),
+                if engine == Engine::Kiri {
+                    Some(Some("1.47"))
+                } else {
+                    None
+                }
+            );
+        }
+    }
 }

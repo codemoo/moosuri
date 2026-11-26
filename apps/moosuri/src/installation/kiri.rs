@@ -508,11 +508,16 @@ fn remove_owned(layout: &Layout, path: &Path, hashes: &[String]) {
 }
 fn validate_supplied(layout: &Layout, cert: &Path, key: &Path) -> Result<()> {
     for (path, cap, secret) in [(cert, 256 * 1024u64, false), (key, 64 * 1024, true)] {
+        // Strict allowlist: the path is later written into nginx configuration
+        // and the receipt, so whitespace, '#', quotes and separators are refused.
         if !path.is_absolute()
             || fs::canonicalize(path).ok().as_deref() != Some(path)
-            || path
-                .to_string_lossy()
-                .contains(['|', ' ', ';', '{', '}', '"', '\'', '$', '\\'])
+            || path.to_str().is_none_or(|s| {
+                s.len() > 512
+                    || !s
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/._-".contains(&b))
+            })
         {
             return Err("kiri_install_tls_path_invalid".into());
         }
@@ -521,14 +526,16 @@ fn validate_supplied(layout: &Layout, cert: &Path, key: &Path) -> Result<()> {
         let m = file
             .metadata()
             .map_err(|_| "kiri_install_tls_unavailable")?;
-        let mut head = String::new();
+        let mut head = Zeroizing::new(String::new());
         (&mut file)
-            .take(64)
+            .take(cap)
             .read_to_string(&mut head)
             .map_err(|_| "kiri_install_tls_unavailable")?;
         if (secret && m.mode() & 0o077 != 0)
             || !head.starts_with("-----BEGIN ")
             || (!secret && !head.starts_with("-----BEGIN CERTIFICATE-----"))
+            // Passphrase-protected keys cannot be used by unattended nginx.
+            || (secret && head.contains("ENCRYPTED"))
         {
             return Err("kiri_install_tls_file_invalid".into());
         }
@@ -537,8 +544,8 @@ fn validate_supplied(layout: &Layout, cert: &Path, key: &Path) -> Result<()> {
 }
 /// A valid PEM and matching private key alone do not make HTTPS usable. Check
 /// the actual leaf certificate's lifetime and both selected DNS names before
-/// installing the nginx configuration. Certificate/key matching remains nginx's
-/// responsibility; this does not assert trust by any external CA.
+/// installing the nginx configuration. Pairing is checked separately; this does
+/// not assert trust by any external CA.
 fn validate_certificate(exec: &dyn Exec, cert: &Path, public: &str, vault: &str) -> Result<()> {
     let (a, v) = render::origins(public, vault)?;
     let cert = cert.to_str().ok_or("kiri_install_tls_path_invalid")?;
@@ -566,6 +573,42 @@ fn validate_certificate(exec: &dyn Exec, cert: &Path, public: &str, vault: &str)
             Duration::from_secs(10),
         )?
         .ok("kiri_install_certificate_expired_or_wrong_host")?;
+    }
+    Ok(())
+}
+/// Hosts, dates and certificate/private-key pairing for an operator-supplied
+/// pair. Fixed openssl arguments, null stdin (no prompt); only public key text
+/// is captured and the private key is never printed. An encrypted key fails
+/// because no passphrase is available.
+fn validate_tls_material(
+    exec: &dyn Exec,
+    cert: &Path,
+    key: &Path,
+    public: &str,
+    vault: &str,
+) -> Result<()> {
+    validate_certificate(exec, cert, public, vault)?;
+    let cert = cert.to_str().ok_or("kiri_install_tls_path_invalid")?;
+    let key = key.to_str().ok_or("kiri_install_tls_path_invalid")?;
+    let limit = Duration::from_secs(10);
+    let from_cert = exec
+        .run(
+            "openssl",
+            &args(&["x509", "-in", cert, "-noout", "-pubkey"]),
+            Input::None,
+            limit,
+        )?
+        .ok("kiri_install_tls_certificate_invalid")?;
+    let from_key = exec
+        .run(
+            "openssl",
+            &args(&["pkey", "-in", key, "-pubout", "-passin", "pass:"]),
+            Input::None,
+            limit,
+        )?
+        .ok("kiri_install_tls_key_invalid_or_encrypted")?;
+    if from_cert.trim_ascii().is_empty() || from_cert.trim_ascii() != from_key.trim_ascii() {
+        return Err("kiri_install_tls_key_mismatch".into());
     }
     Ok(())
 }
@@ -624,9 +667,12 @@ fn configure_tls(
         )?
         .ok("kiri_install_certbot_failed")?;
     }
-    validate_certificate(
+    // Revalidate immediately before nginx sees the files (also covers certbot output).
+    let (cert_path, key_path) = tls.paths();
+    validate_tls_material(
         exec,
-        Path::new(&tls.paths().0),
+        Path::new(&cert_path),
+        Path::new(&key_path),
         &r.public_origin,
         &r.vault_origin,
     )?;
@@ -746,6 +792,24 @@ fn plan_fresh(
     who: (String, String),
 ) -> Result<Receipt> {
     require_fresh(layout)?;
+    // Operator TLS input is fully validated before any inventory, receipt or resource.
+    let tls = match (&o.tls_certificate, &o.tls_key) {
+        (Some(c), Some(k)) => {
+            validate_supplied(layout, c, k)?;
+            validate_tls_material(exec, c, k, &o.public_origin, &o.vault_origin)?;
+            format!("supplied:{}|{}", c.display(), k.display())
+        }
+        _ => {
+            let email = o
+                .certbot_email
+                .as_deref()
+                .ok_or("kiri_install_tls_choice_required")?;
+            if !valid_email(email) {
+                return Err("kiri_install_certbot_email_invalid".into());
+            }
+            "certbot".into()
+        }
+    };
     let id = random_uuid();
     let mut used = browser::host_networks(&String::from_utf8_lossy(
         &exec
@@ -773,22 +837,6 @@ fn plan_fresh(
         .map_err(|_| "kiri_install_nginx_missing")?;
     let groups = fs::read_to_string(layout.at("/etc/group"))
         .map_err(|_| "kiri_install_nginx_group_unknown")?;
-    let tls = match (&o.tls_certificate, &o.tls_key) {
-        (Some(c), Some(k)) => {
-            validate_supplied(layout, c, k)?;
-            format!("supplied:{}|{}", c.display(), k.display())
-        }
-        _ => {
-            let email = o
-                .certbot_email
-                .as_deref()
-                .ok_or("kiri_install_tls_choice_required")?;
-            if !valid_email(email) {
-                return Err("kiri_install_certbot_email_invalid".into());
-            }
-            "certbot".into()
-        }
-    };
     Ok(Receipt {
         format: 1,
         installation_id: id,
@@ -874,9 +922,10 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
     let owner = receipt.installation_id.to_string();
     if let render::Tls::Supplied { certificate, key } = receipt.tls() {
         validate_supplied(&layout, &certificate, &key)?;
-        validate_certificate(
+        validate_tls_material(
             &exec,
             &certificate,
+            &key,
             &receipt.public_origin,
             &receipt.vault_origin,
         )?;

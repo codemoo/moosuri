@@ -313,6 +313,180 @@ fn https_certificate_must_cover_both_origins_and_not_be_expired() {
     assert!(validate_certificate(&exec, &expired, public, vault).is_err());
 }
 
+fn openssl(exec: &System, words: &[&str]) {
+    exec.run(
+        "openssl",
+        &args(words),
+        Input::None,
+        Duration::from_secs(30),
+    )
+    .unwrap()
+    .ok("fixture_openssl")
+    .unwrap();
+}
+/// Self-signed pair for the given SAN names, private key mode 0600.
+fn pair(exec: &System, dir: &Path, name: &str, sans: &str) -> (PathBuf, PathBuf) {
+    let (cert, key) = (
+        dir.join(format!("{name}.crt")),
+        dir.join(format!("{name}.key")),
+    );
+    openssl(
+        exec,
+        &[
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "2",
+            "-subj",
+            "/CN=fixture.example.com",
+            "-addext",
+            sans,
+            "-keyout",
+            key.to_str().unwrap(),
+            "-out",
+            cert.to_str().unwrap(),
+        ],
+    );
+    for path in [&cert, &key] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    (cert, key)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn supplied_tls_material_is_fully_checked_with_real_openssl() {
+    let (tmp, layout) = temp();
+    let dir = fs::canonicalize(tmp.path()).unwrap();
+    let exec = System {
+        docker_config: dir.clone(),
+    };
+    let (public, vault) = ("https://assistant.example.com", "https://vault.example.com");
+    let names = "subjectAltName=DNS:assistant.example.com,DNS:vault.example.com";
+    let (cert, key) = pair(&exec, &dir, "good", names);
+    validate_supplied(&layout, &cert, &key).unwrap();
+    validate_tls_material(&exec, &cert, &key, public, vault).unwrap();
+
+    // Certificate for other names.
+    let (wrong, wrong_key) = pair(&exec, &dir, "wrong", "subjectAltName=DNS:other.example.com");
+    assert!(validate_tls_material(&exec, &wrong, &wrong_key, public, vault).is_err());
+    // Valid certificate with somebody else's private key.
+    assert_eq!(
+        validate_tls_material(&exec, &cert, &wrong_key, public, vault).unwrap_err(),
+        "kiri_install_tls_key_mismatch"
+    );
+    // Expired.
+    let expired = dir.join("expired.crt");
+    openssl(
+        &exec,
+        &[
+            "x509",
+            "-in",
+            cert.to_str().unwrap(),
+            "-signkey",
+            key.to_str().unwrap(),
+            "-days",
+            "-1",
+            "-out",
+            expired.to_str().unwrap(),
+        ],
+    );
+    assert!(validate_tls_material(&exec, &expired, &key, public, vault).is_err());
+    // Passphrase-protected key: refused textually and by openssl without a prompt.
+    let encrypted = dir.join("encrypted.key");
+    openssl(
+        &exec,
+        &[
+            "pkey",
+            "-in",
+            key.to_str().unwrap(),
+            "-aes256",
+            "-passout",
+            "pass:synthetic",
+            "-out",
+            encrypted.to_str().unwrap(),
+        ],
+    );
+    fs::set_permissions(&encrypted, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        validate_supplied(&layout, &cert, &encrypted).unwrap_err(),
+        "kiri_install_tls_file_invalid"
+    );
+    assert!(validate_tls_material(&exec, &cert, &encrypted, public, vault).is_err());
+}
+
+#[test]
+fn tls_paths_cannot_smuggle_nginx_tokens() {
+    let (tmp, layout) = temp();
+    let root = fs::canonicalize(tmp.path()).unwrap();
+    let key = root.join("key.pem");
+    fs::write(&key, b"-----BEGIN PRIVATE KEY-----\nAAAA\n").unwrap();
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    for bad in [
+        "a#b.pem", "a b.pem", "a\tb.pem", "a\nb.pem", "a,b.pem", "a`b.pem", "a&b.pem",
+    ] {
+        let cert = root.join(bad);
+        fs::write(&cert, b"-----BEGIN CERTIFICATE-----\nAAAA\n").unwrap();
+        assert_eq!(
+            validate_supplied(&layout, &cert, &key).unwrap_err(),
+            "kiri_install_tls_path_invalid",
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn bad_supplied_tls_fails_before_inventory_receipt_or_resources() {
+    let (tmp, layout) = temp();
+    let root = fs::canonicalize(tmp.path()).unwrap();
+    let (cert, key) = (root.join("c.pem"), root.join("k.pem"));
+    fs::write(&cert, b"-----BEGIN CERTIFICATE-----\nAAAA\n").unwrap();
+    fs::write(&key, b"-----BEGIN PRIVATE KEY-----\nAAAA\n").unwrap();
+    fs::set_permissions(&cert, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    let options = Options {
+        bundle: root.join("bundle"),
+        public_origin: "https://assistant.example.com".into(),
+        vault_origin: "https://vault.example.com".into(),
+        admin_email: None,
+        admin_name: None,
+        member_capacity: 1,
+        member_volume_gib: 1,
+        password_stdin: false,
+        tls_certificate: Some(cert),
+        tls_key: Some(key),
+        certbot_email: None,
+        accept_certbot_terms: false,
+    };
+    let b = bundle(&root);
+    let fake = host::fake::Fake::default();
+    fake.reply(1, ""); // openssl verify rejects the certificate
+    let docker = browser::Docker { exec: &fake };
+    let err = plan_fresh(
+        &layout,
+        &fake,
+        &docker,
+        &options,
+        &b,
+        ("a@example.com".into(), "Admin".into()),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(err, "kiri_install_certificate_expired_or_wrong_host");
+    // Only the certificate check ran: no network/docker inventory, no receipt.
+    assert!(
+        fake.calls
+            .borrow()
+            .iter()
+            .all(|c| c.starts_with("openssl "))
+    );
+    assert!(!layout.exists(&layout.at(RECEIPT)).unwrap());
+    assert!(!layout.exists(&layout.at(render::ETC)).unwrap());
+}
+
 #[test]
 fn nginx_never_adopts_a_name_served_elsewhere() {
     let (_tmp, layout) = temp();

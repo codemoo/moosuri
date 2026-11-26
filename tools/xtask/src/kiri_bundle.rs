@@ -104,6 +104,29 @@ fn digest(path: &Path, cap: u64) -> Check<String> {
     Ok(format!("{:x}", sha.finalize()))
 }
 
+/// Set an explicit mode (independent of umask) and verify the artifact is a
+/// regular, single-link, expected-owner file that group/other cannot write.
+fn secure_artifact(path: &Path, mode: u32, cap: u64, owner: u32) -> Check<()> {
+    let before = fs::symlink_metadata(path).map_err(|_| "kiri_bundle_artifact_missing")?;
+    ensure(
+        before.is_file() && before.nlink() == 1,
+        "kiri_bundle_artifact_invalid",
+    )?;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|_| "kiri_bundle_artifact_mode_failed")?;
+    let meta = fs::symlink_metadata(path).map_err(|_| "kiri_bundle_artifact_missing")?;
+    ensure(
+        meta.is_file()
+            && meta.nlink() == 1
+            && meta.uid() == owner
+            && meta.mode() & 0o022 == 0
+            && meta.mode() & 0o7777 == mode
+            && meta.len() > 0
+            && meta.len() <= cap,
+        "kiri_bundle_artifact_invalid",
+    )
+}
+
 /// Kiri identifies images by the config JSON digest. With Docker's containerd
 /// image store, even image inspect .Id may instead be an OCI index digest.
 /// Read the saved archive's config without extracting any path to the host.
@@ -348,6 +371,13 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
         let config_id = image_config_id(&source, &output.join(format!("{name}.tar")))?;
         images.insert(name.replace('-', "_"), config_id);
     }
+    for name in ["member.tar", "browser.tar", "google-auth.tar"] {
+        secure_artifact(&output.join(name), 0o600, 4 << 30, uid)?;
+    }
+    for name in ["moosuri", "moosuri-vault-service"] {
+        secure_artifact(&output.join(name), 0o700, 256 << 20, uid)?;
+    }
+    secure_artifact(&output.join("seccomp.json"), 0o600, 64 * 1024, uid)?;
     let mut files = BTreeMap::new();
     for name in [
         "moosuri",
@@ -384,8 +414,11 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
     )
     .and_then(|_| file.sync_all())
     .map_err(|_| "kiri_bundle_manifest_write_failed")?;
-    fs::rename(pending, output.join("manifest.json"))
+    drop(file);
+    secure_artifact(&pending, 0o600, 64 * 1024, uid)?;
+    fs::rename(&pending, output.join("manifest.json"))
         .map_err(|_| "kiri_bundle_manifest_write_failed")?;
+    secure_artifact(&output.join("manifest.json"), 0o600, 64 * 1024, uid)?;
     fs::remove_file(output.join(".incomplete"))
         .map_err(|_| "kiri_bundle_staging_cleanup_failed")?;
     File::open(&output)
@@ -401,6 +434,28 @@ pub fn run(root: &Path, args: &[String]) -> Check<()> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secure_artifact_sets_modes_and_rejects_unsafe_files() {
+        let d = tempfile::tempdir().unwrap();
+        let uid = unsafe { libc::geteuid() };
+        let f = d.path().join("a.tar");
+        fs::write(&f, b"x").unwrap();
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o666)).unwrap();
+        secure_artifact(&f, 0o600, 10, uid).unwrap();
+        assert_eq!(fs::metadata(&f).unwrap().mode() & 0o7777, 0o600);
+        assert!(secure_artifact(&f, 0o600, 0, uid).is_err()); // size cap
+        assert!(secure_artifact(&f, 0o600, 10, uid.wrapping_add(1)).is_err()); // owner
+        let link = d.path().join("l.tar");
+        fs::hard_link(&f, &link).unwrap();
+        assert!(secure_artifact(&f, 0o600, 10, uid).is_err()); // nlink
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&f, &link).unwrap();
+        assert!(secure_artifact(&link, 0o600, 10, uid).is_err()); // symlink
+        let empty = d.path().join("e");
+        fs::write(&empty, b"").unwrap();
+        assert!(secure_artifact(&empty, 0o600, 10, uid).is_err());
+    }
 
     #[test]
     fn docker_legacy_and_containerd_archives_use_the_config_digest() {

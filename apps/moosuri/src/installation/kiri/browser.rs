@@ -175,7 +175,7 @@ impl Docker<'_> {
             &plan.project,
             "browser",
         )?;
-        self.network(&public, false, None, owner, &plan.project, "public")?;
+        let public_network = self.network(&public, false, None, owner, &plan.project, "public")?;
         let name = format!("{}-proxy-1", plan.project);
         let inspect = [
             "container",
@@ -234,14 +234,22 @@ impl Docker<'_> {
             .ok_or("kiri_install_proxy_unavailable")?;
         let nets = v["NetworkSettings"]["Networks"].clone();
         let id = v["Id"].as_str().unwrap_or("").to_owned();
+        let running = v["State"]["Running"] == true;
+        // Kiri fills the endpoint network ID and IP only on start. A stopped,
+        // never-started proxy may report an empty ID; any non-empty ID must be exact.
+        let id_ok = |endpoint: &Value, want: &str| match endpoint["NetworkID"].as_str() {
+            Some(actual) => actual == want || (!running && actual.is_empty()),
+            None => !running && endpoint["NetworkID"].is_null(),
+        };
         if !host::is_hex(&id, 64)
             || v["Image"] != image
             || v["Config"]["Labels"][OWNER] != owner
             || v["Config"]["Labels"][PROJECT] != plan.project
-            || nets[&internal]["NetworkID"] != network
-            // Kiri allocates the actual IP on start. A stopped newly-created
-            // proxy must already request the exact address; it has no IP yet.
-            || if v["State"]["Running"] == true {
+            || nets[&internal].is_null()
+            || !id_ok(&nets[&internal], &network)
+            || (!nets[&public].is_null() && !id_ok(&nets[&public], &public_network))
+            // A stopped newly-created proxy must already request the exact address.
+            || if running {
                 nets[&internal]["IPAddress"] != plan.proxy_ip
             } else {
                 nets[&internal]["IPAMConfig"]["IPv4Address"] != plan.proxy_ip
@@ -266,7 +274,7 @@ impl Docker<'_> {
         if v["State"]["Running"] != true
             || n[&internal]["IPAddress"] != plan.proxy_ip
             || n[&internal]["NetworkID"] != network
-            || n[&public].is_null()
+            || n[&public]["NetworkID"] != public_network
             || v["Id"] != id
         {
             return Err("kiri_install_proxy_not_ready".into());
@@ -350,6 +358,103 @@ pub fn capsule_json(c: &Capsule) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::installation::kiri::host::fake::Fake;
+
+    fn endpoint(id: &str, ip: &str, ipam: bool) -> Value {
+        let mut e = json!({"NetworkID": id, "IPAddress": ip});
+        if ipam {
+            e["IPAMConfig"] = json!({"IPv4Address": "10.102.17.2"});
+        }
+        e
+    }
+    fn proxy(running: bool, internal: Value, public: Option<Value>, image: &str) -> String {
+        let mut nets = json!({"p_browser": internal});
+        if let Some(p) = public {
+            nets["p_public"] = p;
+        }
+        json!({"Id": "c".repeat(64), "Image": image, "State": {"Running": running},
+            "Config": {"Labels": {(OWNER): "own", (PROJECT): "p"}},
+            "NetworkSettings": {"Networks": nets}})
+        .to_string()
+    }
+    fn net(id: &str, internal: bool, subnet: bool) -> String {
+        let mut v = json!({"Id": id, "Internal": internal,
+            "Labels": {(OWNER): "own", (PROJECT): "p"}});
+        if subnet {
+            v["IPAM"] = json!({"Config": [{"Subnet": "10.102.17.0/24"}]});
+        }
+        v.to_string()
+    }
+    fn plan_p() -> NetPlan {
+        NetPlan {
+            subnet: "10.102.17.0/24".into(),
+            proxy_ip: "10.102.17.2".into(),
+            project: "p".into(),
+        }
+    }
+
+    #[test]
+    fn proxy_accepts_empty_or_exact_prestart_ids_and_verifies_both_after_start() {
+        let (n1, n2) = ("a".repeat(64), "b".repeat(64));
+        let image = format!("sha256:{}", "1".repeat(64));
+        let plan = plan_p();
+        let run = |prestart: String, poststart: Option<String>| {
+            let fake = Fake::default();
+            fake.reply(0, &net(&n1, true, true));
+            fake.reply(0, &net(&n2, false, false));
+            fake.reply(0, &prestart);
+            fake.reply(0, &prestart);
+            if let Some(post) = poststart {
+                fake.reply(0, ""); // network connect (public not attached yet)
+                fake.reply(0, ""); // container start
+                fake.reply(0, &post);
+            }
+            Docker { exec: &fake }.capsule(&image, &plan, "own")
+        };
+        let running = |pub_id: &str, ip: &str| {
+            proxy(
+                true,
+                endpoint(&n1, ip, true),
+                Some(endpoint(pub_id, "172.18.0.2", false)),
+                &image,
+            )
+        };
+        // Empty IDs before first start, then exact IDs after.
+        let stopped =
+            |internal_id: &str| proxy(false, endpoint(internal_id, "", true), None, &image);
+        assert!(run(stopped(""), Some(running(&n2, "10.102.17.2"))).is_ok());
+        assert!(run(stopped(&n1), Some(running(&n2, "10.102.17.2"))).is_ok());
+        // Wrong non-empty pre-start ID, wrong post-start public ID or IP are refused.
+        assert_eq!(
+            run(stopped(&"d".repeat(64)), None).unwrap_err(),
+            "kiri_install_proxy_conflict"
+        );
+        assert_eq!(
+            run(stopped(""), Some(running(&"d".repeat(64), "10.102.17.2"))).unwrap_err(),
+            "kiri_install_proxy_not_ready"
+        );
+        assert_eq!(
+            run(stopped(""), Some(running(&n2, "10.102.17.9"))).unwrap_err(),
+            "kiri_install_proxy_not_ready"
+        );
+        // A container that is already running may not have an empty ID.
+        let live_empty = proxy(
+            true,
+            endpoint("", "10.102.17.2", true),
+            Some(endpoint(&n2, "172.18.0.2", false)),
+            &image,
+        );
+        assert_eq!(
+            run(live_empty, None).unwrap_err(),
+            "kiri_install_proxy_conflict"
+        );
+        // Stopped with the wrong requested address.
+        let mut wrong_ip = endpoint("", "", true);
+        wrong_ip["IPAMConfig"]["IPv4Address"] = json!("10.102.17.3");
+        assert_eq!(
+            run(proxy(false, wrong_ip, None, &image), None).unwrap_err(),
+            "kiri_install_proxy_conflict"
+        );
+    }
 
     #[test]
     fn subnet_plan_skips_every_overlap_and_other_capsule() {

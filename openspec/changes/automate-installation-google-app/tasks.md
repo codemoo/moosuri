@@ -530,3 +530,30 @@ installation artifacts from public source, provision the Linux services, then
 implement same-profile SDK/Console app creation and actual member consent/GWS.
 The conservative post-login cleanup fence is retained; only key-only preparation
 can retry immediately. Overall clean-install and real-provider gates remain open.
+
+
+### Clean-install recovery review — 2026-11-26
+
+The initial complete source build exposed artifact-mode and Docker OCI config-ID
+compatibility failures, followed by the stopped proxy pre-start address check.
+Candidate `00c61ed` fixed those issues. The diagnostic repaired bundle is not a
+clean-source acceptance result. No product data was initialized in that run.
+
+Independent Claude Sonnet 5.5 / medium review also identified late TLS validation
+and incomplete mode normalization. The candidate now validates both HTTPS names,
+dates and certificate/private-key pairing before saving a receipt; encrypted keys
+and nginx-token path characters are rejected. Image tars and the manifest receive
+explicit private modes and metadata checks. A stopped proxy may have empty endpoint
+IDs, but its requested IP and its exact post-start internal/public IDs are checked.
+
+Linux: 21 installer tests and 2 bundle tests passed, including real OpenSSL good,
+wrong-host, expired, wrong-key and encrypted-key cases. Initial failures in the new
+fixtures (shared cert modes and a missing fake inspection response) were fixed
+without weakening product validation. Closure review found no unresolved high or
+medium defect in these boundaries. The probe-resume concern was resolved by reading
+the actual probe: published evidence/config is deterministic for unchanged resource
+identities, so the existing re-probe and exact-byte comparison are retained.
+
+Pending: an unmodified source installation, real post-probe interruption/resume,
+installed-member/Vault/invitation scenarios and reboot. Production and the default
+public installer remain unchanged; OAuth issuance and real Gmail read remain open.

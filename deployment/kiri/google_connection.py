@@ -16,7 +16,7 @@ import secure_google as google
 
 CONFIG = fresh.BASE / 'moosuri-google-connection.json'
 KEY = fresh.BASE / 'moosuri-google-connection.pem'
-PROTOCOL = 'moosuri-google-connection-v2'
+PROTOCOL = 'moosuri-google-connection-v3'
 class TeardownFailed(Exception):
     """Chrome may still be live, so no teardown acknowledgement may be sent."""
 
@@ -31,8 +31,8 @@ SCOPES = {'gmail':'gmail.readonly', 'drive':'drive.metadata.readonly', 'docs':'d
           'sheets':'spreadsheets.readonly', 'slides':'presentations.readonly'}
 
 
-def binding(job, account, email):
-    return ('moosuri-google-v1\n' + job + '\n' + account + '\n' + email).encode()
+def binding(job, account, email, selected=None):
+    return ('moosuri-google-v2\n' + job + '\n' + account + '\n' + email + '\n' + (selected or email)).encode()
 
 
 def decode(value, limit):
@@ -176,9 +176,12 @@ def main():
     config = json.loads(fresh._read(CONFIG))
     request = google.receive(2048, 12)
     job = request['job']
-    if (set(request) != {'protocol', 'job', 'account', 'email', 'service'} or
+    if (set(request) != {'protocol', 'job', 'account', 'email', 'google_email', 'service'} or
         request['protocol'] != PROTOCOL or str(UUID(job)) != job or request['account'] != config['account'] or
         request['email'] != config['email'] or request['service'] not in SCOPES):
+        raise ValueError()
+    selected = request['google_email']
+    if not isinstance(selected, str) or len(selected.encode()) > 254 or not google.EMAIL.fullmatch(selected):
         raise ValueError()
     key = serialization.load_pem_private_key(fresh._read(KEY), password=None)
     # A syntactically valid Deliver request is not enough to open Chrome. Kiri
@@ -194,7 +197,8 @@ def main():
         # AESGCM and the CDP JSON call necessarily create short-lived immutable
         # Python copies that cannot be zeroized in place. Mutable copies are wiped,
         # and the isolated one-shot guest process is discarded at the boundary.
-        secret = decrypt(packet, key, binding(job, config['account'], config['email']))
+        secret = decrypt(packet, key, binding(job, config['account'], config['email'], selected))
+        config = dict(config, email=selected)
         google.send({'status':'verified'})
         release = google.receive(256, 45)
         if release != {'status':'proceed'}:

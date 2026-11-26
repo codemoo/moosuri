@@ -410,7 +410,7 @@ fn main() {
         })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|account-runtime-extract --scope manual-knowledge-v1 --snapshot DIRECTORY --output DIRECTORY --account UUID --tenant UUID --volume UUID --generation N|account-runtime-extract --verify DIRECTORY|account-runtime-inventory [--schema 81..102] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|account-runtime-extract --scope manual-knowledge-v1 --snapshot DIRECTORY --output DIRECTORY --account UUID --tenant UUID --volume UUID --generation N|account-runtime-extract --verify DIRECTORY|account-runtime-inventory [--schema 81..103] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }

@@ -633,6 +633,8 @@ struct StartInput {
     read: Option<moosuri_store::MemberGoogleReadIntent>,
     #[serde(default)]
     match_member_account: bool,
+    #[serde(default)]
+    selected_email: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -814,12 +816,13 @@ async fn start(
     }
     let pending = g
         .store
-        .start_member_service_oauth_for_account(
+        .start_member_service_oauth_with_selection(
             &user,
             g.owner,
             g.service,
             app.app_revision,
             input.match_member_account,
+            input.selected_email,
         )
         .await?;
     if let Some(read) = input.read
@@ -1452,6 +1455,36 @@ mod tests {
         assert_eq!(current["connection"]["connection_id"], original_id);
         let generic = connect(&different, owner, &token).await;
         assert_eq!(generic["mailbox"], "other@example.test");
+        let (_, selected) = consent(
+            &different,
+            owner,
+            &token,
+            json!({"selected_email":"OTHER@example.test"}),
+        )
+        .await;
+        assert_eq!(selected.status(), StatusCode::OK);
+        let selected_id = value(selected).await["connection_id"].clone();
+        let (_, mismatch) = consent(
+            &original,
+            owner,
+            &token,
+            json!({"selected_email":"other@example.test"}),
+        )
+        .await;
+        assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+        let current = value(request(&different, owner, &token, BASE, "GET", json!({})).await).await;
+        assert_eq!(current["connection"]["connection_id"], selected_id);
+        assert_eq!(current["connection"]["mailbox"], "other@example.test");
+        let invalid = request(
+            &original,
+            owner,
+            &token,
+            &format!("{BASE}/start"),
+            "POST",
+            json!({"selected_email":"other@example.test","match_member_account":true}),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
     }
     async fn thread_connect(
         app: &Router,

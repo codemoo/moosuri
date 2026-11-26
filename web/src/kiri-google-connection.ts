@@ -2,9 +2,12 @@ import { postVaultForm } from "./VaultLaunch";
 import type { GoogleReadIntent } from "./PersonalGoogle";
 import { ApiFailure, type RequestOptions } from "./api";
 
-type Receipt = {job:string; challenge:string; state:string; flow:string|null; handle:string|null};
+type Receipt = {job:string; challenge:string; state:string; flow:string|null; handle:string|null; email:string|null};
 type Request = <T>(path:string, method?:string, body?:unknown, signal?:AbortSignal, options?:RequestOptions)=>Promise<T>;
 const base = "/personal/google/kiri";
+// Timeouts and proxy/server errors cannot prove whether Deliver was accepted.
+const definiteRejection = (error:unknown) => error instanceof ApiFailure
+  && error.status >= 400 && error.status < 500 && ![408,429].includes(error.status);
 const waiting: Record<string,string> = {
   validating:"볼트에서 선택한 Gmail 계정을 Kiri가 확인하고 있습니다.",
   opening:"볼트에서 선택한 계정으로 Kiri를 여는 중입니다.",
@@ -26,6 +29,8 @@ export async function connectInKiri(request:Request, account:string, email:strin
   const popup = window.open("about:blank", target);
   if (!popup) throw Error("볼트를 열 수 없습니다. 새 창을 허용한 뒤 다시 연결하세요.");
   let delivering = false, delivered = false, deliveryUncertain = false, handed = false, finished = false;
+  let retryEnvelope: {envelope:unknown;google_email:string}|undefined;
+  let deliveryRejected: unknown;
   const call = (op:string, extra:Record<string,unknown>={})=>request<Receipt>(base,"POST",{op,job,...extra},signal,{timeoutMs:15000});
   const close = ()=>popup.close();
   signal.addEventListener("abort",close,{once:true});
@@ -38,8 +43,10 @@ export async function connectInKiri(request:Request, account:string, email:strin
     while (!signal.aborted && Date.now()<deadline) {
       if (current.job!==job) throw Error(ended.unavailable);
       if (current.state==="complete" && /^[0-9a-f]{64}$/.test(current.handle??"") && /^[0-9a-f]{64}$/.test(current.flow??"")) {
-        finished=true;return {handle:current.handle!,flow:current.flow!};
+        if (!current.email || !/^[^@\s]+@[^@\s]+$/u.test(current.email)) throw Error(ended.unavailable);
+        finished=true;return {handle:current.handle!,flow:current.flow!,email:current.email};
       }
+      if(deliveryRejected) throw deliveryRejected;
       if (!Object.hasOwn(waiting,current.state)) {
         finished=true;throw Error(ended[current.state]??ended.unavailable);
       }
@@ -54,16 +61,17 @@ export async function connectInKiri(request:Request, account:string, email:strin
       if (current.state==="vault" && !handed) {
         const handoff=await request<{token:string;vault_origin:string}>("/personal/vault/handoff","POST",{},signal);
         if (handoff.vault_origin!==vaultOrigin || signal.aborted) throw Error(ended.unavailable);
-        postVaultForm(popup,target,handoff,account,email,{job:current.challenge,receive:async envelope=>{
+        postVaultForm(popup,target,handoff,account,email,{job:current.challenge,receive:async (envelope,google_email)=>{
           if (signal.aborted || delivering || delivered || deliveryUncertain) return;
+          retryEnvelope={envelope,google_email};
           delivering=true;
           try {
-            await call("deliver",{envelope});delivered=true;deliveryUncertain=false;deadline=Date.now()+425000;close();
+            await call("deliver",{envelope,google_email});delivered=true;deliveryUncertain=false;deadline=Date.now()+425000;close();
           } catch(error) {
-            // A server response proves rejection, so leave the vault open for a
-            // retry and surface the real conflict. A lost response stays in the
-            // vault until Status proves acceptance or permits a safe retry.
-            deliveryUncertain=!(error instanceof ApiFailure);
+            // Only a definite client rejection terminates the handoff. An
+            // uncertain response is reconciled before closing or cancelling.
+            deliveryUncertain=!definiteRejection(error);
+            if(!deliveryUncertain) deliveryRejected=error;
             throw error;
           } finally { delivering=false; }
         }});
@@ -77,12 +85,23 @@ export async function connectInKiri(request:Request, account:string, email:strin
         // Do not turn an accepted-but-unacknowledged Deliver into Cancel merely
         // because its first reconciliation read also failed. Retry within the
         // existing bounded job deadline.
-        if (reconcilingDelivery && !signal.aborted) continue;
+        if (reconcilingDelivery && !signal.aborted && !definiteRejection(error)) continue;
         throw error;
       }
       if (reconcilingDelivery) {
         deliveryUncertain=false;
         if (current.state!=="vault") {delivered=true;deadline=Date.now()+425000;close();}
+        else if(retryEnvelope) {
+          // Status proves no delivery was accepted. Replay the exact sealed
+          // packet; never ask the vault to generate a conflicting envelope.
+          delivering=true;
+          try {
+            await call("deliver",retryEnvelope);delivered=true;deadline=Date.now()+425000;close();
+          } catch(error) {
+            deliveryUncertain=!definiteRejection(error);
+            if(!deliveryUncertain) throw error;
+          } finally {delivering=false;}
+        }
       }
       if (["signing_in","signed_in","consent"].includes(current.state)) {delivered=true;close();}
     }

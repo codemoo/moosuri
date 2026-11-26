@@ -108,7 +108,7 @@ beforeEach(() => {
   browserRoute = undefined;
   deleteThreadResponse = undefined;
   inventoryFailure = false;
-  vi.mocked(connectInKiri).mockResolvedValue({ flow: "a".repeat(64), handle: "b".repeat(64) });
+  vi.mocked(connectInKiri).mockResolvedValue({ flow: "a".repeat(64), handle: "b".repeat(64), email: "a@example.test" });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {

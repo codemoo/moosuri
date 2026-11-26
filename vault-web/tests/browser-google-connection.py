@@ -41,6 +41,8 @@ def exercise(context, origin, vault_origin, email, login_password, _):
     vault.get_by_role("button",name="저장하고 열기").click()
     field=vault.get_by_label('Google 계정 비밀번호')
     expect(field).to_be_visible()
+    selected_email='first-google@example.test'
+    vault.get_by_label('Google 계정 이메일').fill(selected_email)
     secret=secrets.token_hex(17);field.fill(secret)
     vault.get_by_role("button",name="볼트에 저장하고 계속").click()
     def wait_for_packet(count):
@@ -52,7 +54,8 @@ def exercise(context, origin, vault_origin, email, login_password, _):
     def verify(index,job):
         p=app.evaluate("(i)=>window.packets[i]",index)
         assert p['job']==job and secret not in json.dumps(p)
-        label=('moosuri-google-v1\n'+job+'\n'+account+'\n'+email).encode()
+        assert p['email']==selected_email
+        label=('moosuri-google-v2\n'+job+'\n'+account+'\n'+email+'\n'+selected_email).encode()
         e=p['envelope']
         aes=key.decrypt(base64.b64decode(e['key']),padding.OAEP(mgf=padding.MGF1(hashes.SHA256()),algorithm=hashes.SHA256(),label=label))
         assert AESGCM(aes).decrypt(base64.b64decode(e['iv']),base64.b64decode(e['body']),label)==secret.encode()
@@ -73,7 +76,8 @@ def exercise(context, origin, vault_origin, email, login_password, _):
     second_title='Google backup credential'
     second_secret=secrets.token_hex(18)
     other.get_by_label('이름',exact=True).fill(second_title)
-    other.get_by_label('사용자 이름',exact=True).fill(email)
+    second_email='second-google@example.test'
+    other.get_by_label('사용자 이름',exact=True).fill(second_email)
     other.get_by_label('주소',exact=True).fill('https://accounts.google.com')
     other.get_by_label('비밀번호 또는 키').fill(second_secret)
     other.get_by_role('button',name='저장',exact=True).click()
@@ -82,11 +86,12 @@ def exercise(context, origin, vault_origin, email, login_password, _):
 
     job=str(uuid.uuid4());app.evaluate("j=>{window.testJob=j}",job)
     vault.reload();vault.get_by_label('볼트 비밀번호',exact=True).fill(password);vault.get_by_role('button',name='열기',exact=True).click()
-    expect(vault.get_by_text('이 Gmail 계정으로 저장된 항목이 여러 개 있습니다. 사용할 항목을 선택하세요.',exact=True)).to_be_visible()
+    expect(vault.get_by_text('Google 계정이 여러 개 있습니다. 연결할 계정을 선택하세요.',exact=True)).to_be_visible()
+    expect(vault.get_by_role('button',name=re.compile('^'+re.escape(selected_email)))).to_be_visible()
     time.sleep(.5)
     assert app.evaluate('window.packets.length')==2
-    vault.get_by_role('button',name=re.compile('^'+re.escape(second_title)+' · 버전 [0-9]+ · 항목 [0-9a-f]{6}$')).click()
+    vault.get_by_role('button',name=re.compile('^'+re.escape(second_email)+' · '+re.escape(second_title)+' · 항목 [0-9a-f]{6}$')).click()
     wait_for_packet(3)
-    secret=second_secret;verify(2,job)
+    secret=second_secret;selected_email=second_email;verify(2,job)
     print('PASS multiple matching Gmail entries wait for an explicit vault selection',flush=True)
 h.exercise=exercise;h.main()

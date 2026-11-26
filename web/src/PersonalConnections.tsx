@@ -39,7 +39,7 @@ function googleInfo(status: ConnectionStatus, mailbox: string | undefined, insta
   if (status === "checking") return { badge: { label: "확인 중" }, message: "연결 상태를 확인하고 있습니다." };
   if (status === "error") return { badge: { label: "확인 실패", tone: "attention" }, message: "연결 상태를 확인할 수 없습니다. 다시 확인해 주세요." };
   if (status === "disabled") {
-    if (installation === "required") return { badge: { label: "설치 설정 필요", tone: "attention" }, message: "Google 연결을 시작하려면 먼저 이 앱 안에서 Google Workspace 설치 설정을 마쳐 주세요." };
+    if (installation === "required") return { badge: { label: "설치 설정 필요", tone: "attention" }, message: "먼저 볼트에서 Google 계정을 확인합니다. 서비스 권한 연결에는 설치용 Google 앱 등록도 필요합니다." };
     if (installation === "configured") return { badge: { label: "연결 준비 중", tone: "attention" }, message: "이 회원의 Google 연결을 준비 중입니다. 잠시 후 다시 확인해 주세요." };
     return { badge: { label: "연결 불가", tone: "attention" }, message: "이 서버에서 Google 로그인을 아직 사용할 수 없습니다. 설치 관리자에게 문의해 주세요." };
   }
@@ -200,7 +200,7 @@ export function PersonalConnections({
       const prefix="/personal/google"+(workspaceService?"/"+workspaceService:"");
       const grant=await connectScope.request<{flow_id:string;mailbox:string;continuation?:{thread_id:string;request_id:string}}>(
         prefix+"/complete","POST",{handle:result.handle},controller.signal,{timeoutMs:75000});
-      if(grant.flow_id!==result.flow || grant.mailbox.toLowerCase()!==props.session.user.email.toLowerCase()) throw Error("Google 연결 계정을 확인하지 못했습니다.");
+      if(grant.flow_id!==result.flow || grant.mailbox.toLowerCase()!==result.email.toLowerCase()) throw Error("Google 연결 계정을 확인하지 못했습니다.");
       setKiriMessage("Google 서비스 연결을 확인했습니다.");
       if(workspaceService) await workspace.retry();
       else if(read && props.readIntent && props.readIntent.thread_id===grant.continuation?.thread_id && props.readIntent.request_id===grant.continuation.request_id)
@@ -252,12 +252,12 @@ export function PersonalConnections({
                 <button className="member-page-action" disabled={memberFlow.busy} onClick={()=>{
                   if(workspaceService)void workspace.action(workspaceService,"disconnect");else void google.action("disconnect");
                 }}>연결 해제</button>
-              </> : memberFlow.status==="ready" ? <button className="member-page-action connector-primary" disabled={connecting || vaultStatus.status!=="ready"}
+              </> : (memberFlow.status==="ready" || (installationAdmin && installation==="required" && memberFlow.status==="disabled")) ? <button className="member-page-action connector-primary" disabled={connecting || vaultStatus.status!=="ready"}
                 onClick={()=>void connect(gmailRead)}>{gmailRead?"Google 연결하고 메일 확인":"Google 연결"}</button>
-                : installationAdmin && memberFlow.status==="disabled" ? <button className="member-page-action connector-primary"
-                  onClick={()=>show(selected,true)}>Google Workspace 설정</button>
                 : memberFlow.status!=="checking" && <button className="member-page-action"
                   onClick={()=>{if(workspaceService)void workspace.retry();else google.retry();}}>다시 확인</button>}
+              {installationAdmin && memberFlow.status==="disabled" && <button className="member-page-action" disabled={connecting}
+                onClick={()=>show(selected,true)}>Google Workspace 설정</button>}
               {!mailbox && memberFlow.status==="ready" && vaultStatus.status!=="ready" && <p role="status">{getVaultInfo(vaultStatus).message}</p>}
               {kiriMessage && <p role="status">{kiriMessage}</p>}
               {connecting && <button className="member-page-action" onClick={()=>{active.current?.abort();setKiriMessage("연결을 취소했습니다.");}}>취소</button>}

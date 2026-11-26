@@ -1,6 +1,6 @@
 import {useEffect,useState} from "react";
 import {useScope} from "./account-scope";
-type KiriHandoff = {job:string; receive:(envelope:unknown)=>Promise<void>};
+type KiriHandoff = {job:string; receive:(envelope:unknown,email:string)=>Promise<void>};
 const windows=new Set<{window:Window;origin:string;account:string;googleEmail?:string;kiri?:KiriHandoff}>();
 // A popup may request only its own non-secret account hint. A normal vault launch
 // has no hint and a different window or origin cannot consume it.
@@ -10,10 +10,10 @@ window.addEventListener("message", event => {
     if (entry.googleEmail && entry.window === event.source && event.origin === entry.origin &&
         event.data.account === entry.account && !entry.window.closed) {
       if (event.data.kind === "moosuri-vault-kiri-sealed") {
-        if (!entry.kiri || event.data.job !== entry.kiri.job) return;
+        if (!entry.kiri || event.data.job !== entry.kiri.job || typeof event.data.email !== "string") return;
         const handoff=entry.kiri;
-        entry.kiri=undefined;
-        void handoff.receive(event.data.envelope).catch(()=>entry.window.close());
+        // Canonical job status, not a failed transport, decides when to close.
+        void handoff.receive(event.data.envelope,event.data.email).catch(()=>{});
         break;
       }
       entry.window.postMessage({ kind: "moosuri-vault-google-account", account: entry.account, email: entry.googleEmail, job:entry.kiri?.job }, entry.origin);

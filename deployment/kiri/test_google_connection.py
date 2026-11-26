@@ -80,6 +80,14 @@ class Connection(unittest.TestCase):
     def test_different_job_cannot_unwrap(self):
         with self.assertRaises(ValueError):
             flow.decrypt(self.packet,self.key,flow.binding('different','account',EMAIL))
+    def test_selected_email_is_cryptographically_bound(self):
+        selected = 'second@gmail.com'
+        label = flow.binding('attempt','account',EMAIL,selected)
+        packet = self.seal(label)
+        self.assertEqual(flow.decrypt(packet,self.key,label), bytearray(b'synthetic'))
+        for wrong in (EMAIL, 'third@gmail.com'):
+            with self.assertRaises(ValueError):
+                flow.decrypt(packet,self.key,flow.binding('attempt','account',EMAIL,wrong))
     def test_invalid_plaintext_buffer_is_wiped(self):
         value = bytearray(b'bad\0secret')
         with self.assertRaises(ValueError):
@@ -93,7 +101,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         with (patch.object(flow.fresh,'_read',side_effect=[config,private]),
               patch.object(flow.google,'receive',side_effect=[request,{'key':'bad','iv':'bad','body':'bad'}]),
               patch.object(flow.google,'send') as sent,
@@ -110,7 +118,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         packet = self.seal(flow.binding(job,'account',EMAIL))
         with (patch.object(flow.fresh,'_read',side_effect=[config,private]),
               patch.object(flow.google,'receive',side_effect=[request,packet,{'status':'proceed'}]),
@@ -128,7 +136,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         packet = self.seal(flow.binding(job,'account',EMAIL))
         with (patch.object(flow.fresh,'_read',side_effect=[config,private]),
               patch.object(flow.google,'receive',side_effect=[request,packet,{'status':'stop'}]),
@@ -146,7 +154,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         packet = self.seal(flow.binding(job,'account',EMAIL))
         browser = Browser([])
         browser.discard = Mock()
@@ -168,7 +176,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         secret = bytearray(b'synthetic')
         with (patch.object(flow.fresh,'_read',side_effect=[config,private]),
               patch.object(flow.google,'receive',side_effect=[request,{}, {'status':'proceed'}]),
@@ -181,7 +189,7 @@ class Connection(unittest.TestCase):
     def test_old_gateway_protocol_stops_before_vault_or_browser(self):
         job = '00000000-0000-4000-8000-000000000001'
         config = json.dumps({'account':'account','email':EMAIL}).encode()
-        request = {'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         with (patch.object(flow.fresh,'_read',return_value=config),
               patch.object(flow.google,'receive',return_value=request),
               patch.object(flow.google,'send') as sent,
@@ -198,7 +206,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         packet = self.seal(flow.binding(job,'account',EMAIL))
         browser = Browser([])
         events = []
@@ -222,7 +230,7 @@ class Connection(unittest.TestCase):
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'service':'gmail'}
+        request = {'protocol':flow.PROTOCOL,'job':job,'account':'account','email':EMAIL,'google_email':EMAIL,'service':'gmail'}
         packet = self.seal(flow.binding(job,'account',EMAIL))
         browser = Browser([])
         browser.discard = Mock(side_effect=RuntimeError('still_live'))

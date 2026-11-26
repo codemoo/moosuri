@@ -22,7 +22,7 @@ const gmail = { connection_id: "gmail-id", epoch: 2, mailbox: "gmail@example.tes
 
 function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion = false, configured = true } = {}) {
   const calls: { path: string; method: string; body: unknown }[] = [];
-  vi.mocked(connectInKiri).mockResolvedValue({ flow, handle });
+  vi.mocked(connectInKiri).mockResolvedValue({ flow, handle, email: session.user.email });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit) => {
     const method = init.method ?? "GET";
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
@@ -226,7 +226,7 @@ it("keeps an unregistered installation distinct from each member connection and 
   expect(screen.getByRole("heading", { name: "Google Slides" })).toHaveFocus();
   const detail = within(screen.getByRole("region", { name: "Google Slides" }));
   expect(detail.getByRole("button", { name: "Google Workspace 설정" })).toBeEnabled();
-  expect(detail.queryByRole("button", { name: "Google 연결" })).not.toBeInTheDocument();
+  expect(detail.getByRole("button", { name: "Google 연결" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   expect(screen.getByRole("button", { name: /Google Slides .*설치 설정 필요/ })).toHaveFocus();
   expect(calls.every(({ method }) => method === "GET")).toBe(true);

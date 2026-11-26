@@ -2,7 +2,7 @@
 import init,{VaultEngine} from "./wasm/vault_crypto.js";
 import type {Command,EntryDetails,Operation,Owner,Receipt,State,VaultHead,CurrentSession} from "./types";
 import {workerSelector} from "./import-filter";
-import {googleLogins} from "./google-login";
+import {googleLogins, googleAccounts} from "./google-login";
 const scope=self as unknown as DedicatedWorkerGlobalScope;
 let engine:VaultEngine|undefined,owner:Owner|undefined,closed=false,published=false;
 let queue=Promise.resolve(),loaded:Promise<unknown>|undefined,admittedHead:VaultHead|undefined,pollQueued=false;
@@ -144,6 +144,7 @@ async function dispatch(command:Command):Promise<unknown>{
     const chosen=workerSelector(command.username,command.usernames);
     const csv=await file.text();if(closed)throw fixed("vault_locked");await checkHead();return local({op:"csv_preview",csv,username:chosen.username,usernames:chosen.usernames});
   }
+  if(command.op==="google_accounts")return googleAccounts(local);
   if(command.op==="google_logins")return googleLogins(command.email, local);
   if(command.op==="google_fill"){
     // Item edits do not always change the key header. Re-read the admitted

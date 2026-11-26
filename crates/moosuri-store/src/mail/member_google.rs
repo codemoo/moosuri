@@ -591,6 +591,29 @@ impl Store {
         app: Uuid,
         match_member_account: bool,
     ) -> Result<MailOAuthStart> {
+        self.start_member_service_oauth_with_selection(
+            u,
+            o,
+            service,
+            app,
+            match_member_account,
+            None,
+        )
+        .await
+    }
+    pub async fn start_member_service_oauth_with_selection(
+        &self,
+        u: &UserContext,
+        o: VolumeOwner,
+        service: Service,
+        app: Uuid,
+        match_member_account: bool,
+        selected_email: Option<String>,
+    ) -> Result<MailOAuthStart> {
+        if match_member_account && selected_email.is_some() {
+            return Err(StoreError::InvalidInput);
+        }
+        let selected_email = selected_email.map(email_valid).transpose()?;
         let user = u.clone();
         let pin = self
             .call(move |db| {
@@ -617,8 +640,8 @@ impl Store {
             let exact: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE state_hash=?1 AND tenant_id=?2 AND account_id=?3 AND session_digest=?4 AND auth_epoch=?5 AND compose=0 AND claimed=0 AND expires_at>unixepoch())", params![digest,u.tenant.0,u.account.id,u.digest.as_slice(),u.epoch], |r| r.get(0))?;
             if !exact { return Err(StoreError::Conflict); }
             tx.execute("INSERT INTO member_google_oauth VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![digest,u.tenant.0,u.account.id,o.volume.to_string(),o.generation as i64,app.to_string(),pin.0,pin.1,service.as_str()])?;
-            if match_member_account {
-                tx.execute("INSERT INTO member_google_account_choices(state_hash) VALUES(?1)", [digest])?;
+            if match_member_account || selected_email.is_some() {
+                tx.execute("INSERT INTO member_google_account_choices(state_hash,selected_email) VALUES(?1,?2)", params![digest,selected_email])?;
             }
             tx.commit()?;
             Ok(())
@@ -686,11 +709,11 @@ impl Store {
             let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_oauth_sessions WHERE state_hash=?1 AND claimed=1 AND expires_at>unixepoch() AND session_digest=?2 AND auth_epoch=?3)",params![e.state,u.digest.as_slice(),u.epoch],|r|r.get(0))?;
             if !valid { return Err(StoreError::Conflict); }
             let (payload, mailbox, expires) = grant(g, p.request_id, p.owner, p.app, service, None)?;
-            let match_member: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM member_google_account_choices WHERE state_hash=?1)",
+            let choice: Option<Option<String>> = tx.query_row(
+                "SELECT selected_email FROM member_google_account_choices WHERE state_hash=?1",
                 [&e.state], |row| row.get(0),
-            )?;
-            if match_member && !mailbox.eq_ignore_ascii_case(&u.account.email) {
+            ).optional()?;
+            if choice.is_some_and(|email| !mailbox.eq_ignore_ascii_case(email.as_deref().unwrap_or(&u.account.email))) {
                 tx.execute("DELETE FROM mail_oauth_sessions WHERE state_hash=?1", [&e.state])?;
                 tx.commit()?;
                 return Err(StoreError::Conflict);

@@ -1,4 +1,5 @@
 import type { Command, Summary } from "./types";
+import {validGoogleEmail} from "./google-login";
 
 export type KiriRecipient = { account: string; email: string; spki: string };
 export const validJob = (id: unknown): id is string => typeof id === "string" &&
@@ -6,9 +7,9 @@ export const validJob = (id: unknown): id is string => typeof id === "string" &&
 const encode = (data: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(data as ArrayBuffer)));
 
 export async function sealGoogleLogin(recipient: KiriRecipient, account: string, email: string, job: string,
-  item: Summary, run: <T>(command: Command) => Promise<T>) {
-  if (!validJob(job) || recipient.account !== account || recipient.email !== email) throw Error("vault_unauthorized");
-  const label = new TextEncoder().encode(["moosuri-google-v1", job, account, email].join("\n"));
+  item: Summary & {email:string}, run: <T>(command: Command) => Promise<T>) {
+  if (!validJob(job) || recipient.account !== account || recipient.email !== email || !validGoogleEmail(item.email)) throw Error("vault_unauthorized");
+  const label = new TextEncoder().encode(["moosuri-google-v2", job, account, email, item.email].join("\n"));
   const publicKey = await crypto.subtle.importKey("spki", Uint8Array.from(atob(recipient.spki), c => c.charCodeAt(0)),
     { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
   if ((publicKey.algorithm as RsaKeyAlgorithm).modulusLength !== 3072) throw Error("vault_unavailable");
@@ -17,7 +18,7 @@ export async function sealGoogleLogin(recipient: KiriRecipient, account: string,
   const wrapped = await crypto.subtle.encrypt({name:"RSA-OAEP", label}, publicKey, raw);
   new Uint8Array(raw).fill(0);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const secret = new TextEncoder().encode(await run<string>({op:"google_fill", email, item:item.id, revision:item.revision}));
+  const secret = new TextEncoder().encode(await run<string>({op:"google_fill", email:item.email, item:item.id, revision:item.revision}));
   try {
     if (!secret.length || secret.length > 4096) throw Error("vault_invalid_input");
     const body = await crypto.subtle.encrypt({name:"AES-GCM", iv, additionalData:label}, key, secret);

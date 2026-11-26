@@ -20,7 +20,7 @@ const AUTH_RECHECK_INTERVAL: Duration = Duration::from_secs(2);
 const GUEST_TEARDOWN_GRACE: Duration = Duration::from_secs(180);
 const MAX_MEMBER_JOBS: usize = 16;
 const MAX_MEMBER_VAULT_JOBS: usize = 8;
-const PROTOCOL: &str = "moosuri-google-connection-v2";
+const PROTOCOL: &str = "moosuri-google-connection-v3";
 pub(super) type Jobs = Arc<Mutex<Vec<Job>>>;
 pub(super) struct Job {
     id: Uuid,
@@ -30,6 +30,7 @@ pub(super) struct Job {
     epoch: i64,
     session: String,
     email: String,
+    google_email: Option<String>,
     expires: Instant,
     state: &'static str,
     read: Option<moosuri_store::MemberGoogleReadIntent>,
@@ -64,6 +65,7 @@ enum Input {
     },
     Deliver {
         job: Uuid,
+        google_email: String,
         envelope: Envelope,
     },
     Cancel {
@@ -112,6 +114,13 @@ async fn reauthorize(
 }
 fn deliverable(state: &str) -> bool {
     state == "vault"
+}
+fn valid_google_email(email: &str) -> bool {
+    email.len() <= 254
+        && !email.chars().any(|c| c.is_whitespace() || c.is_control())
+        && email.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty() && !domain.is_empty() && !domain.contains('@')
+        })
 }
 fn terminal(state: &str) -> bool {
     matches!(
@@ -360,7 +369,7 @@ impl Job {
         self.id == id && self.owned_by(a, session, email)
     }
     fn receipt(&self) -> Value {
-        json!({"job": self.id, "challenge":self.challenge, "state": self.state, "flow": self.flow, "handle": self.handle})
+        json!({"job": self.id, "challenge":self.challenge, "state": self.state, "flow": self.flow, "handle": self.handle, "email":self.google_email})
     }
 }
 
@@ -434,6 +443,7 @@ async fn handle(
                 epoch: a.epoch,
                 session: hash(&session),
                 email: email.clone(),
+                google_email: None,
                 expires: Instant::now() + VAULT_JOB_LIFETIME,
                 // Reserving a member-bound job does not open Kiri. The vault
                 // must select or create a matching login before Deliver starts it.
@@ -455,8 +465,15 @@ async fn handle(
             .position(|j| j.owns(request_id, &a, &session, &email))
             .ok_or(GONE)?;
         match input {
-            Input::Deliver { envelope, .. } => {
+            Input::Deliver {
+                envelope,
+                google_email,
+                ..
+            } => {
                 use base64::engine::general_purpose::STANDARD;
+                if !valid_google_email(&google_email) {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
                 if STANDARD
                     .decode(&envelope.key)
                     .ok()
@@ -476,7 +493,9 @@ async fn handle(
                 if !deliverable(jobs[position].state) {
                     // A lost HTTP response may replay this exact owned handoff.
                     // Return the canonical receipt without starting Kiri twice.
-                    if jobs[position].delivery.as_deref() != Some(&fingerprint) {
+                    if jobs[position].delivery.as_deref() != Some(&fingerprint)
+                        || jobs[position].google_email.as_deref() != Some(&google_email)
+                    {
                         return Err(StatusCode::CONFLICT);
                     }
                     return Ok(jobs[position].receipt());
@@ -496,6 +515,7 @@ async fn handle(
                     j.stop = Some(stop);
                     j.state = "validating";
                     j.delivery = Some(fingerprint);
+                    j.google_email = Some(google_email.clone());
                     j.guest_active = true;
                     j.guest_deadline = Some(expires);
                     (challenge, service, read, email, cancelled, budget)
@@ -520,6 +540,7 @@ async fn handle(
                                 request_id,
                                 challenge,
                                 &run_email,
+                                &google_email,
                                 service,
                                 read,
                                 envelope,
@@ -584,6 +605,7 @@ mod tests {
             epoch: a.epoch,
             session: hash("session"),
             email: "member@example.test".into(),
+            google_email: None,
             expires: Instant::now() + Duration::from_secs(60),
             state,
             read: None,
@@ -1160,6 +1182,7 @@ async fn run(
     id: Uuid,
     challenge: Uuid,
     email: &str,
+    google_email: &str,
     service: Option<&'static str>,
     read: Option<moosuri_store::MemberGoogleReadIntent>,
     envelope: Value,
@@ -1171,7 +1194,7 @@ async fn run(
     let mut peer = BufReader::new(stream);
     send(
         &mut peer,
-        json!({"protocol":PROTOCOL,"job":challenge,"account":a.account_id,"email":email,"service":service.unwrap_or("gmail")}),
+        json!({"protocol":PROTOCOL,"job":challenge,"account":a.account_id,"email":email,"google_email":google_email,"service":service.unwrap_or("gmail")}),
     )
     .await?;
     let state = authorized_phase(g, a, session, email, &mut peer, true).await?;
@@ -1201,7 +1224,7 @@ async fn run(
         Some(name) => format!("/api/v1/personal/google/{name}/start"),
         None => "/api/v1/personal/google/start".into(),
     };
-    let mut payload = json!({"match_member_account":true});
+    let mut payload = json!({"selected_email":google_email});
     if let Some(intent) = read {
         payload["read"] = json!(intent)
     }
@@ -1236,7 +1259,7 @@ async fn run(
     url.query_pairs_mut()
         .clear()
         .extend_pairs(fields)
-        .append_pair("login_hint", email);
+        .append_pair("login_hint", google_email);
     let flow = start["flow_id"].as_str().ok_or(UNAVAILABLE)?;
     reauthorize(g, a, session, email).await?;
     begin_consent(g, id, challenge, a, session, email, flow)?;

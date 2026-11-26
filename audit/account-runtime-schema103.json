@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "schema": 103,
+  "base_schema": 102,
+  "migrations": [{"name":"0103_member_google_selected_email.sql","sha256":"79858fbe0418d66415f484cc0a90701d4ac2aff78dd190a20587a2779e630041"}],
+  "tables": [],
+  "updated_tables": [{
+    "name":"member_google_account_choices",
+    "kind":"table",
+    "scope":"personal",
+    "owner_query":"SELECT c.rowid AS rid, o.account_id, o.tenant_id FROM member_google_account_choices c JOIN member_google_oauth o ON o.state_hash=c.state_hash",
+    "key_transition":"Expire this account choice with its parent OAuth request. Require fresh member consent after migration or session invalidation.",
+    "verification":"Resolve exactly one owner through the OAuth state hash and verify the declared foreign key and schema.",
+    "on_failure":"Quarantine the incomplete authorization and require a new consent in the member session.",
+    "columns":["state_hash","selected_email"],
+    "sql_sha256":"86fb4afdb0735a8b4d7c33fccdad732574b5f22fc317927a188510e8b6266530"
+  }],
+  "schema_sha256":"d81643b7581cd08a9b44bedd92ee2fd576dc5b796cbe1e4ad64efaad1a4ace06"
+}

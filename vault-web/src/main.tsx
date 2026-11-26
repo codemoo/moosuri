@@ -4,6 +4,7 @@ import {WorkerClient,VaultFailure} from "./worker-client";
 import type {Draft,EntryDetails,Owner,Preview,Receipt,Summary,Command,CurrentSession} from "./types";
 import {VaultField,VaultIcon,VaultList,itemName} from "./workspace";
 import {sealGoogleLogin, validJob, type KiriRecipient} from "./kiri-google";
+import {validGoogleEmail, type GoogleLogin} from "./google-login";
 import {MAX_ITEMS,MAX_TERMS,formatMiB,initialSelection,scopeLabel,selectable,selectionState,selector} from "./import-filter";
 import type {FilterMode} from "./import-filter";
 import {newPasswordIssue} from "./password";
@@ -25,9 +26,10 @@ function App(){
   const [googleEmail,setGoogleEmail]=useState("");
   const [googleJob,setGoogleJob]=useState("");
   const [googlePassword,setGooglePassword]=useState("");
+  const [newGoogleEmail,setNewGoogleEmail]=useState("");
   const [googleAttempt,setGoogleAttempt]=useState(0);
   const sentJob=useRef("");
-  const [googleSelection,setGoogleSelection]=useState<{ email: string; items: Summary[] } | null>(null);
+  const [googleSelection,setGoogleSelection]=useState<{ email: string; items: GoogleLogin[] } | null>(null);
   const [password,setPassword]=useState(""),[useRecovery,setUseRecovery]=useState(false),[recovery,setRecovery]=useState<string|null>(null),[verify,setVerify]=useState("");
   const [items,setItems]=useState<Summary[]>([]),[query,setQuery]=useState(""),[selected,setSelected]=useState<string|null>(null),[draft,setDraft]=useState<Draft|null>(null),[editing,setEditing]=useState<string|null>(null);
   const [revealed,setRevealed]=useState<{value:string;until:number}|null>(null),[uncertain,setUncertain]=useState(false),[oldPending,setOldPending]=useState<Receipt[]>([]),[settings,setSettings]=useState(false),[newPassword,setNewPassword]=useState("");
@@ -87,6 +89,7 @@ function App(){
           event.data.email.length <= 254 && /^[^@\s]+@[^@\s]+$/u.test(event.data.email)) {
         if (validJob(event.data.job)) {
           setGoogleEmail(event.data.email);
+          setNewGoogleEmail(event.data.email);
           setGoogleJob(event.data.job);
         }
       }
@@ -102,7 +105,7 @@ function App(){
       if (epoch !== generation.current) return;
       if (!googleEmail) { void list(query).catch(()=>{}); return; }
       const sequence = ++searchOwner.current;
-      void run<Summary[]>({ op: "google_logins", email: googleEmail }).then(matches => {
+      void run<GoogleLogin[]>({ op: "google_accounts" }).then(matches => {
         if (epoch !== generation.current || sequence !== searchOwner.current) return;
         setGoogleSelection({ email: googleEmail, items: matches });
       }).catch(() => {
@@ -114,7 +117,7 @@ function App(){
     },250);
     return()=>{clearTimeout(timer);searchOwner.current++};
   },[query,unlocked,frozen,googleEmail,googleAttempt]);
-  async function sendToKiri(item: Summary) {
+  async function sendToKiri(item: GoogleLogin) {
     if (!googleJob || sentJob.current === googleJob || !ownerRef.current || !window.opener) return;
     const epoch = generation.current, account = ownerRef.current.account;
     sentJob.current = googleJob;
@@ -124,7 +127,7 @@ function App(){
       const recipient: KiriRecipient = await r.json();
       const envelope = await sealGoogleLogin(recipient, account, googleEmail, googleJob, item, run);
       if (epoch !== generation.current) return;
-      window.opener.postMessage({kind:"moosuri-vault-kiri-sealed", job:googleJob, account, envelope}, assistant);
+      window.opener.postMessage({kind:"moosuri-vault-kiri-sealed", job:googleJob, account, email:item.email, envelope}, assistant);
       setNotice("Kiri에서 이 계정으로 로그인하고 있습니다.");
     } catch {
       if (epoch === generation.current) setNotice("Kiri에 로그인 항목을 전달하지 못했습니다. 연결 화면에서 다시 시도하세요.");
@@ -415,28 +418,30 @@ function App(){
         {screen==="list"&&<section className="vault-list" aria-label="보관한 항목">
           {googleEmail && <div className="notice" role="status">
             <strong>Gmail 계정 먼저 확인</strong>
-            <p>{googleEmail}로 저장된 Google 로그인 항목을 확인합니다.</p>
+            <p>내 볼트에 저장된 Google 계정에서 연결할 계정을 확인합니다.</p>
             {googleSelection?.email !== googleEmail ? <p>저장된 계정을 확인하고 있습니다. <button onClick={()=>setGoogleAttempt(n=>n+1)}>다시 확인</button></p>
               : googleSelection.items.length === 0 ? <form onSubmit={e=>{
                 e.preventDefault();
-                if (!googlePassword) return;
+                if (!googlePassword || !validGoogleEmail(newGoogleEmail)) return;
                 void perform(async()=>{
-                  const current=await run<Summary[]>({op:"google_logins",email:googleEmail});
+                  const current=await run<GoogleLogin[]>({op:"google_accounts"});
                   if (!current.length) {
-                    await run({op:"put",item:null,fields:{...empty,title:"Google",username:googleEmail,
+                    await run({op:"put",item:null,fields:{...empty,title:"Google",username:newGoogleEmail,
                       url:"https://accounts.google.com",secret:googlePassword}});
                     setGooglePassword("");await publish();
                   } else setGooglePassword("");
                   setGoogleAttempt(n=>n+1);
                 });
               }}>
-                <p>이 Gmail 계정이 볼트에 없습니다. 먼저 비밀번호를 저장하면 그 다음 Kiri가 로그인을 시작합니다.</p>
+                <p>Google 계정이 볼트에 없습니다. 먼저 계정을 저장하면 그 다음 Kiri가 로그인을 시작합니다.</p>
+                <label>Google 계정 이메일<input type="email" autoComplete="username" required disabled={frozen} value={newGoogleEmail}
+                  onChange={e=>setNewGoogleEmail(e.target.value)}/></label>
                 <label>Google 계정 비밀번호<input type="password" autoComplete="off" required disabled={frozen} value={googlePassword}
                   onChange={e=>setGooglePassword(e.target.value)}/></label>
-                <button className="primary" disabled={frozen||!googlePassword}>볼트에 저장하고 계속</button>
-              </form> : googleSelection.items.length > 1 ? <><p>이 Gmail 계정으로 저장된 항목이 여러 개 있습니다. 사용할 항목을 선택하세요.</p>
+                <button className="primary" disabled={frozen||!googlePassword||!validGoogleEmail(newGoogleEmail)}>볼트에 저장하고 계속</button>
+              </form> : googleSelection.items.length > 1 ? <><p>Google 계정이 여러 개 있습니다. 연결할 계정을 선택하세요.</p>
                 {googleSelection.items.map(item=><button key={item.id} disabled={frozen||sentJob.current===googleJob} onClick={()=>void sendToKiri(item)}>
-                  {item.title} · 버전 {item.revision} · 항목 {item.id.slice(-6)}
+                  {item.email} · {item.title} · 항목 {item.id.slice(-6)}
                 </button>)}</>
                 : <p>저장된 Gmail 계정을 확인했습니다. 이제 Kiri에서 로그인을 시작합니다.</p>}
           </div>}

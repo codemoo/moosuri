@@ -32,6 +32,10 @@ Schema 101 adds the optional won limit and its inclusive or exclusive comparison
 
 Schema 102 binds a vault-selected Google account choice to its pending OAuth request. Each choice inherits its owner from the original request and expires with it. The inventory covers 242 application tables and checks 248 foreign-key relationships for owner consistency. [Schema 102 classification](account-runtime-schema102.json)
 
+Schema 103 adds the selected Google email to the same owner-bound choice; NULL
+preserves the member-email check for older pending requests. No table or owner
+relationship is added. [Schema 103 classification](account-runtime-schema103.json)
+
 The manifests pin every migration SHA-256, every application table SQL shape and
 the complete non-shadow table/index/trigger/view fingerprint. Each table has an
 explicit disposition, owner query or global/regeneration decision, key transition,

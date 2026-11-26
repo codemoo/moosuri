@@ -4,10 +4,10 @@
 
 Linux Kiri의 **연결 → 커넥터 → Google Workspace 설정**에서 시작한다. 설치 전체에 웹 OAuth 앱 하나를 등록하고, 메일함·파일 접근 권한은 회원이 자기 Google 계정으로 승인한다.
 
-1. 처음 설치하면 마법사가 프로젝트 ID를 제안한다. 이미 프로젝트가 있으면 그 ID를 사용한다. **Google Cloud Shell**을 열고 복사된 준비 명령을 실행한다. Google 로그인과 Cloud Shell 승인은 관리자 본인의 브라우저에서 진행한다. 명령이 해당 프로젝트를 조회하거나 생성하고 Gmail·Drive·Docs·Slides·Sheets API 활성화를 요청한 뒤 실제 서비스 목록을 확인한다. 중단돼도 같은 ID로 다시 실행할 수 있다. Cloud Shell을 사용할 수 없는 조직에서는 공식 콘솔에서 같은 프로젝트로 진행할 수 있다. [준비 명령](prepare-google-project.sh) · [Cloud Shell 안내](google-cloud-setup.md)
+1. Cloud Shell은 사용 흐름에 포함하지 않는다. 기존 설치용 웹 OAuth 클라이언트가 있으면 정확한 HTTPS 콜백을 확인해 재사용한다. 새 클라이언트의 최초 발급은 Google 공식 콘솔에서 프로젝트·동의 화면을 설정해야 한다. Google은 클라이언트의 프로그램 자동 생성·변경을 제한한다. [Google의 최초 등록 조건](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation)
 2. Google에서 동의 화면의 앱 정보와 사용 대상을 확인한다. 외부 앱을 테스트 모드로 운영하면 사용할 계정을 테스트 사용자에 추가한다. 웹 애플리케이션 유형의 OAuth 클라이언트를 만들고 마법사가 제시하는 HTTPS 콜백 주소를 붙여 넣는다. 설치에 맞게 발급한 웹 클라이언트 JSON이 이미 있으면 프로젝트 준비를 건너뛴다. [Google 웹 서버 OAuth](https://developers.google.com/identity/protocols/oauth2/web-server#creatingcred)
 3. **연결 → 커넥터 → Google Workspace 설정**에 JSON 파일을 등록한다. 서버가 설치에 설정된 공개 주소와 콜백 경로를 대조한다. 같은 클라이언트는 다시 제출할 수 있다. 다른 클라이언트로 기존 등록을 덮어쓰려 하면 충돌을 표시한다. 공개 주소를 변경하거나 인증 정보를 교체할 때는 기존 동의와 회원 프로필을 확인한다.
-4. 설치 설정을 받은 회원은 **연결된 서비스 → Gmail 또는 Drive 등 → 연결**에서 자신의 계정을 선택하고 동의한다. 연결 카드에 승인한 이메일이 표시된다. 관리자의 앱 등록과 회원의 연결 상태는 따로 표시한다. 연결 메뉴에서 Gmail을 선택하면 연결만 하고, 채팅에서 명시적으로 요청한 조회는 그 대화로 돌아가 이어간다.
+4. 회원은 **연결 → Gmail 또는 Drive 등 → Google 연결**에서 볼트 계정을 먼저 확인한다. Google 로그인 항목이 없으면 이메일과 비밀번호를 입력해 암호화 저장하고, 하나면 자동 선택하며, 여러 개면 표시된 이메일 중 하나를 고른다. Google 이메일은 무수리 가입 이메일과 달라도 된다. 선택·암호문 검증 뒤 전용 Kiri에서 로그인한다. 설치 앱이 없는 관리자의 연결 버튼도 볼트 확인까지 열리지만, OAuth 앱 등록 전에는 서비스 연결 완료로 표시하지 않는다. 연결 메뉴에서 Gmail을 선택하면 연결만 하고, 채팅에서 명시적으로 요청한 조회는 그 대화로 돌아가 이어간다.
 
 Google 로그인, 동의, 클라이언트 파일 처리는 공식 Google 탭과 관리자 파일 입력에서 진행한다. 채팅 브라우저는 읽은 페이지를 모델에 전달하므로 관리자 비밀번호·인증 코드·클라이언트 파일을 넣지 않는다. 설치 단계에서 관리자 메일에 대한 읽기·발송 권한은 요청하지 않는다. [Google OAuth 정책](https://developers.google.com/identity/protocols/oauth2/policies)
 
@@ -62,9 +62,7 @@ docker --host unix:///run/kiri/docker.sock exec -i --user "$MEMBER_UID:$MEMBER_U
 
 대화에 **구글 로그인하고 GWS까지 등록해줘**라고 쓰면 사용할 서비스를 고르는 화면이 열린다. **지메일 연결해줘**처럼 서비스를 지정하면 해당 서비스로 바로 간다. 처음 준비하는 관리자는 이 화면에서 Google Workspace 설정을 연다. Google은 웹 OAuth 클라이언트 최초 발급을 Cloud 콘솔에서 진행하도록 한다. [Google의 클라이언트 등록 안내](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation)
 
-일반 Chrome에서 개인 볼트를 사용하려면 Google 서비스 상세에서 **볼트에서 내 Google 로그인 찾기**를 누른다. 열린 볼트의 잠금을 해제하면 회원 이메일과 `https://accounts.google.com`이 정확히 일치하는 로그인 항목이 나온다. 여러 개면 사용할 항목을 고른다. Chrome 확장 설치를 마친 기기에서 **Google 비밀번호 자동 입력**을 누르고, 무수리 탭에서 본인 이메일이 적힌 연결 버튼을 누른다. Google이 해당 계정의 비밀번호를 요청하면 그 탭에서 **무수리 볼트** 확장 버튼을 누른다. Google 화면에서 제출과 기기 승인, 서비스별 권한 동의를 마치면 무수리로 돌아온다. 서버는 이 경로로 시작된 동의의 계정을 확인한 후 연결을 저장한다. **다른 Google 계정 선택**은 일반 계정 선택 흐름을 연다.
-
-운영자는 회원이 받을 확장을 볼트의 정확한 HTTPS 주소로 패키징한다. `npm run build`로 볼트 정적 파일을 만든 뒤, 저장소 루트에서 `python3 deployment/browser/google-autofill/package.py "$VAULT_ORIGIN" vault-web/dist/google-autofill.zip`을 실행하고 볼트 서비스를 빌드한다. 이미 있는 출력 파일은 보존하므로 새 빌드 디렉터리를 사용한다. Chrome 114 이상에서 압축을 풀고 확장 프로그램 관리에서 로드한다. 확장은 사용자가 클릭한 탭의 최상위 문서에만 접근한다. 선택은 2분 뒤 만료되며 비밀번호는 기기 안에서 한 번만 전달된다. 새 Kiri 프로필의 로그인 작업은 기존 이메일 확인 절차를 사용한다. [Kiri 브라우저](browser.md)
+**Google 연결**을 누르면 먼저 회원 볼트가 열린다. 잠금을 해제하면 `https://accounts.google.com`의 Google 로그인 항목을 확인한다. 항목이 없으면 이메일과 비밀번호를 받아 암호화 저장하고, 하나면 재사용하며, 여러 개면 이메일을 보고 선택한다. 선택한 이메일은 무수리 가입 이메일과 달라도 된다. 그 뒤 Linux Kiri의 새 프로필에서 로그인하고 같은 프로필에서 서비스 권한을 연결한다. 비밀번호는 볼트가 Kiri 수신자에게 암호화해서 전달하며 대화나 모델에는 전달하지 않는다. Google이 기기 승인을 요구하면 해당 기기에서 승인해야 한다. [Kiri 브라우저](browser.md)
 
 **연결**에서 사용할 서비스를 선택하고 Google 계정으로 동의한다. 설치 웹 클라이언트는 공용이고 서비스별 승인과 연결 해제는 회원의 개인 볼륨에서 처리한다. 각 카드에 해당 권한을 승인한 계정이 표시된다. Google 계정 선택 시 다른 계정을 선택할 수도 있다. 기존 Gmail 승인은 Gmail에만 적용된다.
 

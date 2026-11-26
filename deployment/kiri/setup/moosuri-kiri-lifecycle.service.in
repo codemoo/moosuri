@@ -1,6 +1,6 @@
 [Unit]
 Description=Moosuri configured personal runtime recovery (clean Kiri installation)
-After=kiri.service
+After=kiri.service moosuri-kiri-model.service
 Wants=kiri.service
 
 [Service]

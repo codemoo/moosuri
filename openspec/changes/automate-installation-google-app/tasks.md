@@ -1,5 +1,9 @@
 # Work log
 
+The current [42 user journeys](journeys.md) cover installation, Vault, Google login,
+OAuth setup, sharing, conversation reads and recovery. They distinguish live
+provider results, diagnostic installation evidence and open acceptance gates.
+
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
 - [ ] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing.
 - [ ] Observe official Console steps in fresh Kiri and identify provider prerequisites.
@@ -705,3 +709,141 @@ expired at Google device verification; there is no live authenticated research
 session to reuse. Actual SDK revoke-failure/forced-kill acceptance and recovery from
 truly unknown remote revocation also remain open. Production and public main are
 unchanged; migration 8 and these checkpoint fields have never been deployed.
+
+
+### Live Flip5, installation client and Gmail — 2026-11-27
+
+Phone Agent MCP on Linux confirmed the connected Galaxy Z Flip5, permitted work,
+and reserved the UI. The operator approved only the fresh matching Google/Linux
+request. A fresh Kiri research session reached authenticated Console; it was
+closed after the experiment. The phone reservation was released.
+
+In the task's newly created unbilled project, the observed Console wizard created
+Moosuri branding with External audience. The new web client uses the actual
+installation HTTPS callback and the AI-powered-agent marker. Its one-time secret
+was captured privately on Linux, then supplied through the real Kiri-hosted
+Moosuri administrator file-input/form. The existing registration endpoint returned
+configured=true and the UI confirmed storage. Scope configuration used Add to
+table, Update and Save; one authorized account was registered as a test user.
+The app remains Testing and is not production verified.
+
+The actual member Google connection was then started again from its UI. A wrong
+Vault password remained locked; the correct one reused the existing Google login
+without requesting that Google password again. After a new Flip5 confirmation,
+the same product Kiri browser completed service consent and the app showed
+connected. The member's real GWS-backed inbox API returned HTTP200/completed,
+five matching-account metadata items and has_more=true. A reload displayed one
+saved receipt and five rows. No mail subject/sender/body or credential was logged.
+
+The ordinary composer request “최근 받은 메일 5개 확인해줘” failed at work
+interpretation and retained its draft. The subsequent API read is not evidence
+that this natural-language path works. The classifier's closed contract currently
+contains local work and preferences but no Gmail inbox operation; determine the
+actual model error and integrate the existing read path without a parallel router.
+
+These are existing-installation/provider results. Public main, binaries and Kiri
+version are unchanged; production now has the shared OAuth client and the tested
+member Gmail grant. Portable Console automation, secret-rotation recovery, final
+empty-source installation and real two-member acceptance remain open.
+
+## 2026-11-27 journey correction tranche — not deployed
+
+The [49 journeys](journeys.md#2026-11-27-candidate-correction-evidence) now link
+candidate corrections and distinguish synthetic, live operator and final-install
+acceptance. The main still owns final integration and release.
+
+- Dynamic member model sockets, admin-only API setup/CAS replacement and private
+  state outside the registry are implemented; Linux runtime, installer and
+  role-boundary tests passed. Independent Claude Sonnet 5.5/medium review found
+  registry contamination, one-member fault amplification and failed-key retry
+  defects; they were corrected and reviewed again. One follow-up UI attribution
+  defect (another admin's save after a lost reply) is corrected with a regression
+  scenario. Real API registration and the missing production subscription worker
+  are not verified by these checks.
+- Typed conversational inbox dispatch now reuses the existing interpretation
+  journal and Gmail read ID. Positive request grammar, stale-thread guards,
+  Vault/reload continuation and explicit fresh retry after uncertain results are
+  implemented and pass focused Linux tests. Real natural-language completion is
+  still blocked by the absent production worker.
+- Actual Kiri Console readback exposed and corrected account shadow DOM,
+  editable branding and abbreviated scope selectors. External/Testing audience
+  eligibility has typed inspect/configure actions. The public worker/controller
+  still needs complete durable substep integration and client issuance/registration
+  before the existing member route can use it.
+
+Two original test failures were fixture errors, not acceptance: inherited Linux
+umask 0002 made the synthetic API-key directory group-writable; its fixture now
+sets 0700 explicitly. The cold-volume replay fixture reserved 2048 tokens for a
+2370-byte-token member envelope; it now uses the broker's 4096 hint and asserts
+that the encoded request fits. The important outcome (one dispatch/charge across
+suspension, response loss and cold-volume restoration) passes.
+
+## 2026-11-27 integrated client and recovery checkpoint — not deployed
+
+| Usable unit | Implementation/integration | Validation | Public/production |
+| --- | --- | --- | --- |
+| One-browser first Google setup | SDK, Console journal, client inspection/creation and atomic private registration connected to the existing member route | Synthetic Console + real gateway authorization/registry/writer passed; actual client DOM/create open | Candidate only |
+| Interrupted setup recovery | One provider dispatch; three local save attempts; exact saved-file reconciliation; retained cleanup fence | Save failure/lost acknowledgement/logout and registry boundaries passed; actual secret rotation open | Candidate only |
+| Connection UI lifetime | 20-minute first setup, transient status retries, bounded GWS wait and truthful terminal states | Linux UI/DOM passed; final full journey open | Candidate only |
+| Conversational Gmail + first model | Typed interpreter/request reuse and dynamic API model setup integrated | Component and isolated classifier calls retained; missing production worker still blocks ordinary live request | Candidate only |
+| Shared app for later members | External audience chosen; limited-audience publishing requirement added to design | Actual app remains Testing; production transition, two real members and seven-day recovery open | Not ready |
+| Final portable installation/release | Installer/lifecycle corrections retained | Final-source clean install, reboot and matched rollout open | No partial rollout |
+
+Independent implementation and two recovery reviews used the official Linux
+Claude CLI with observed `claude-sonnet-5-5`, medium. The main integrated and
+verified the changes; delegates had no provider credentials or live browser
+contents. Fixed findings: premature teardown acknowledgement, lost secret on
+transient save, UI cancellation on one poll failure, skeleton-list false absence,
+ambiguous result-dialog selection and nonzeroizing relay buffers. The stable
+client name matches the registry's simple setup UUID.
+
+The closing review found another NotFound ambiguity in registry authority
+checks; only the private-file callback now classifies a lost secret. GWS waits
+are measured from signed-in/Finish and each request is bounded. An ambiguous
+OAuth-start POST is intentionally not retried: it may already have created
+state. The suggested broad 5xx retry was not adopted. A pin expiring under severe
+registry contention still stops the operation; Forbidden is not retried as a
+storage error. Exhausted saves or process loss remain the open O05 rotation
+journey, not a claim of arbitrary crash recovery.
+
+Linux evidence before the final classification/deadline refinement: gateway
+Google connection 36 passed; registry Google bootstrap 21; connector browser
+122 passed/1 ignored; Kiri connection UI 32; client DOM 7. The earlier concurrent
+synthetic SDK probe failed once, then passed isolated and serialized reruns;
+no live SDK success is inferred. Final refinement and source/plan checks are
+recorded below when completed. Tests use synthetic identities and temporary DBs.
+
+A fresh operator Kiri sign-in returned `needs_human/provider_sign_in_required`.
+No authenticated session or new Google resource was created. Phone Agent
+reservation was released without approving a login. Resume actual client
+selectors/creation/rotation via the authorized Vault-backed fresh Kiri path;
+never reuse stopped operator sessions.
+
+Independent model investigation confirmed that the public installer does not
+provision the missing subscription worker. Existing official login/worker code
+pins one principal/member per rootless worker; shared installation use goes
+through the Anthropic API connection. M01–M06 cover first setup, later members,
+bad credentials, lost replies, fresh subscription login and reboot. S06 covers
+External production status and long-lived use. The matrix has 49 journeys;
+component totals do not close their end-to-end acceptance.
+
+Next: actual client/publishing/rotation observation and integration; model
+first-use and real conversation; final-source empty Linux install/two members/
+reboot; matched publication and production rollout.
+
+Final candidate refinement: Linux gateway cases 36 passed; root relay 2 passed;
+engine setup/settings UI 17 passed; web typecheck and production build passed;
+`xtask verify-plan` passed with 1,749 local links. The API connection recovery
+form now remains available after successful initial configuration, so a revoked
+key can be replaced by the administrator. No provider request occurs merely
+from opening that form.
+The pinned OpenSpec strict validation of this change also passed on Linux.
+
+Source checkpoint checks: `git diff --check` passed. Static Gitleaks directory
+scan reported one pre-existing incomplete synthetic PEM marker in the installer
+path-validation fixture (body `AAAA`, no end marker or usable key); it was
+manually matched to the existing documented historical finding. No new scanner
+exception was added. Lockfiles and third-party dependencies/assets are unchanged;
+the new DOM fixtures are synthetic, not copied provider pages. Runtime tests and
+UI build ran on Linux; the static source scan ran on the Mac checkout. This is a
+local recovery checkpoint, not publication or final license/release acceptance.

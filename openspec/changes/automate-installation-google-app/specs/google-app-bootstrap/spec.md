@@ -74,6 +74,22 @@ client for the installation callback and automatically prepare member GWS.
 - **WHEN** the initiating administrator loses session or role authority
 - **THEN** setup stops before further external changes or installation registration
 
+#### Scenario: A client exists but local registration is temporarily unavailable
+- **WHEN** Google has returned the newly created client's secret and a local save fails temporarily
+- **THEN** the same attempt retains the secret for bounded local retries with fresh authority checks and never resends client creation
+
+#### Scenario: The local registration acknowledgement is lost
+- **WHEN** the private file and registered checkpoint committed but the response was lost
+- **THEN** recovery verifies the same client and secret under the current lease without replacing a file or creating another client
+
+#### Scenario: A provider list is incomplete
+- **WHEN** the Console client list is loading, filtered, paginated or contains skeleton rows
+- **THEN** it does not prove absence and setup does not dispatch creation
+
+#### Scenario: A gateway failure starts cleanup
+- **WHEN** the gateway loses authorization or its transport while the worker may still exist
+- **THEN** it keeps the active guest fence until actual teardown confirmation or the bounded cleanup deadline
+
 ### Requirement: Reuse the application without sharing member grants
 The system SHALL share the installation application through the existing GWS
 distribution while keeping each member's vault and service tokens private.
@@ -85,6 +101,10 @@ distribution while keeping each member's vault and service tokens private.
 #### Scenario: Provider restricts the audience
 - **WHEN** Google requires testing membership or verification
 - **THEN** the connection identifies the unfinished provider step without substituting another member's grant
+
+#### Scenario: A limited shared installation is ready for regular use
+- **WHEN** the installation administrator completes setup for invited users with independent Google accounts
+- **THEN** the shared External app has the intended production publishing status and exposes applicable provider warnings and limits without requiring each member to be manually registered as a test user
 
 ### Requirement: Installation vault access remains member scoped
 The installation SHALL support vault enrollment for authenticated members without

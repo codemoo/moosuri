@@ -113,7 +113,7 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || !(1..=8).contains(&version) {
+    if id != APP_ID || !(1..=9).contains(&version) {
         return Err(StoreError::InvalidInput);
     }
     if version == 1 {
@@ -165,6 +165,13 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!(
             "../../../migrations/installation_registry/0008_google_bootstrap.sql"
+        ))?;
+        tx.commit()?;
+    }
+    if version <= 8 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0009_google_console_steps.sql"
         ))?;
         tx.commit()?;
     }

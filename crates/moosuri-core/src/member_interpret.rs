@@ -44,6 +44,16 @@ pub enum MemberMemoryView {
     Stale,
 }
 
+/// The only mail read this route can express: the current first Gmail inbox page, sender/subject/date
+/// metadata, at most five entries (the existing `/personal/google/inbox` result scope).
+pub const INBOX_READ_SCOPE: &str = "one_inbox_page_metadata_only";
+pub const INBOX_READ_LIMIT: u8 = 5;
+
+/// Default member broker reservation must fit the interpretation policy and a
+/// bounded member message as well as an answer. This is a dispatch budget, not
+/// a token usage estimate; the provider's measured usage remains authoritative.
+pub const DEFAULT_MEMBER_MODEL_RESERVATION_TOKENS: u64 = 32_768;
+
 pub const WORK_INTERPRET_MAX_TEXT: usize = 8192;
 pub const WORK_INTERPRET_MAX_CLARIFY: usize = 600;
 
@@ -109,9 +119,26 @@ pub enum WorkInterpretReply {
     Clarify {
         message: String,
     },
+    /// The member directly asked to see their Gmail inbox. This is only an instruction to the
+    /// authenticated client to run its existing inbox read for `thread_id` with the request id it
+    /// already holds. No account, connection, query or message identifier is ever carried here:
+    /// the target is the member's own current selection, resolved by the existing read route.
+    InboxRead {
+        thread_id: String,
+        scope: String,
+        limit: u8,
+    },
 }
 
 impl WorkInterpretReply {
+    pub fn inbox_read(thread: &str) -> Self {
+        Self::InboxRead {
+            thread_id: thread.to_owned(),
+            scope: INBOX_READ_SCOPE.to_owned(),
+            limit: INBOX_READ_LIMIT,
+        }
+    }
+
     /// Shape check used by the gateway: same thread, a task that belongs to the group,
     /// and a bounded, non-empty clarification.
     pub fn valid_for(&self, thread: &str) -> bool {
@@ -157,6 +184,11 @@ impl WorkInterpretReply {
                         .as_ref()
                         .is_none_or(|id| group.tasks.iter().any(|task| &task.id == id))
             }
+            Self::InboxRead {
+                thread_id,
+                scope,
+                limit,
+            } => thread_id == thread && scope == INBOX_READ_SCOPE && *limit == INBOX_READ_LIMIT,
             Self::Clarify { message } => {
                 !message.trim().is_empty()
                     && message.chars().count() <= WORK_INTERPRET_MAX_CLARIFY
@@ -199,6 +231,30 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn inbox_read_is_one_fixed_scope_for_this_thread_and_carries_no_target() {
+        let reply = WorkInterpretReply::inbox_read("t");
+        let wire = serde_json::to_value(&reply).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"kind":"inbox_read","thread_id":"t","scope":"one_inbox_page_metadata_only","limit":5})
+        );
+        assert!(reply.valid_for("t") && !reply.valid_for("other"));
+        for bad in [
+            serde_json::json!({"kind":"inbox_read","thread_id":"t","scope":"one_inbox_page_metadata_only","limit":5,"connection_id":"c"}),
+            serde_json::json!({"kind":"inbox_read","thread_id":"t","scope":"one_inbox_page_metadata_only","limit":5,"query":"from:boss"}),
+        ] {
+            assert!(serde_json::from_value::<WorkInterpretReply>(bad).is_err());
+        }
+        for (scope, limit) in [("all_mail", 5), ("one_inbox_page_metadata_only", 50)] {
+            let widened: WorkInterpretReply = serde_json::from_value(
+                serde_json::json!({"kind":"inbox_read","thread_id":"t","scope":scope,"limit":limit}),
+            )
+            .unwrap();
+            assert!(!widened.valid_for("t"), "{scope} {limit}");
+        }
     }
 
     #[test]

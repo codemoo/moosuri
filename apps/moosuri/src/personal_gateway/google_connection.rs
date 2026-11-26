@@ -1,8 +1,8 @@
 //! One live Kiri attempt per enrolled member. A restart discards all pending work.
 //! The gateway transports only vault-sealed credentials. The private key stays in Kiri.
 use super::*;
-pub(super) mod portable;
 pub(super) mod bootstrap;
+pub(super) mod portable;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -17,6 +17,10 @@ const GONE: StatusCode = StatusCode::GONE;
 const VAULT_JOB_LIFETIME: Duration = Duration::from_secs(730);
 const KIRI_RUN_LIMIT: Duration = Duration::from_secs(420);
 const KIRI_JOB_LIFETIME: Duration = Duration::from_secs(425);
+// Portable first setup may include SDK authorization, API activation and Console
+// configuration. Legacy helper's short login-only window stays unchanged.
+const PORTABLE_RUN_LIMIT: Duration = Duration::from_secs(20 * 60);
+const PORTABLE_JOB_LIFETIME: Duration = Duration::from_secs(20 * 60 + 5);
 const TERMINAL_RECEIPT_LIFETIME: Duration = Duration::from_secs(120);
 const AUTH_RECHECK_INTERVAL: Duration = Duration::from_secs(2);
 const GUEST_TEARDOWN_GRACE: Duration = Duration::from_secs(180);
@@ -45,8 +49,12 @@ pub(super) struct Job {
     guest_deadline: Option<Instant>,
 }
 
-fn run_window(now: Instant) -> (Instant, Duration) {
-    (now + KIRI_JOB_LIFETIME, KIRI_RUN_LIMIT)
+fn run_window(now: Instant, portable: bool) -> (Instant, Duration) {
+    if portable {
+        (now + PORTABLE_JOB_LIFETIME, PORTABLE_RUN_LIMIT)
+    } else {
+        (now + KIRI_JOB_LIFETIME, KIRI_RUN_LIMIT)
+    }
 }
 
 pub(super) fn routes() -> Router<Gateway> {
@@ -142,6 +150,10 @@ fn terminal(state: &str) -> bool {
             | "needs_human"
             | "unavailable"
             | "setup_required"
+            | "setup_pending"
+            | "setup_recovery_required"
+            | "setup_cleanup_pending"
+            | "setup_busy"
             | "cancelled"
     )
 }
@@ -564,7 +576,7 @@ async fn handle(
                 }
                 let (challenge, service, read, email, cancelled, budget, prepared) = {
                     let j = &mut jobs[position];
-                    let (expires, budget) = run_window(Instant::now());
+                    let (expires, budget) = run_window(Instant::now(), j.prepared.is_some());
                     j.expires = expires;
                     let challenge = j.challenge;
                     let service = j.service;
@@ -715,10 +727,53 @@ mod tests {
     #[test]
     fn delivery_starts_a_separate_bounded_kiri_window() {
         let now = Instant::now();
-        let (expires, budget) = run_window(now);
+        let (expires, budget) = run_window(now, false);
         assert_eq!(expires.duration_since(now), KIRI_JOB_LIFETIME);
         assert_eq!(budget, KIRI_RUN_LIMIT);
         assert!(budget < KIRI_JOB_LIFETIME);
+        let (portable_end, portable_budget) = run_window(now, true);
+        assert!(portable_budget > KIRI_RUN_LIMIT);
+        assert_eq!(portable_end.duration_since(now), PORTABLE_JOB_LIFETIME);
+        assert!(portable_budget < PORTABLE_JOB_LIFETIME);
+    }
+
+    #[test]
+    fn only_explicit_missing_setup_enters_bootstrap_and_failures_stay_terminal() {
+        for status in [
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_FOUND,
+        ] {
+            assert_eq!(
+                setup_failure(bootstrap::Failure::Gateway(status)),
+                Err(status)
+            );
+        }
+        let absent = br#"{"code":"google_setup_required"}"#;
+        assert!(missing_google_setup(StatusCode::NOT_FOUND, absent));
+        assert!(!missing_google_setup(
+            StatusCode::SERVICE_UNAVAILABLE,
+            absent
+        ));
+        for body in [
+            br#"{"code":"not_found"}"#.as_slice(),
+            br#"{"code":"google_setup_required","url":"foreign"}"#.as_slice(),
+            b"broken",
+        ] {
+            assert!(!missing_google_setup(StatusCode::NOT_FOUND, body));
+        }
+        for error in [
+            bootstrap::Failure::Unresolved,
+            bootstrap::Failure::SecretUnavailable,
+            bootstrap::Failure::CleanupUnconfirmed,
+            bootstrap::Failure::Gateway(StatusCode::CONFLICT),
+        ] {
+            let state = setup_failure(error).unwrap();
+            assert!(terminal(state));
+            assert_ne!(state, "complete");
+            assert!(!guest_teardown_confirmed(state));
+        }
     }
 
     #[test]
@@ -1352,6 +1407,41 @@ fn stopped(s: &str) -> Result<&'static str, StatusCode> {
         _ => Err(UNAVAILABLE),
     }
 }
+enum Transport {
+    Portable(portable::Prepared),
+    Legacy(BufReader<UnixStream>),
+}
+impl Transport {
+    fn peer(&mut self) -> &mut BufReader<UnixStream> {
+        match self {
+            Self::Portable(p) => &mut p.peer,
+            Self::Legacy(p) => p,
+        }
+    }
+}
+fn setup_failure(error: bootstrap::Failure) -> Result<&'static str, StatusCode> {
+    use bootstrap::{Failure, Terminal};
+    Ok(match error {
+        Failure::Provider(Terminal::Blocked) => "blocked",
+        Failure::Provider(Terminal::NeedsHuman) => "needs_human",
+        Failure::Provider(Terminal::Unavailable) => "unavailable",
+        Failure::Unresolved | Failure::SecretUnavailable => "setup_recovery_required",
+        Failure::CleanupUnconfirmed => "setup_cleanup_pending",
+        Failure::Gateway(StatusCode::FORBIDDEN) => "setup_required",
+        Failure::Gateway(StatusCode::CONFLICT) => "setup_busy",
+        // No broker terminal receipt exists. Dropping the peer merely STARTS
+        // cleanup, so preserve the active-guest fence for its full grace.
+        Failure::Gateway(status) => return Err(status),
+    })
+}
+fn missing_google_setup(status: StatusCode, bytes: &[u8]) -> bool {
+    status == StatusCode::NOT_FOUND
+        && serde_json::from_slice::<Value>(bytes).is_ok_and(|v| {
+            v.as_object().is_some_and(|m| m.len() == 1)
+                && v["code"].as_str() == Some("google_setup_required")
+        })
+}
+
 async fn run(
     g: &Gateway,
     a: &SessionAllocation,
@@ -1369,8 +1459,8 @@ async fn run(
     if g.google_runtime.is_some() && !modern {
         return Err(UNAVAILABLE);
     }
-    let mut peer = if let Some(prepared) = prepared {
-        prepared.peer
+    let mut transport = if let Some(prepared) = prepared {
+        Transport::Portable(prepared)
     } else {
         let stream = UnixStream::connect(SOCKET).await.map_err(|_| UNAVAILABLE)?;
         if stream.peer_cred().map_err(|_| UNAVAILABLE)?.uid() != 0 {
@@ -1386,12 +1476,12 @@ async fn run(
         if state != "vault" {
             return stopped(&state);
         }
-        peer
+        Transport::Legacy(peer)
     };
     reauthorize(g, a, session, email).await?;
     require_state(g, id, challenge, "validating")?;
     send(
-        &mut peer,
+        transport.peer(),
         if modern {
             json!({"google_email":google_email,"envelope":envelope})
         } else {
@@ -1399,7 +1489,7 @@ async fn run(
         },
     )
     .await?;
-    let state = authorized_phase(g, a, session, email, &mut peer, false).await?;
+    let state = authorized_phase(g, a, session, email, transport.peer(), false).await?;
     if state != "verified" {
         return stopped(&state);
     }
@@ -1409,7 +1499,7 @@ async fn run(
     // reservations remain available until this attempt signs in successfully.
     begin_opening(g, id, challenge, a, session, email)?;
     send(
-        &mut peer,
+        transport.peer(),
         if modern {
             json!({"proceed":challenge})
         } else {
@@ -1419,7 +1509,7 @@ async fn run(
     .await?;
     let mut awaiting_verification = false;
     let state = loop {
-        let state = authorized_phase(g, a, session, email, &mut peer, false).await?;
+        let state = authorized_phase(g, a, session, email, transport.peer(), false).await?;
         if state != "verifying" {
             break state;
         }
@@ -1436,6 +1526,7 @@ async fn run(
     if state != "signed_in" {
         return stopped(&state);
     }
+    let mut idle_started = Instant::now();
     reauthorize(g, a, session, email).await?;
     finish_sign_in(g, id, challenge, a, session, email)?;
     let path = match service {
@@ -1446,17 +1537,83 @@ async fn run(
     if let Some(intent) = read {
         payload["read"] = json!(intent)
     }
-    let (status, bytes, _) = g
-        .proxy(
+    let (mut status, mut bytes, _) = timeout(
+        Duration::from_secs(15),
+        g.proxy(
             a,
             Method::POST,
             &path,
             Some(payload.to_string().as_bytes()),
             Some(session),
-        )
-        .await?;
-    if status == StatusCode::NOT_FOUND {
-        return Ok("setup_required");
+        ),
+    )
+    .await
+    .map_err(|_| UNAVAILABLE)??;
+    if missing_google_setup(status, &bytes) {
+        let Transport::Portable(prepared) = &mut transport else {
+            return Ok("setup_required");
+        };
+        change(g, id, challenge, |j| {
+            j.state = "setup";
+        })?;
+        let result = async {
+            match bootstrap::Controller::prepare(g, a, session, email, google_email, prepared)
+                .await?
+            {
+                bootstrap::Prepared::Configured(_) => (),
+                bootstrap::Prepared::Ready(mut controller) => {
+                    controller.console(&mut prepared.peer).await?;
+                    controller.client(&mut prepared.peer).await?;
+                    controller.finish(&mut prepared.peer).await?;
+                    idle_started = Instant::now();
+                    // The root relay clears the SDK fence only after actual
+                    // worker teardown. Finish alone is not that receipt.
+                }
+            }
+            Ok::<(), bootstrap::Failure>(())
+        }
+        .await;
+        if let Err(error) = result {
+            return setup_failure(error);
+        }
+        // The existing member-owned distributor refreshes every 15 seconds.
+        // Only exact setup absence permits polling; a successful start is sent
+        // once, and transport uncertainty never creates another OAuth state.
+        let until = idle_started + Duration::from_secs(30);
+        loop {
+            if Instant::now() >= until {
+                return Ok("setup_pending");
+            }
+            // The member's Google proxy otherwise permits 75 seconds, longer
+            // than this worker's 45-second idle lifetime. Bound authorization
+            // and the POST together to the remaining window. An ambiguous POST
+            // result must NOT be retried: it may already own an OAuth state.
+            let answer = timeout(until.saturating_duration_since(Instant::now()), async {
+                reauthorize(g, a, session, email).await?;
+                g.proxy(
+                    a,
+                    Method::POST,
+                    &path,
+                    Some(payload.to_string().as_bytes()),
+                    Some(session),
+                )
+                .await
+            })
+            .await
+            .map_err(|_| UNAVAILABLE)??;
+            status = answer.0;
+            bytes = answer.1;
+            if !missing_google_setup(status, &bytes) {
+                break;
+            }
+            if Instant::now() >= until {
+                return Ok("setup_pending");
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        change(g, id, challenge, |j| {
+            j.state = "signed_in";
+        })?;
     }
     if !status.is_success() {
         return Err(status);
@@ -1481,8 +1638,8 @@ async fn run(
     let flow = start["flow_id"].as_str().ok_or(UNAVAILABLE)?;
     reauthorize(g, a, session, email).await?;
     begin_consent(g, id, challenge, a, session, email, flow)?;
-    send(&mut peer, json!({"url":url.as_str()})).await?;
-    let state = authorized_phase(g, a, session, email, &mut peer, false).await?;
+    send(transport.peer(), json!({"url":url.as_str()})).await?;
+    let state = authorized_phase(g, a, session, email, transport.peer(), false).await?;
     if state == "returned" {
         // Only the matching provider callback can finish this job. Preserve the
         // distinct internal value so the caller can treat it as teardown proof.

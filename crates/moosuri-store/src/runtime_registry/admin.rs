@@ -237,6 +237,15 @@ pub fn with_google_setup<T>(
     s: &AdminSession,
     action: impl FnOnce(&fs::File) -> T,
 ) -> Result<T> {
+    with_installation_setup(root, s, action)
+}
+/// Run bounded local installation setup I/O under a fresh administrator pin.
+/// No provider I/O or nested registry calls are allowed inside the callback.
+pub fn with_installation_setup<T>(
+    root: &Path,
+    s: &AdminSession,
+    action: impl FnOnce(&fs::File) -> T,
+) -> Result<T> {
     let (directory, db) = open(root, false)?;
     check(&db, s)?;
     Ok(action(&directory))

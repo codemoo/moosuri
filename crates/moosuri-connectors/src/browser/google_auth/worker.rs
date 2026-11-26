@@ -1,8 +1,10 @@
 use super::{
     Binding, Envelope, Error, PROTOCOL, Receiver,
-    bootstrap::{self, Action, Reply, Sequence},
+    bootstrap::{self, Action, Reply, Response, Sequence},
     chrome::{Chrome, Page},
+    client,
     consent::Consent,
+    console,
     sdk::{Email, LoginHandle, ProjectId, ProjectPresence, Sdk, SetupLabel},
 };
 use serde::{Deserialize, de::DeserializeOwned};
@@ -70,6 +72,21 @@ async fn send(
     bytes.push(b'\n');
     tokio::time::timeout(Duration::from_secs(5), async {
         output.write_all(&bytes).await?;
+        output.flush().await
+    })
+    .await
+    .map_err(|_| Error::Unavailable)?
+    .map_err(|_| Error::Unavailable)
+}
+/// Private response line (may carry the one-time client secret): serialized into a
+/// zeroizing pre-sized buffer, never logged, never placed in a `Value`.
+async fn send_response(
+    output: &mut (impl AsyncWrite + Unpin),
+    response: &Response,
+) -> Result<(), Error> {
+    let line = response.to_line()?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        output.write_all(&line).await?;
         output.flush().await
     })
     .await
@@ -239,44 +256,78 @@ async fn bootstrap_action(
 ) -> Result<(), Error> {
     boot.seq.admit(&request, binding)?;
     let token = CancellationToken::new();
-    let reply = if request.action == Action::Authorize {
+    let response = if request.action == Action::Authorize {
         let email = Email::parse(&boot.google_email)?;
         boot.sdk = Some(Sdk::create(sdk_proxy()?)?);
         let sdk = boot.sdk.as_ref().ok_or(Error::Unavailable)?;
         let work = authorize(sdk, browser, &email, &token, &mut boot.unreaped);
         supervised(input, stop, &token, 420, work)
             .await
-            .map(|()| Reply::Ready)?
+            .map(|()| Response::Status(Reply::Ready))?
     } else {
         let sdk = boot.sdk.as_ref().ok_or(Error::Invalid)?;
         let id = ProjectId::parse(&request.project_id())?;
         let label = SetupLabel::parse(&request.setup_label())?;
         match request.action {
-            Action::InspectProject => {
-                supervised(input, stop, &token, 150, inspect(sdk, &id, &label, &token)).await?
-            }
-            Action::CreateProject => {
-                supervised(input, stop, &token, 420, create(sdk, &id, &label, &token)).await?
-            }
-            Action::EnableApis => {
-                supervised(input, stop, &token, 600, enable(sdk, &id, &label, &token)).await?
-            }
+            Action::InspectProject => Response::Status(
+                supervised(input, stop, &token, 150, inspect(sdk, &id, &label, &token)).await?,
+            ),
+            Action::CreateProject => Response::Status(
+                supervised(input, stop, &token, 420, create(sdk, &id, &label, &token)).await?,
+            ),
+            Action::EnableApis => Response::Status(
+                supervised(input, stop, &token, 600, enable(sdk, &id, &label, &token)).await?,
+            ),
             Action::VerifyApis => {
                 let work = async { sdk.verify_apis(&id, &token).await.map(|()| Reply::Ready) };
-                supervised(input, stop, &token, 90, work).await?
+                Response::Status(supervised(input, stop, &token, 90, work).await?)
+            }
+            Action::InspectClient | Action::CreateClient => {
+                // Values come only from the request's setup id / exact callback and
+                // the verified bound email. The SDK is untouched. Chrome is tainted
+                // on any error, so an uncertain create is never repeated.
+                let op = client::Op::from_action(request.action).ok_or(Error::Invalid)?;
+                let email = Email::parse(&boot.google_email)?;
+                let spec = client::Spec::new(&request, &id, &email);
+                let seconds = if op == client::Op::Inspect { 150 } else { 420 };
+                let work = browser.client(op, &spec, &token);
+                supervised(input, stop, &token, seconds, work)
+                    .await?
+                    .into_response()
+            }
+            Action::InspectBranding
+            | Action::ConfigureBranding
+            | Action::InspectAudience
+            | Action::ConfigureAudience
+            | Action::InspectScopes
+            | Action::ConfigureScopes => {
+                // Values come only from the verified bound email and the derived
+                // project id. The SDK is untouched; the token cancels the Chrome
+                // walk, which taints Chrome on any error (teardown still runs).
+                let op = console::Op::from_action(request.action).ok_or(Error::Invalid)?;
+                let email = Email::parse(&boot.google_email)?;
+                let spec = console::Spec::new(&id, &email);
+                let seconds = match op {
+                    console::Op::InspectBranding
+                    | console::Op::InspectScopes
+                    | console::Op::InspectAudience => 150,
+                    _ => 420,
+                };
+                let work = browser.console(op, &spec, &token);
+                Response::Status(supervised(input, stop, &token, seconds, work).await?)
             }
             Action::Finish => {
                 // Proof that no SDK credential remains; only then is the SDK discarded.
                 let work = async { sdk.cleanup_login_credentials().await.map(|()| Reply::Ready) };
                 let reply = supervised(input, stop, &token, 90, work).await?;
                 boot.sdk = None;
-                reply
+                Response::Status(reply)
             }
             Action::Authorize => return Err(Error::Invalid),
         }
     };
-    boot.seq.record(request.action, reply);
-    send(output, reply.to_wire()).await
+    boot.seq.record_response(request.action, &response);
+    send_response(output, &response).await
 }
 
 async fn login(
@@ -518,7 +569,7 @@ pub async fn serve() -> bool {
                 async move {
                     tokio::select! {
                         _ = stopped() => {},
-                        _ = tokio::time::sleep(Duration::from_secs(22 * 60)) => {},
+                        _ = tokio::time::sleep(super::bootstrap::ATTEMPT_LIFETIME) => {},
                     }
                     stop.cancel();
                 }

@@ -88,8 +88,29 @@ it("cancels when the member closes the vault before credentials are delivered",a
   await vi.advanceTimersByTimeAsync(0);popup.close();await vi.advanceTimersByTimeAsync(1400);await outcome;
   expect(ops).toContain("cancel");expect(postVaultForm).toHaveBeenCalledOnce();
 });
-it.each(["setup_required","needs_human","blocked"])("never reports a grant on %s",async state=>{
+it.each(["setup_required","setup_pending","setup_recovery_required","setup_cleanup_pending","setup_busy","needs_human","blocked"])("never reports a grant on %s",async state=>{
   const {start}=setup([state]);await expect(start()).rejects.toThrow();expect(postVaultForm).not.toHaveBeenCalled();
+});
+
+it("keeps one delivered attempt through first-install setup longer than the old login window",async()=>{
+  const {start,ops}=setup(["vault","signed_in",...Array<string>(340).fill("setup"),"consent","complete"]);
+  const result=start();await vi.advanceTimersByTimeAsync(0);
+  await vi.mocked(postVaultForm).mock.calls[0][5]!.receive({key:"sealed"},"selected@example.test");
+  await vi.advanceTimersByTimeAsync(450000);
+  expect((await result).email).toBe("selected@example.test");
+  expect(ops.filter(op=>op==="start")).toHaveLength(1);
+  expect(ops.filter(op=>op==="deliver")).toHaveLength(1);
+  expect(ops).not.toContain("cancel");
+});
+
+it("cancels the same first-install setup on navigation without claiming a connection",async()=>{
+  const {start,ops,controller,popup}=setup(["vault","setup","setup"]);
+  const result=start();const outcome=expect(result).rejects.toThrow();
+  await vi.advanceTimersByTimeAsync(0);
+  await vi.mocked(postVaultForm).mock.calls[0][5]!.receive({key:"sealed"},"selected@example.test");
+  await vi.advanceTimersByTimeAsync(1400);controller.abort();
+  await vi.advanceTimersByTimeAsync(1400);await outcome;
+  expect(ops.filter(op=>op==="cancel")).toHaveLength(1);expect(popup.closed).toBe(true);
 });
 
 it.each([408,429,502,503,504])("reconciles ambiguous Deliver HTTP %s without cancelling an accepted job",async status=>{
@@ -108,6 +129,15 @@ it.each([401,403,404])("terminates reconciliation on definite Status HTTP %s",as
   await expect(handoff.receive({key:"sealed"},"selected@example.test")).rejects.toThrow();
   await vi.advanceTimersByTimeAsync(1400);await outcome;
   expect(popup.closed).toBe(true);expect(ops).toEqual(["start","deliver","status","cancel"]);
+});
+
+it.each([408,429,502,503,504])("keeps the delivered setup through transient status HTTP %s",async status=>{
+  const {start,ops}=setup(["vault","setup","complete"],{statusError:new ApiFailure(status,"temporary")});
+  const result=start();await vi.advanceTimersByTimeAsync(0);
+  await vi.mocked(postVaultForm).mock.calls[0][5]!.receive({key:"sealed"},"selected@example.test");
+  await vi.advanceTimersByTimeAsync(4000);
+  expect((await result).email).toBe("selected@example.test");
+  expect(ops.filter(op=>op==="deliver")).toHaveLength(1);expect(ops).not.toContain("cancel");
 });
 
 it("keeps polling the same Kiri attempt while Google waits for device verification",async()=>{

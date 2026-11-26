@@ -172,6 +172,17 @@ fn save(directory: &File, redirect_uri: &str, body: &[u8]) -> Result<(), SetupEr
             GoogleClientFileError::RedirectMismatch => SetupError::RedirectMismatch,
         },
     )?;
+    save_client(directory, redirect_uri, &client)
+}
+
+fn save_client(
+    directory: &File,
+    redirect_uri: &str,
+    client: &OAuthClient,
+) -> Result<(), SetupError> {
+    if client.redirect_uri != redirect_uri {
+        return Err(SetupError::RedirectMismatch);
+    }
     if let Some(existing) = stored_client(directory, redirect_uri)? {
         if existing.client_id == client.client_id
             && existing.client_secret.expose() == client.client_secret.expose()
@@ -202,6 +213,57 @@ fn save(directory: &File, redirect_uri: &str, body: &[u8]) -> Result<(), SetupEr
         .map_err(|_| SetupError::Storage)?,
     );
     write_client(directory, &bytes).map_err(|_| SetupError::Storage)
+}
+
+/// Called only inside the bootstrap registry's fresh-admin/lease transaction.
+/// The same atomic writer serves uploaded and automatically created clients.
+pub(super) fn save_bootstrap(
+    directory: &File,
+    redirect_uri: &str,
+    client: &OAuthClient,
+) -> Result<(), moosuri_store::StoreError> {
+    save_client(directory, redirect_uri, client).map_err(bootstrap_error)
+}
+
+/// Reconcile a crash after the private file was committed but before its journal
+/// checkpoint. A visible provider client without this exact saved secret cannot
+/// be adopted; it needs a separate, durably journalled secret recovery operation.
+pub(super) fn adopt_bootstrap(
+    directory: &File,
+    redirect_uri: &str,
+    client_id: &str,
+) -> Result<(), moosuri_store::StoreError> {
+    verify_bootstrap(directory, redirect_uri, client_id, None)
+}
+
+/// Read-only acknowledgement reconciliation; a newly captured secret must match
+/// as well as the stable client identity. Never repairs or overwrites a file.
+pub(super) fn verify_bootstrap(
+    directory: &File,
+    redirect_uri: &str,
+    client_id: &str,
+    secret: Option<&str>,
+) -> Result<(), moosuri_store::StoreError> {
+    let existing = stored_client(directory, redirect_uri)
+        .map_err(bootstrap_error)?
+        .ok_or(moosuri_store::StoreError::NotFound)?;
+    if existing.client_id != client_id
+        || secret.is_some_and(|secret| secret != existing.client_secret.expose())
+    {
+        return Err(moosuri_store::StoreError::Conflict);
+    }
+    directory
+        .sync_all()
+        .map_err(|_| moosuri_store::StoreError::Unavailable)
+}
+
+fn bootstrap_error(error: SetupError) -> moosuri_store::StoreError {
+    use moosuri_store::StoreError;
+    match error {
+        SetupError::AlreadyConfigured => StoreError::Conflict,
+        SetupError::Storage => StoreError::Unavailable,
+        _ => StoreError::InvalidInput,
+    }
 }
 
 fn write_client(directory: &File, bytes: &[u8]) -> io::Result<()> {

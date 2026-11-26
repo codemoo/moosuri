@@ -1,7 +1,6 @@
 //! Gateway-owned SDK preparation for the one installation Google bootstrap.
 //!
-//! This is an unwired integration foundation: nothing here is reachable from a route and no
-//! Console client preparation exists yet. A caller owns the already signed-in worker socket
+//! The caller owns the already signed-in worker socket
 //! (`BufReader<UnixStream>`) of the SAME browser and keeps it alive between phases. On any
 //! failure the caller closes/drops that peer; this module never releases the durable lease
 //! early on failure or on a successful `Finish`. The registry's 180 s fence stays in force
@@ -15,12 +14,14 @@
 //! drops the peer, which cancels the worker.
 #![allow(dead_code)]
 use super::*;
-use moosuri_connectors::browser::google_auth::bootstrap::{Action, Reply, Request};
+use moosuri_connectors::browser::google_auth::bootstrap::{
+    self as wire, Action, Reply, Request, Response as WorkerResponse,
+};
 use moosuri_store::{
     StoreError,
     runtime_registry::admin::{
         self as control, AdminSession,
-        google_bootstrap::{self as registry, Setup, Step},
+        google_bootstrap::{self as registry, Command, CommandState, Setup, Step},
     },
 };
 
@@ -28,7 +29,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 const REGISTRY_LIMIT: Duration = Duration::from_secs(10);
 /// Longest single worker action (Authorize 420 s, Enable 600 s) plus margin.
 const ACTION_WAIT: Duration = Duration::from_secs(660);
-const MAX_REPLY: usize = 256;
+const MAX_REPLY: usize = wire::PRIVATE_WIRE_LIMIT;
 
 /// Terminal provider/worker outcome. The worker has stopped after sending one of these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +50,8 @@ pub(super) enum Failure {
     Unresolved,
     /// The temporary SDK grant may remain live; durable pending state blocks retry.
     CleanupUnconfirmed,
+    /// Provider client exists, but its one-time secret was never durably saved.
+    SecretUnavailable,
 }
 
 fn protocol() -> Failure {
@@ -97,36 +100,83 @@ impl std::fmt::Debug for Controller {
 
 /// Exact worker reply: one `{"bootstrap":"ready|absent"}` or one terminal
 /// `{"status":"blocked|needs_human|unavailable"}`; anything else is a protocol failure.
+fn parse_response(line: &[u8]) -> Result<WorkerResponse, Failure> {
+    let mut value: Value = serde_json::from_slice(line).map_err(|_| protocol())?;
+    let result = (|| {
+        if let Ok(reply) = WorkerResponse::from_wire(&value) {
+            return Ok(reply);
+        }
+        let fields = value
+            .as_object()
+            .filter(|f| f.len() == 1)
+            .ok_or_else(protocol)?;
+        let status = fields
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or_else(protocol)?;
+        Err(match status {
+            "blocked" => Failure::Provider(Terminal::Blocked),
+            "needs_human" => Failure::Provider(Terminal::NeedsHuman),
+            "unavailable" => Failure::Provider(Terminal::Unavailable),
+            "cleanup_unconfirmed" => Failure::CleanupUnconfirmed,
+            _ => protocol(),
+        })
+    })();
+    wire::scrub(&mut value);
+    result
+}
+#[cfg(test)]
 fn parse_reply(line: &[u8]) -> Result<Reply, Failure> {
-    let value: Value = serde_json::from_slice(line).map_err(|_| protocol())?;
-    if let Ok(reply) = Reply::from_wire(&value) {
-        return Ok(reply);
+    match parse_response(line)? {
+        WorkerResponse::Status(reply) => Ok(reply),
+        _ => Err(protocol()),
     }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Status {
-        status: String,
-    }
-    let status: Status = serde_json::from_value(value).map_err(|_| protocol())?;
-    Err(match status.status.as_str() {
-        "blocked" => Failure::Provider(Terminal::Blocked),
-        "needs_human" => Failure::Provider(Terminal::NeedsHuman),
-        "unavailable" => Failure::Provider(Terminal::Unavailable),
-        "cleanup_unconfirmed" => Failure::CleanupUnconfirmed,
-        _ => protocol(),
-    })
 }
 
 /// Only an inspection may answer `absent`.
 fn expected(action: Action, reply: Reply) -> Result<Reply, Failure> {
     match (action, reply) {
-        (Action::InspectProject, _) | (_, Reply::Ready) => Ok(reply),
+        (
+            Action::InspectProject
+            | Action::InspectBranding
+            | Action::InspectAudience
+            | Action::InspectScopes
+            | Action::InspectClient,
+            _,
+        )
+        | (_, Reply::Ready) => Ok(reply),
         _ => Err(protocol()),
     }
 }
 
-async fn read_reply(peer: &mut BufReader<UnixStream>) -> Result<Reply, Failure> {
-    let mut line = Vec::new();
+/// What to do for one Console command given its durable state and the fresh readback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Plan {
+    /// Already confirmed and still present: inspect only.
+    Done,
+    /// Record intent first if never attempted, send Configure only if the readback is absent,
+    /// then confirm (a present readback, or the worker's reply to Configure, is the evidence).
+    Settle { intend: bool, configure: bool },
+}
+
+/// An uncertain intent (or a confirmed one) whose provider state is absent is never replayed.
+fn plan(state: CommandState, seen: Reply) -> Result<Plan, Failure> {
+    match (state, seen) {
+        (CommandState::Confirmed, Reply::Ready) => Ok(Plan::Done),
+        (CommandState::Confirmed | CommandState::Intent, Reply::Absent) => Err(Failure::Unresolved),
+        (CommandState::Intent, Reply::Ready) => Ok(Plan::Settle {
+            intend: false,
+            configure: false,
+        }),
+        (CommandState::Untried, seen) => Ok(Plan::Settle {
+            intend: true,
+            configure: seen == Reply::Absent,
+        }),
+    }
+}
+
+async fn read_reply(peer: &mut BufReader<UnixStream>) -> Result<WorkerResponse, Failure> {
+    let mut line = Zeroizing::new(Vec::with_capacity(MAX_REPLY + 1));
     (&mut *peer)
         .take(MAX_REPLY as u64 + 1)
         .read_until(b'\n', &mut line)
@@ -135,7 +185,7 @@ async fn read_reply(peer: &mut BufReader<UnixStream>) -> Result<Reply, Failure> 
     if line.len() > MAX_REPLY || line.pop() != Some(b'\n') {
         return Err(protocol());
     }
-    parse_reply(&line)
+    parse_response(&line)
 }
 
 impl Controller {
@@ -285,6 +335,195 @@ impl Controller {
         self.setup.intent = true;
         Ok(())
     }
+
+    /// Prepare branding, the audience (External/Testing plus the initiating account as test
+    /// user) and the exact Data Access scopes in the same browser. Each provider mutation has
+    /// its own durable command intent/confirmation under the same setup, lease and fresh admin
+    /// check; the top-level step only advances to `Client` once every command has a positive
+    /// exact readback. A lost mutation reply is never permission to send Configure again:
+    /// only a positive readback reconciles it. A stage already confirmed in the registry is
+    /// only inspected, never mutated.
+    ///
+    pub(super) async fn console(
+        &mut self,
+        peer: &mut BufReader<UnixStream>,
+    ) -> Result<(), Failure> {
+        if self.setup.step < Step::Branding {
+            return Err(Failure::Gateway(StatusCode::CONFLICT));
+        }
+        for (cmd, inspect, configure) in [
+            (
+                Command::Branding,
+                Action::InspectBranding,
+                Action::ConfigureBranding,
+            ),
+            (
+                Command::Audience,
+                Action::InspectAudience,
+                Action::ConfigureAudience,
+            ),
+            (
+                Command::Scopes,
+                Action::InspectScopes,
+                Action::ConfigureScopes,
+            ),
+        ] {
+            let seen = self.command(peer, inspect).await?;
+            let state = self.command_state(cmd).await?;
+            match plan(state, seen)? {
+                Plan::Done => {}
+                Plan::Settle {
+                    intend,
+                    configure: send,
+                } => {
+                    if intend {
+                        self.intend_command(cmd).await?;
+                    }
+                    if send {
+                        self.command(peer, configure).await?;
+                    }
+                    self.confirm_command(cmd).await?;
+                }
+            }
+            // The stage completes with its last command; the registry refuses otherwise.
+            let stage = match cmd {
+                Command::Branding => Some((Step::Branding, Step::Audience)),
+                Command::Scopes => Some((Step::Audience, Step::Client)),
+                Command::Audience => None,
+            };
+            if let Some((step, next)) = stage
+                && self.setup.step == step
+            {
+                self.confirm(step).await?;
+                self.setup.step = next;
+                self.setup.intent = false;
+            }
+        }
+        Ok(())
+    }
+    /// Issue once, or adopt only the exact provider client whose private file
+    /// already survived a lost journal commit. No secret reaches the web layer.
+    pub(super) async fn client(&mut self, peer: &mut BufReader<UnixStream>) -> Result<(), Failure> {
+        if self.setup.step != Step::Client {
+            return Err(Failure::Gateway(StatusCode::CONFLICT));
+        }
+        let inspected = self.private_command(peer, Action::InspectClient).await?;
+        let registration = match inspected {
+            WorkerResponse::Status(Reply::Absent) => {
+                if self.setup.intent {
+                    return Err(Failure::Unresolved);
+                }
+                self.intend(Step::Client).await?;
+                match self.private_command(peer, Action::CreateClient).await? {
+                    WorkerResponse::Client(client) => Ok(client),
+                    _ => return Err(protocol()),
+                }
+            }
+            WorkerResponse::ClientPresent(identity) => {
+                if !self.setup.intent {
+                    self.intend(Step::Client).await?;
+                }
+                Err(identity)
+            }
+            _ => return Err(protocol()),
+        };
+        // Keep the one-time secret alive across bounded LOCAL save retries.
+        // Never send CreateClient again. A timed-out blocking save may still
+        // commit, so reconcile the exact file and checkpoint under the lease.
+        let registration =
+            Arc::new(
+                registration.map(|client| moosuri_connectors::gmail::OAuthClient {
+                    client_id: client.client_id,
+                    client_secret: client.secret,
+                    redirect_uri: client.redirect_uri,
+                }),
+            );
+        for attempt in 0..3 {
+            let run = self.run;
+            let redirect = self.redirect_uri.clone();
+            let registration = registration.clone();
+            let saved = self
+                .with_admin(move |root, session| {
+                    use super::super::google_setup::{
+                        adopt_bootstrap, save_bootstrap, verify_bootstrap,
+                    };
+                    let missing_file = std::cell::Cell::new(false);
+                    let file_result = |result: Result<(), StoreError>| {
+                        if matches!(result, Err(StoreError::NotFound)) {
+                            missing_file.set(true);
+                        }
+                        result
+                    };
+                    let result = registry::register(root, session, run, |directory| {
+                        file_result(match registration.as_ref() {
+                            Ok(client) => save_bootstrap(directory, &redirect, client),
+                            Err(identity) => {
+                                adopt_bootstrap(directory, &redirect, &identity.client_id)
+                            }
+                        })
+                    });
+                    let result = if matches!(result, Err(StoreError::Conflict)) {
+                        registry::reconcile_registration(root, session, run, |directory| {
+                            file_result(match registration.as_ref() {
+                                Ok(client) => verify_bootstrap(
+                                    directory,
+                                    &redirect,
+                                    &client.client_id,
+                                    Some(client.client_secret.expose()),
+                                ),
+                                Err(identity) => {
+                                    adopt_bootstrap(directory, &redirect, &identity.client_id)
+                                }
+                            })
+                        })
+                    } else {
+                        result
+                    };
+                    // Only the private-file callback may name a lost secret;
+                    // missing registry authority or session HTTP 404 cannot.
+                    Ok(registration_result(result, missing_file.get()))
+                })
+                .await;
+            match saved.and_then(|result| result) {
+                Ok(()) => break,
+                Err(Failure::Gateway(status))
+                    if attempt < 2
+                        && matches!(
+                            status,
+                            StatusCode::SERVICE_UNAVAILABLE
+                                | StatusCode::BAD_GATEWAY
+                                | StatusCode::GATEWAY_TIMEOUT
+                                | StatusCode::REQUEST_TIMEOUT
+                                | StatusCode::TOO_MANY_REQUESTS
+                        ) =>
+                {
+                    tokio::time::sleep(HEARTBEAT_INTERVAL).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.setup.step = Step::Registered;
+        self.setup.intent = false;
+        Ok(())
+    }
+
+    async fn command_state(&self, cmd: Command) -> Result<CommandState, Failure> {
+        let run = self.run;
+        self.with_admin(move |root, s| registry::command_state(root, s, run, cmd))
+            .await
+    }
+    async fn intend_command(&mut self, cmd: Command) -> Result<(), Failure> {
+        let run = self.run;
+        self.with_admin(move |root, s| registry::intend_command(root, s, run, cmd))
+            .await?;
+        self.setup.intent = true;
+        Ok(())
+    }
+    async fn confirm_command(&self, cmd: Command) -> Result<(), Failure> {
+        let run = self.run;
+        self.with_admin(move |root, s| registry::confirm_command(root, s, run, cmd))
+            .await
+    }
     async fn confirm(&self, step: Step) -> Result<(), Failure> {
         let run = self.run;
         self.with_admin(move |root, s| registry::confirmed(root, s, run, step))
@@ -350,6 +589,20 @@ impl Controller {
         peer: &mut BufReader<UnixStream>,
         action: Action,
     ) -> Result<Reply, Failure> {
+        match self.private_command(peer, action).await? {
+            WorkerResponse::Status(reply) => expected(action, reply),
+            _ => {
+                self.broken = true;
+                Err(protocol())
+            }
+        }
+    }
+
+    async fn private_command(
+        &mut self,
+        peer: &mut BufReader<UnixStream>,
+        action: Action,
+    ) -> Result<WorkerResponse, Failure> {
         if self.broken || self.finished {
             return Err(Failure::Gateway(GONE));
         }
@@ -363,7 +616,7 @@ impl Controller {
         &self,
         peer: &mut BufReader<UnixStream>,
         action: Action,
-    ) -> Result<Reply, Failure> {
+    ) -> Result<WorkerResponse, Failure> {
         // Fresh authority and lease immediately before the bytes that may cause a write.
         self.heartbeat().await?;
         let request = Request {
@@ -388,7 +641,13 @@ impl Controller {
                 _ = checks.tick() => self.heartbeat().await?,
             }
         };
-        expected(action, reply)
+        if !reply.answers(&request) {
+            return Err(protocol());
+        }
+        if let WorkerResponse::Status(status) = &reply {
+            expected(action, *status)?;
+        }
+        Ok(reply)
     }
 
     /// SDK credential cleanup only. This is NOT teardown acknowledgement and does not
@@ -408,9 +667,34 @@ impl Controller {
     }
 }
 
+fn registration_result(result: Result<(), StoreError>, missing_file: bool) -> Result<(), Failure> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(StoreError::NotFound) if missing_file => Err(Failure::SecretUnavailable),
+        Err(error) => Err(Failure::Gateway(super::super::admin::error(error))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_private_file_absence_means_secret_unavailable() {
+        assert_eq!(
+            registration_result(Err(StoreError::NotFound), true),
+            Err(Failure::SecretUnavailable)
+        );
+        assert_eq!(
+            registration_result(Err(StoreError::NotFound), false),
+            Err(Failure::Gateway(StatusCode::NOT_FOUND))
+        );
+        // A marker from an earlier callback cannot mask later authority loss.
+        assert_eq!(
+            registration_result(Err(StoreError::Forbidden), true),
+            Err(Failure::Gateway(StatusCode::FORBIDDEN))
+        );
+    }
 
     fn line(value: Value) -> Vec<u8> {
         value.to_string().into_bytes()
@@ -473,6 +757,314 @@ mod tests {
         }
     }
 
+    #[test]
+    fn console_commands_never_replay_after_uncertainty_or_mutate_a_confirmed_stage() {
+        use CommandState::*;
+        // Audience inspection may answer absent, like the other inspections.
+        assert_eq!(
+            expected(Action::InspectAudience, Reply::Absent),
+            Ok(Reply::Absent)
+        );
+        assert_eq!(
+            expected(Action::ConfigureAudience, Reply::Absent),
+            Err(protocol())
+        );
+        // Lost reply then positive readback: reconcile without sending Configure.
+        assert_eq!(
+            plan(Intent, Reply::Ready),
+            Ok(Plan::Settle {
+                intend: false,
+                configure: false
+            })
+        );
+        // Uncertain intent with provider state still absent: refuse replay.
+        assert_eq!(plan(Intent, Reply::Absent), Err(Failure::Unresolved));
+        // A never-attempted next command is submitted exactly once, intent first.
+        assert_eq!(
+            plan(Untried, Reply::Absent),
+            Ok(Plan::Settle {
+                intend: true,
+                configure: true
+            })
+        );
+        // A confirmed command is inspect-only; its absence is never repaired.
+        assert_eq!(plan(Confirmed, Reply::Ready), Ok(Plan::Done));
+        assert_eq!(plan(Confirmed, Reply::Absent), Err(Failure::Unresolved));
+    }
+
+    #[tokio::test]
+    async fn console_refuses_before_apis_and_sends_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let g = Gateway::new(&super::super::super::tests::options(&root)).unwrap();
+        let a = SessionAllocation {
+            allocation: Allocation {
+                account_id: Uuid::new_v4().to_string(),
+                tenant_id: Uuid::new_v4().to_string(),
+                volume_id: Uuid::new_v4().to_string(),
+                generation: 1,
+            },
+            epoch: 0,
+        };
+        let setup = Setup {
+            setup_id: Uuid::new_v4(),
+            google_email: "google@example.test".into(),
+            redirect_uri: "https://assistant.example.test/api/v1/mail/oauth/callback".into(),
+            step: Step::Apis,
+            intent: false,
+        };
+        let mut c = Controller::new(
+            &g,
+            &a,
+            "session",
+            "member@example.test",
+            Uuid::new_v4(),
+            setup.redirect_uri.clone(),
+            setup,
+        );
+        let (mut worker, controller) = UnixStream::pair().unwrap();
+        let mut peer = BufReader::new(controller);
+        assert_eq!(
+            c.console(&mut peer).await,
+            Err(Failure::Gateway(StatusCode::CONFLICT))
+        );
+        let mut byte = [0u8; 1];
+        assert!(
+            timeout(Duration::from_millis(50), worker.read(&mut byte))
+                .await
+                .is_err()
+        );
+        assert!(!c.broken);
+    }
+
+    #[tokio::test]
+    async fn private_client_creation_recovery_and_missing_secret_keep_one_identity() {
+        let _fixture = crate::ACCOUNT_FIXTURE_LOCK.lock().await;
+        use moosuri_connectors::{
+            browser::google_auth::bootstrap::{ClientIdentity, ClientRegistration},
+            gmail::SecretString,
+        };
+        use moosuri_store::runtime_registry;
+        // These drive real gateway session reauthorization and the registry +
+        // private atomic writer; only the Console worker's answers are synthetic.
+        for scenario in [
+            "create",
+            "transient_save",
+            "lost_save_ack",
+            "saved_before_crash",
+            "secret_lost",
+            "uncertain_absent",
+            "logout",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let options = super::super::super::tests::options(&root);
+            let email = "admin@example.test";
+            let (allocation, store, member_task) =
+                super::super::super::tests::real_member(&options, email).await;
+            let login = store
+                .login(email.into(), "Synthetic-password-42".into())
+                .await
+                .unwrap();
+            let g = Gateway::new(&options).unwrap();
+            let a = SessionAllocation {
+                allocation,
+                epoch: 0,
+            };
+            let (_, bytes, _) = g
+                .proxy(
+                    &a,
+                    Method::GET,
+                    "/api/v1/auth/session",
+                    None,
+                    Some(&login.token),
+                )
+                .await
+                .unwrap();
+            let view = member_session_view(&bytes, &a).unwrap();
+            control::bootstrap(&options.registry, Uuid::new_v4(), &a, &view).unwrap();
+            let pin = control::checked_session(&options.registry, &a, &view)
+                .unwrap()
+                .at_epoch(0)
+                .unwrap();
+            let run = Uuid::new_v4();
+            let redirect = format!("{}{}", g.origin, google::CALLBACK);
+            let original = registry::claim(
+                &options.registry,
+                &pin,
+                run,
+                "google@example.test".into(),
+                redirect.clone(),
+            )
+            .unwrap();
+            for step in [Step::Project, Step::Apis] {
+                registry::intend(&options.registry, &pin, run, step).unwrap();
+                registry::confirmed(&options.registry, &pin, run, step).unwrap();
+            }
+            for (cmd, done) in [
+                (Command::Branding, Some(Step::Branding)),
+                (Command::Audience, None),
+                (Command::Scopes, Some(Step::Audience)),
+            ] {
+                registry::intend_command(&options.registry, &pin, run, cmd).unwrap();
+                registry::confirm_command(&options.registry, &pin, run, cmd).unwrap();
+                if let Some(step) = done {
+                    registry::confirmed(&options.registry, &pin, run, step).unwrap();
+                }
+            }
+            if matches!(
+                scenario,
+                "saved_before_crash" | "secret_lost" | "uncertain_absent"
+            ) {
+                registry::intend(&options.registry, &pin, run, Step::Client).unwrap();
+            }
+            let identity = ClientIdentity {
+                setup_id: original.setup_id,
+                client_id: "1234567890-synthetic.apps.googleusercontent.com".into(),
+                redirect_uri: redirect.clone(),
+            };
+            if scenario == "saved_before_crash" {
+                control::with_google_setup(&options.registry, &pin, |dir| {
+                    super::super::super::google_setup::save_bootstrap(
+                        dir,
+                        &redirect,
+                        &moosuri_connectors::gmail::OAuthClient {
+                            client_id: identity.client_id.clone(),
+                            client_secret: SecretString::new("GOCSPX-synthetic-only".into())
+                                .unwrap(),
+                            redirect_uri: redirect.clone(),
+                        },
+                    )
+                })
+                .unwrap()
+                .unwrap();
+            }
+            let setup = registry::current(&options.registry, &pin).unwrap().unwrap();
+            let mut controller =
+                Controller::new(&g, &a, &login.token, email, run, redirect.clone(), setup);
+            let (worker, gateway) = UnixStream::pair().unwrap();
+            let worker_store = store.clone();
+            let worker_user = login.user;
+            let worker_root = options.registry.clone();
+            let worker_pin = control::checked_session(&worker_root, &a, &view)
+                .unwrap()
+                .at_epoch(0)
+                .unwrap();
+            let worker_task = tokio::spawn(async move {
+                let mut peer = BufReader::new(worker);
+                let mut line = String::new();
+                peer.read_line(&mut line).await.unwrap();
+                let action: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(action["bootstrap"]["action"], "inspect_client");
+                let seen = if matches!(
+                    scenario,
+                    "create" | "transient_save" | "lost_save_ack" | "uncertain_absent" | "logout"
+                ) {
+                    WorkerResponse::Status(Reply::Absent)
+                } else {
+                    WorkerResponse::ClientPresent(identity.clone())
+                };
+                if scenario == "logout" {
+                    worker_store.logout(&worker_user).await.unwrap();
+                }
+                peer.get_mut()
+                    .write_all(&seen.to_line().unwrap())
+                    .await
+                    .unwrap();
+                if matches!(scenario, "create" | "transient_save" | "lost_save_ack") {
+                    line.clear();
+                    peer.read_line(&mut line).await.unwrap();
+                    let action: Value = serde_json::from_str(&line).unwrap();
+                    assert_eq!(action["bootstrap"]["action"], "create_client");
+                    let pending =
+                        worker_root.join(runtime_registry::GOOGLE_WEB_CLIENT_PENDING_FILE);
+                    if scenario == "transient_save" {
+                        // A transient filesystem failure after provider creation.
+                        // Repair it before the bounded LOCAL retry; no second
+                        // provider action is accepted by this worker fixture.
+                        std::fs::write(&pending, b"synthetic-invalid-staging-file").unwrap();
+                        std::fs::set_permissions(&pending, std::fs::Permissions::from_mode(0o644))
+                            .unwrap();
+                    }
+                    if scenario == "lost_save_ack" {
+                        registry::register(&worker_root, &worker_pin, run, |directory| {
+                            super::super::super::google_setup::save_bootstrap(
+                                directory,
+                                &identity.redirect_uri,
+                                &moosuri_connectors::gmail::OAuthClient {
+                                    client_id: identity.client_id.clone(),
+                                    client_secret: SecretString::new(
+                                        "GOCSPX-synthetic-only".into(),
+                                    )
+                                    .unwrap(),
+                                    redirect_uri: identity.redirect_uri.clone(),
+                                },
+                            )
+                        })
+                        .unwrap();
+                    }
+                    let reply = WorkerResponse::Client(ClientRegistration::new(
+                        identity,
+                        SecretString::new("GOCSPX-synthetic-only".into()).unwrap(),
+                    ));
+                    peer.get_mut()
+                        .write_all(&reply.to_line().unwrap())
+                        .await
+                        .unwrap();
+                    if scenario == "transient_save" {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        std::fs::remove_file(pending).unwrap();
+                    }
+                }
+                // A failed/adopted inspection must not emit another create.
+                line.clear();
+                assert_eq!(peer.read_line(&mut line).await.unwrap(), 0);
+            });
+            let mut peer = BufReader::new(gateway);
+            let result = controller.client(&mut peer).await;
+            match scenario {
+                "create" | "transient_save" | "lost_save_ack" | "saved_before_crash" => {
+                    assert_eq!(result, Ok(()))
+                }
+                "secret_lost" => assert_eq!(result, Err(Failure::SecretUnavailable)),
+                "uncertain_absent" => assert_eq!(result, Err(Failure::Unresolved)),
+                "logout" => assert_eq!(result, Err(Failure::Gateway(StatusCode::UNAUTHORIZED))),
+                _ => unreachable!(),
+            }
+            drop(peer);
+            worker_task.await.unwrap();
+            if scenario != "logout" {
+                let saved = registry::current(&options.registry, &pin).unwrap().unwrap();
+                assert_eq!(saved.setup_id, original.setup_id);
+                assert_eq!(
+                    saved.step,
+                    if matches!(
+                        scenario,
+                        "create" | "transient_save" | "lost_save_ack" | "saved_before_crash"
+                    ) {
+                        Step::Registered
+                    } else {
+                        Step::Client
+                    }
+                );
+                let client = options
+                    .registry
+                    .join(runtime_registry::GOOGLE_WEB_CLIENT_FILE);
+                assert_eq!(
+                    client.exists(),
+                    matches!(
+                        scenario,
+                        "create" | "transient_save" | "lost_save_ack" | "saved_before_crash"
+                    )
+                );
+                if client.exists() {
+                    assert_eq!(std::fs::metadata(client).unwrap().mode() & 0o7777, 0o600);
+                }
+            }
+            member_task.abort();
+        }
+    }
+
     #[tokio::test]
     async fn reply_line_is_bounded_and_newline_terminated() {
         let (mut worker, controller) = UnixStream::pair().unwrap();
@@ -481,20 +1073,23 @@ mod tests {
             .write_all(b"{\"bootstrap\":\"absent\"}\n")
             .await
             .unwrap();
-        assert_eq!(read_reply(&mut peer).await, Ok(Reply::Absent));
+        assert!(matches!(
+            read_reply(&mut peer).await,
+            Ok(WorkerResponse::Status(Reply::Absent))
+        ));
         worker
             .write_all(b"{\"bootstrap\":\"ready\"}")
             .await
             .unwrap();
         drop(worker);
-        assert_eq!(read_reply(&mut peer).await, Err(protocol()));
+        assert!(matches!(read_reply(&mut peer).await, Err(error) if error == protocol()));
 
         let (mut worker, controller) = UnixStream::pair().unwrap();
         let mut peer = BufReader::new(controller);
         let mut long = vec![b' '; MAX_REPLY];
         long.push(b'\n');
         worker.write_all(&long).await.unwrap();
-        assert_eq!(read_reply(&mut peer).await, Err(protocol()));
+        assert!(matches!(read_reply(&mut peer).await, Err(error) if error == protocol()));
     }
 
     #[tokio::test]

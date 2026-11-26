@@ -237,6 +237,123 @@ fn changed_bundle_file_is_not_installed() {
 }
 
 #[test]
+fn clean_install_wires_an_unconfigured_model_service_ahead_of_members() {
+    let (tmp, layout) = temp();
+    let root = fs::canonicalize(tmp.path()).unwrap();
+    let b = bundle(&root);
+    let r = receipt();
+    lay_down(&layout, &b, &r, Some((b"{}\n", b"{}\n"))).unwrap();
+    // Private ledger directory and a stable raw 32-byte key; no provider
+    // configuration or credential exists at OS-installation time.
+    let ledger = layout.at(render::MODEL_LEDGER);
+    assert_eq!(fs::metadata(&ledger).unwrap().mode() & 0o777, 0o700);
+    assert_eq!(fs::read_dir(&ledger).unwrap().count(), 0);
+    let key = fs::read(layout.at(render::MODEL_KEY)).unwrap();
+    assert_eq!(key.len(), 32);
+    assert_eq!(
+        fs::metadata(layout.at(render::MODEL_KEY)).unwrap().mode() & 0o777,
+        0o400
+    );
+    assert!(!layout.at(render::MODEL_CONFIG).exists());
+    // The private model state directory is installer-owned, empty, and not
+    // inside the strict registry directory.
+    let setup = layout.at(render::MODEL_SETUP_DIR);
+    assert_eq!(fs::metadata(&setup).unwrap().mode() & 0o777, 0o700);
+    assert_eq!(fs::read_dir(&setup).unwrap().count(), 0);
+    assert!(!render::MODEL_SETUP_DIR.starts_with("/var/lib/moosuri-control/registry"));
+    // The existing lifecycle profile and onboarding policy carry the socket root
+    // and the text-preview policy.
+    let profile: serde_json::Value =
+        serde_json::from_slice(&fs::read(layout.at(MEMBERS)).unwrap()).unwrap();
+    assert_eq!(profile["model_sockets_root"], render::MODEL_SOCKETS);
+    let policy: serde_json::Value = serde_json::from_slice(
+        &fs::read(layout.at("/etc/moosuri/kiri-onboard-policy.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(policy["enable_text_preview"], true);
+    // Same binary, same private files, started with the config absent.
+    let unit =
+        fs::read_to_string(layout.at("/etc/systemd/system/moosuri-kiri-model.service")).unwrap();
+    for expected in [
+        "ExecStart=/usr/local/bin/moosuri runtime-model ",
+        "--lifecycle-config /etc/moosuri/kiri-members.json",
+        "--config /var/lib/moosuri-control/model-setup/runtime-model.json",
+        "--fingerprint-key /etc/moosuri/model-fingerprint.key",
+        "--ledger /var/lib/moosuri-control/model-ledger",
+        "--socket-dir /var/lib/moosuri-kiri-model",
+        "StateDirectory=moosuri-kiri-model",
+        "StateDirectoryMode=0700",
+        "User=root",
+    ] {
+        assert!(unit.contains(expected), "{expected}");
+    }
+    // Rendered ordering: sockets exist before the engine, recovery worker,
+    // onboarding or gateway can start a member; stop order is the reverse.
+    let before = unit
+        .lines()
+        .find_map(|l| l.strip_prefix("Before="))
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    for dependent in [
+        "kiri.service",
+        "moosuri-kiri-lifecycle.service",
+        "moosuri-kiri-onboard.service",
+        "moosuri-kiri-gateway.service",
+    ] {
+        assert!(before.contains(&dependent), "{dependent}");
+    }
+    assert_eq!(START_BEFORE_ONBOARD[0], "moosuri-kiri-model.service");
+    // Reboot/resume: the identical key, unchanged files, no second ledger state.
+    lay_down(&layout, &b, &r, Some((b"{}\n", b"{}\n"))).unwrap();
+    assert_eq!(fs::read(layout.at(render::MODEL_KEY)).unwrap(), key);
+    // Conflicts are never adopted or repaired silently.
+    fs::set_permissions(
+        layout.at(render::MODEL_KEY),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert_eq!(
+        ensure_model_key(&layout).unwrap_err(),
+        "kiri_install_model_key_invalid"
+    );
+    fs::set_permissions(
+        layout.at(render::MODEL_KEY),
+        fs::Permissions::from_mode(0o400),
+    )
+    .unwrap();
+    ensure_model_key(&layout).unwrap();
+    fs::set_permissions(
+        layout.at(render::MODEL_KEY),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    fs::write(layout.at(render::MODEL_KEY), b"short").unwrap();
+    fs::set_permissions(
+        layout.at(render::MODEL_KEY),
+        fs::Permissions::from_mode(0o400),
+    )
+    .unwrap();
+    assert_eq!(
+        ensure_model_key(&layout).unwrap_err(),
+        "kiri_install_model_key_invalid"
+    );
+    fs::set_permissions(&ledger, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        lay_down(&layout, &b, &r, Some((b"{}\n", b"{}\n"))).unwrap_err(),
+        "kiri_install_foreign_directory"
+    );
+}
+
+#[test]
+fn fresh_install_refuses_an_existing_model_socket_directory() {
+    let (_tmp, layout) = temp();
+    require_fresh(&layout).unwrap();
+    fs::create_dir(layout.at(render::MODEL_SOCKETS)).unwrap();
+    assert!(require_fresh(&layout).is_err());
+}
+
+#[test]
 fn receipt_identity_blocks_changed_origins_bundle_or_capacity() {
     let (_tmp, layout) = temp();
     layout

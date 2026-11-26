@@ -7,6 +7,10 @@
 //! confirms `Project`, that the provider project has the stable id from `Setup::project_id`,
 //! is ACTIVE and has billing disabled. Nothing here records or links a billing account.
 //!
+//! The Branding and Audience steps each cover several provider mutations, so migration 9
+//! journals them per `Command` (branding, audience, scopes: intent -> confirmed, same setup,
+//! lease and admin checks). The step bit alone is never read as proof of any one of them.
+//!
 //! The registry cannot read credentials. If the process dies between the private client-file
 //! commit and the checkpoint commit, the checkpoint stays at `Client` with intent set; the
 //! stable `Setup::client_name` lets the gateway reconcile the provider client and adopt the
@@ -41,7 +45,7 @@ fn renew(tx: &Transaction<'_>, now: i64) -> Result<()> {
 }
 
 /// Order matters: Project -> Apis -> Branding -> Audience -> Client -> Registered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Step {
     Project,
@@ -249,7 +253,7 @@ pub fn heartbeat(root: &Path, s: &AdminSession, run: Uuid) -> Result<()> {
 /// For `Project`, the controller must already have verified that the provider project is
 /// identified by `project_id`, ACTIVE and unbilled before it later confirms the step.
 pub fn intend(root: &Path, s: &AdminSession, run: Uuid, step: Step) -> Result<Setup> {
-    if step == Step::Registered {
+    if matches!(step, Step::Branding | Step::Audience | Step::Registered) {
         return Err(StoreError::InvalidInput);
     }
     leased(root, s, run, |tx, _, now| {
@@ -270,12 +274,174 @@ pub fn intend(root: &Path, s: &AdminSession, run: Uuid, step: Step) -> Result<Se
 pub fn confirmed(root: &Path, s: &AdminSession, run: Uuid, step: Step) -> Result<()> {
     let next = step.next().ok_or(StoreError::InvalidInput)?;
     leased(root, s, run, |tx, _, now| {
-        if read(tx)?.is_some_and(|c| c.step == next && !c.intent) {
+        let current = read(tx)?;
+        if current
+            .as_ref()
+            .is_some_and(|c| c.step == next && !c.intent)
+        {
             return renew(tx, now);
+        }
+        // The single historical bit cannot prove several distinct Console mutations: every
+        // command of the stage needs its own confirmed readback before the stage advances.
+        if let Some(c) = current.as_ref().filter(|c| c.step == step) {
+            for cmd in Command::of(step) {
+                if effective(tx, c, *cmd)? != CommandState::Confirmed {
+                    return Err(StoreError::Conflict);
+                }
+            }
         }
         if tx.execute(
             "UPDATE installation_google_bootstrap SET step=?1,intent=0 WHERE singleton=1 AND step=?2 AND intent=1",
             params![next.name(), step.name()],
+        )? != 1
+        {
+            return Err(StoreError::Conflict);
+        }
+        renew(tx, now)
+    })
+}
+
+/// One provider-mutating Console command. Closed set: no caller-supplied names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Command {
+    Branding,
+    /// Initiating account as Google test user (External/Testing).
+    Audience,
+    /// Exact Data Access scope set.
+    Scopes,
+}
+impl Command {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Branding => "branding",
+            Self::Audience => "audience",
+            Self::Scopes => "scopes",
+        }
+    }
+    fn home(self) -> Step {
+        match self {
+            Self::Branding => Step::Branding,
+            Self::Audience | Self::Scopes => Step::Audience,
+        }
+    }
+    /// The commands whose confirmed readbacks together complete a top-level step, in order.
+    fn of(step: Step) -> &'static [Command] {
+        match step {
+            Step::Branding => &[Self::Branding],
+            Step::Audience => &[Self::Audience, Self::Scopes],
+            _ => &[],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandState {
+    /// Never attempted: the first submission is permitted.
+    Untried,
+    /// A provider write may have reached Google. Only a positive readback resolves it.
+    Intent,
+    Confirmed,
+}
+
+/// Effective state. A row is authoritative. Without one: a past stage was confirmed by step
+/// progression; a migration-8 checkpoint (stage intent set, no command rows at all) is
+/// conservatively uncertain for EVERY command of that stage (the old bit never said which
+/// mutation was sent, so it is never aliased to one command); otherwise never attempted.
+fn effective(c: &Connection, setup: &Setup, cmd: Command) -> Result<CommandState> {
+    let mut q = c.prepare(
+        "SELECT command,state FROM installation_google_console_commands WHERE setup_id=?1",
+    )?;
+    let rows = q
+        .query_map([setup.setup_id.to_string()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if let Some((_, state)) = rows.iter().find(|(n, _)| n == cmd.name()) {
+        return match state.as_str() {
+            "intent" => Ok(CommandState::Intent),
+            "confirmed" => Ok(CommandState::Confirmed),
+            _ => Err(StoreError::Corrupt),
+        };
+    }
+    Ok(if setup.step > cmd.home() {
+        CommandState::Confirmed
+    } else if !rows
+        .iter()
+        .any(|(name, _)| Command::of(cmd.home()).iter().any(|c| c.name() == name))
+        && setup.step == cmd.home()
+        && setup.intent
+    {
+        CommandState::Intent
+    } else {
+        CommandState::Untried
+    })
+}
+
+/// Current state of `cmd` for the claimed run (fresh admin pin + lease, renews the lease).
+pub fn command_state(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    cmd: Command,
+) -> Result<CommandState> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        let state = effective(tx, &setup, cmd)?;
+        renew(tx, now)?;
+        Ok(state)
+    })
+}
+
+/// Durable intent BEFORE the worker is told to mutate. Only a never-attempted command at its
+/// own stage may begin; Scopes additionally needs Audience confirmed. Also sets the stage
+/// intent bit atomically, so a lone bit with no rows can only be a migration-8 checkpoint.
+pub fn intend_command(root: &Path, s: &AdminSession, run: Uuid, cmd: Command) -> Result<()> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        if setup.step != cmd.home()
+            || effective(tx, &setup, cmd)? != CommandState::Untried
+            || (cmd == Command::Scopes
+                && effective(tx, &setup, Command::Audience)? != CommandState::Confirmed)
+        {
+            return Err(StoreError::Conflict);
+        }
+        tx.execute(
+            "UPDATE installation_google_bootstrap SET intent=1 WHERE singleton=1 AND step=?1",
+            [cmd.home().name()],
+        )?;
+        tx.execute(
+            "INSERT INTO installation_google_console_commands(setup_id,command,state) VALUES(?1,?2,'intent')",
+            params![setup.setup_id.to_string(), cmd.name()],
+        )?;
+        renew(tx, now)
+    })
+}
+
+/// Record a positive exact readback. Resolves an uncertain intent (including a migration-8
+/// one); idempotent when already confirmed; refused for a command never begun.
+pub fn confirm_command(root: &Path, s: &AdminSession, run: Uuid, cmd: Command) -> Result<()> {
+    leased(root, s, run, |tx, _, now| {
+        let setup = read(tx)?.ok_or(StoreError::Unavailable)?;
+        match effective(tx, &setup, cmd)? {
+            CommandState::Confirmed => return renew(tx, now),
+            CommandState::Untried => return Err(StoreError::Conflict),
+            CommandState::Intent => {}
+        }
+        // Only an implicit legacy intent covers every sibling. A new explicit
+        // audience intent says nothing about scopes, which remain untried.
+        let explicit: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM installation_google_console_commands WHERE setup_id=?1 AND command=?2)",
+            params![setup.setup_id.to_string(), cmd.name()], |r| r.get(0))?;
+        for sibling in Command::of(cmd.home()).iter().filter(|_| !explicit) {
+            tx.execute(
+                "INSERT INTO installation_google_console_commands(setup_id,command,state) VALUES(?1,?2,'intent')",
+                params![setup.setup_id.to_string(), sibling.name()],
+            )?;
+        }
+        if tx.execute(
+            "UPDATE installation_google_console_commands SET state='confirmed' WHERE setup_id=?1 AND command=?2 AND state='intent'",
+            params![setup.setup_id.to_string(), cmd.name()],
         )? != 1
         {
             return Err(StoreError::Conflict);
@@ -297,7 +463,7 @@ pub fn register<T>(
     run: Uuid,
     save: impl FnOnce(&fs::File) -> Result<T>,
 ) -> Result<T> {
-    leased(root, s, run, |tx, dir, _| {
+    leased(root, s, run, |tx, dir, now| {
         let current = read(tx)?.ok_or(StoreError::Unavailable)?;
         if current.step != Step::Client || !current.intent {
             return Err(StoreError::Conflict);
@@ -310,6 +476,27 @@ pub fn register<T>(
         {
             return Err(StoreError::Conflict);
         }
+        renew(tx, now)?;
+        Ok(result)
+    })
+}
+
+/// Reconcile a lost registration acknowledgement under fresh authority and the
+/// same live lease. `verify` must only read/verify the exact private registration;
+/// this does not authorize replacing a saved client or advancing any checkpoint.
+pub fn reconcile_registration<T>(
+    root: &Path,
+    s: &AdminSession,
+    run: Uuid,
+    verify: impl FnOnce(&fs::File) -> Result<T>,
+) -> Result<T> {
+    leased(root, s, run, |tx, dir, now| {
+        let current = read(tx)?.ok_or(StoreError::Unavailable)?;
+        if current.step != Step::Registered || current.intent {
+            return Err(StoreError::Conflict);
+        }
+        let result = verify(dir)?;
+        renew(tx, now)?;
         Ok(result)
     })
 }
@@ -481,10 +668,29 @@ mod tests {
         let (_d, c) = open(r, false).unwrap();
         read(&c).unwrap().unwrap()
     }
+    /// Complete one stage the way the controller does: per-command journal for the Console
+    /// stages (each with its own readback), plain intent for the others.
+    fn advance(r: &Path, s: &AdminSession, run: Uuid, step: Step) {
+        match step {
+            Step::Branding => {
+                intend_command(r, s, run, Command::Branding).unwrap();
+                confirm_command(r, s, run, Command::Branding).unwrap();
+            }
+            Step::Audience => {
+                for cmd in [Command::Audience, Command::Scopes] {
+                    intend_command(r, s, run, cmd).unwrap();
+                    confirm_command(r, s, run, cmd).unwrap();
+                }
+            }
+            _ => {
+                intend(r, s, run, step).unwrap();
+            }
+        }
+        confirmed(r, s, run, step).unwrap();
+    }
     fn advance_to_client(r: &Path, s: &AdminSession, run: Uuid) {
         for step in ORDER {
-            intend(r, s, run, step).unwrap();
-            confirmed(r, s, run, step).unwrap();
+            advance(r, s, run, step);
         }
         intend(r, s, run, Step::Client).unwrap();
     }
@@ -507,8 +713,7 @@ mod tests {
         assert!(intend(r, &s, first, Step::Project).is_err());
         confirmed(r, &s, run, Step::Project).unwrap();
         for step in &ORDER[1..] {
-            intend(r, &s, run, *step).unwrap();
-            confirmed(r, &s, run, *step).unwrap();
+            advance(r, &s, run, *step);
         }
         intend(r, &s, run, Step::Client).unwrap();
         expire(r);
@@ -712,8 +917,7 @@ mod tests {
         assert!(intend(r, &s, run, Step::Client).is_err());
         let mut seen = vec![Step::Apis];
         for step in [Step::Apis, Step::Branding, Step::Audience] {
-            intend(r, &s, run, step).unwrap();
-            confirmed(r, &s, run, step).unwrap();
+            advance(r, &s, run, step);
             seen.push(stored(r).step);
         }
         assert_eq!(
@@ -769,8 +973,7 @@ mod tests {
             Err(StoreError::Conflict)
         ));
         for step in ORDER {
-            intend(r, &s, run, step).unwrap();
-            confirmed(r, &s, run, step).unwrap();
+            advance(r, &s, run, step);
         }
         // At Client but with no recorded intent.
         assert!(matches!(
@@ -778,6 +981,10 @@ mod tests {
             Err(StoreError::Conflict)
         ));
         assert!(!called.load(Ordering::SeqCst));
+        assert!(matches!(
+            reconcile_registration(r, &s, run, probe),
+            Err(StoreError::Conflict)
+        ));
         intend(r, &s, run, Step::Client).unwrap();
         assert!(register::<()>(r, &s, run, |_| Err(StoreError::Unavailable)).is_err());
         let kept = stored(r);
@@ -795,12 +1002,308 @@ mod tests {
             Err(StoreError::Conflict)
         ));
         assert!(!called.load(Ordering::SeqCst));
+        assert!(matches!(
+            reconcile_registration::<()>(r, &s, run, |_| Err(StoreError::Conflict)),
+            Err(StoreError::Conflict)
+        ));
+        reconcile_registration(r, &s, run, probe).unwrap();
+        assert!(called.swap(false, Ordering::SeqCst));
+        assert!(reconcile_registration(r, &s, Uuid::new_v4(), probe).is_err());
+        assert!(!called.load(Ordering::SeqCst));
         // Retry after completion reads the same state and offers no provider write.
         assert_eq!(current(r, &s).unwrap().unwrap().step, Step::Registered);
         expire(r);
+        assert!(reconcile_registration(r, &s, run, probe).is_err());
+        assert!(!called.load(Ordering::SeqCst));
         let again = begin(r, &s, Uuid::new_v4());
         assert_eq!(again.step, Step::Registered);
         assert!(intend(r, &s, Uuid::new_v4(), Step::Client).is_err());
+    }
+
+    fn at_audience(r: &Path, s: &AdminSession, run: Uuid) {
+        for step in [Step::Project, Step::Apis, Step::Branding] {
+            advance(r, s, run, step);
+        }
+        assert_eq!(stored(r).step, Step::Audience);
+    }
+    fn console_rows(r: &Path) -> Vec<(String, String)> {
+        let (_d, c) = open(r, false).unwrap();
+        let mut q = c
+            .prepare(
+                "SELECT command,state FROM installation_google_console_commands ORDER BY command",
+            )
+            .unwrap();
+        q.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn console_journal_rejects_forged_legacy_intent_and_direct_confirmed_inserts() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        let setup = begin(r, &s, run);
+        for step in [Step::Project, Step::Apis] {
+            advance(r, &s, run, step);
+        }
+        assert!(matches!(
+            intend(r, &s, run, Step::Branding),
+            Err(StoreError::InvalidInput)
+        ));
+        assert!(!stored(r).intent);
+        advance(r, &s, run, Step::Branding);
+        assert!(matches!(
+            intend(r, &s, run, Step::Audience),
+            Err(StoreError::InvalidInput)
+        ));
+        assert!(!stored(r).intent);
+        let (_dir, c) = open(r, false).unwrap();
+        assert!(c.execute(
+            "INSERT INTO installation_google_console_commands VALUES(?1,'audience','confirmed')",
+            [setup.setup_id.to_string()],
+        ).is_err());
+        assert!(
+            c.execute(
+                "INSERT INTO installation_google_console_commands VALUES(?1,'audience','intent')",
+                [Uuid::new_v4().to_string()],
+            )
+            .is_err()
+        );
+        for state in ["intent", "confirmed"] {
+            assert!(c.execute(
+                "INSERT OR REPLACE INTO installation_google_console_commands VALUES(?1,'branding',?2)",
+                params![setup.setup_id.to_string(), state],
+            ).is_err());
+        }
+        let state: String = c
+            .query_row(
+                "SELECT state FROM installation_google_console_commands WHERE command='branding'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "confirmed");
+    }
+
+    #[test]
+    fn lost_audience_reply_is_reconciled_then_scopes_are_first_submitted() {
+        use CommandState::*;
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        at_audience(r, &s, run);
+        assert_eq!(
+            command_state(r, &s, run, Command::Audience).unwrap(),
+            Untried
+        );
+        // Scopes cannot begin before the audience readback is confirmed.
+        assert!(matches!(
+            intend_command(r, &s, run, Command::Scopes),
+            Err(StoreError::Conflict)
+        ));
+        intend_command(r, &s, run, Command::Audience).unwrap();
+        // The stage cannot advance on an unconfirmed command.
+        assert!(matches!(
+            confirmed(r, &s, run, Step::Audience),
+            Err(StoreError::Conflict)
+        ));
+        // Reply lost: worker gone, lease expires, a new run resumes.
+        expire(r);
+        let next = Uuid::new_v4();
+        assert!(begin(r, &s, next).intent);
+        assert_eq!(
+            command_state(r, &s, next, Command::Audience).unwrap(),
+            Intent
+        );
+        assert_eq!(
+            command_state(r, &s, next, Command::Scopes).unwrap(),
+            Untried
+        );
+        assert!(matches!(
+            intend_command(r, &s, next, Command::Audience),
+            Err(StoreError::Conflict)
+        ));
+        // A command never begun cannot be confirmed.
+        assert!(matches!(
+            confirm_command(r, &s, next, Command::Scopes),
+            Err(StoreError::Conflict)
+        ));
+        // Positive readback reconciles the uncertain audience intent (idempotently).
+        confirm_command(r, &s, next, Command::Audience).unwrap();
+        confirm_command(r, &s, next, Command::Audience).unwrap();
+        // The distinct never-attempted next command may now be submitted for the first time.
+        intend_command(r, &s, next, Command::Scopes).unwrap();
+        assert!(matches!(
+            confirmed(r, &s, next, Step::Audience),
+            Err(StoreError::Conflict)
+        ));
+        confirm_command(r, &s, next, Command::Scopes).unwrap();
+        confirmed(r, &s, next, Step::Audience).unwrap();
+        let done = stored(r);
+        assert_eq!((done.step, done.intent), (Step::Client, false));
+        // Past stage: confirmed, nothing may be mutated again.
+        assert_eq!(
+            command_state(r, &s, next, Command::Scopes).unwrap(),
+            Confirmed
+        );
+        assert!(intend_command(r, &s, next, Command::Scopes).is_err());
+        assert_eq!(done.project_id(), stored(r).project_id());
+    }
+
+    #[test]
+    fn uncertain_scopes_survive_reclaim_and_cannot_be_replayed_or_downgraded() {
+        use CommandState::*;
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        at_audience(r, &s, run);
+        for cmd in [Command::Audience] {
+            intend_command(r, &s, run, cmd).unwrap();
+            confirm_command(r, &s, run, cmd).unwrap();
+        }
+        intend_command(r, &s, run, Command::Scopes).unwrap();
+        expire(r);
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        assert_eq!(command_state(r, &s, next, Command::Scopes).unwrap(), Intent);
+        assert!(matches!(
+            intend_command(r, &s, next, Command::Scopes),
+            Err(StoreError::Conflict)
+        ));
+        assert!(matches!(
+            confirmed(r, &s, next, Step::Audience),
+            Err(StoreError::Conflict)
+        ));
+        // The schema keeps the journal monotone and permanent.
+        let (_dir, c) = open(r, false).unwrap();
+        assert!(
+            c.execute("UPDATE installation_google_console_commands SET state='intent' WHERE command='audience'", [])
+                .is_err()
+        );
+        assert!(
+            c.execute("UPDATE installation_google_console_commands SET command='branding' WHERE command='scopes'", [])
+                .is_err()
+        );
+        assert!(
+            c.execute("DELETE FROM installation_google_console_commands", [])
+                .is_err()
+        );
+        assert!(
+            c.execute(
+                "INSERT INTO installation_google_console_commands VALUES('x','other','intent')",
+                []
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn console_commands_need_fresh_admin_current_lease_and_respect_the_sdk_fence() {
+        let (d, mut s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        at_audience(r, &s, run);
+        begin_sdk(r, &s, run).unwrap();
+        intend_command(r, &s, run, Command::Audience).unwrap();
+        // Expired lease: no reads or writes for the old run, journal untouched.
+        expire(r);
+        assert!(command_state(r, &s, run, Command::Audience).is_err());
+        assert!(confirm_command(r, &s, run, Command::Audience).is_err());
+        // A still-pending SDK grant blocks any successor even after expiry; the old run's
+        // command journal stays as it was.
+        assert!(matches!(
+            claim(r, &s, Uuid::new_v4(), EMAIL.into(), CALLBACK.into()),
+            Err(StoreError::Conflict)
+        ));
+        assert_eq!(
+            console_rows(r),
+            [
+                ("audience".to_string(), "intent".to_string()),
+                ("branding".to_string(), "confirmed".to_string())
+            ]
+        );
+        close_sdk_run(r, run).unwrap();
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        // Foreign run id and a pin older than five seconds are refused.
+        assert!(confirm_command(r, &s, run, Command::Audience).is_err());
+        s.issued = Instant::now() - Duration::from_secs(6);
+        assert!(confirm_command(r, &s, next, Command::Audience).is_err());
+        s.issued = Instant::now();
+        // Demotion after the pin was issued.
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            c.execute(
+                "UPDATE installation_members SET role_revision=role_revision+1",
+                [],
+            )
+            .unwrap();
+        }
+        assert!(confirm_command(r, &s, next, Command::Audience).is_err());
+        assert!(command_state(r, &s, next, Command::Audience).is_err());
+        assert_eq!(
+            console_rows(r),
+            [
+                ("audience".to_string(), "intent".to_string()),
+                ("branding".to_string(), "confirmed".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn migration_eight_audience_intent_is_uncertain_for_audience_and_scopes() {
+        use CommandState::*;
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        for step in [Step::Project, Step::Apis, Step::Branding] {
+            advance(r, &s, run, step);
+        }
+        // Exactly what migration 8 wrote: the stage bit alone, with no command rows.
+        // Reopening at schema 8 must recreate the journal without disturbing the checkpoint.
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            c.execute_batch(
+                "DROP TABLE installation_google_console_commands; UPDATE installation_google_bootstrap SET intent=1 WHERE step='audience'; PRAGMA user_version=8;",
+            )
+            .unwrap();
+        }
+        assert!(console_rows(r).is_empty());
+        let version: i64 = {
+            let (_dir, c) = open(r, false).unwrap();
+            c.query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(version, 9);
+        // Neither command may be sent blind, and the old bit is not aliased to one of them.
+        assert_eq!(
+            command_state(r, &s, run, Command::Audience).unwrap(),
+            Intent
+        );
+        assert_eq!(command_state(r, &s, run, Command::Scopes).unwrap(), Intent);
+        for cmd in [Command::Audience, Command::Scopes] {
+            assert!(matches!(
+                intend_command(r, &s, run, cmd),
+                Err(StoreError::Conflict)
+            ));
+        }
+        assert!(confirmed(r, &s, run, Step::Audience).is_err());
+        // A positive audience readback does not launder the scopes uncertainty.
+        confirm_command(r, &s, run, Command::Audience).unwrap();
+        assert_eq!(command_state(r, &s, run, Command::Scopes).unwrap(), Intent);
+        assert!(matches!(
+            intend_command(r, &s, run, Command::Scopes),
+            Err(StoreError::Conflict)
+        ));
+        confirm_command(r, &s, run, Command::Scopes).unwrap();
+        confirmed(r, &s, run, Step::Audience).unwrap();
+        assert_eq!(stored(r).step, Step::Client);
     }
 
     #[test]
@@ -979,7 +1482,7 @@ mod tests {
         let r = d.path();
         let run = Uuid::new_v4();
         assert!(begin_sdk(r, &s, run).is_err()); // no setup yet
-        let setup = begin(r, &s, run);
+        begin(r, &s, run);
         assert!(begin_sdk(r, &s, Uuid::new_v4()).is_err()); // foreign
         assert!(matches!(
             begin_sdk(r, &s, Uuid::nil()),

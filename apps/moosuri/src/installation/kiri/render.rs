@@ -12,8 +12,25 @@ pub const ETC: &str = "/etc/moosuri";
 pub const ACME_ROOT: &str = "/var/lib/moosuri-acme";
 pub const NGINX_CONF: &str = "/etc/nginx/conf.d/moosuri-kiri.conf";
 pub const SYSTEMD: &str = "/etc/systemd/system";
+/// Private per-member inert model sockets (the unit's StateDirectory).
+pub const MODEL_SOCKETS: &str = "/var/lib/moosuri-kiri-model";
+/// Dedicated shared model ledger; never a personal volume.
+pub const MODEL_LEDGER: &str = "/var/lib/moosuri-control/model-ledger";
+/// Stable random 32-byte fingerprint key, created once and never rotated.
+pub const MODEL_KEY: &str = "/etc/moosuri/model-fingerprint.key";
+/// Installer-owned private model state directory (root, 0700), deliberately
+/// outside the strict registry directory. Both the gateway (writer) and the
+/// model unit (reader) run as root and must name this same directory.
+pub const MODEL_SETUP_DIR: &str = "/var/lib/moosuri-control/model-setup";
+/// Provider configuration written later by the administrator; absent at install.
+pub const MODEL_CONFIG: &str = "/var/lib/moosuri-control/model-setup/runtime-model.json";
 
-pub const UNITS: [(&str, &str); 9] = [
+pub const UNITS: [(&str, &str); 10] = [
+    // Placeholder-free; shared verbatim with the opt-in lifecycle deployment.
+    (
+        "moosuri-kiri-model.service",
+        include_str!("../../../../../deployment/kiri/lifecycle/moosuri-kiri-model.service"),
+    ),
     (
         "moosuri-kiri-gateway.service",
         include_str!("../../../../../deployment/kiri/setup/moosuri-kiri-gateway.service.in"),
@@ -132,6 +149,7 @@ pub fn lifecycle(p: &Profile) -> Vec<u8> {
         "mounts_root": format!("{STORAGE}/mounts"),
         "ipc_root": format!("{STORAGE}/ipc"),
         "allocations_root": format!("{STORAGE}/assignments"),
+        "model_sockets_root": MODEL_SOCKETS,
         "google_sockets_root": "/run/moosuri-kiri-google",
         "public_origin": p.public_origin,
         "vault_origin": p.vault_origin,
@@ -150,6 +168,9 @@ pub fn policy(p: &Profile) -> Vec<u8> {
     let mut text = serde_json::to_vec_pretty(&json!({
         "uid_pool": p.uid_pool,
         "max_total_volume_bytes": p.volume_bytes.saturating_mul(u64::from(p.capacity)),
+        // Every later member gets the personal text context socket; with no
+        // provider configured it is inert and answers `model_unconfigured`.
+        "enable_text_preview": true,
     }))
     .unwrap_or_default();
     text.push(b'\n');

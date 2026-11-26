@@ -15,6 +15,47 @@ const CDP_STEP: Duration = Duration::from_secs(5);
 const BLANK_PAGE: &str =
     "<!doctype html><meta charset=utf-8><title>Done</title><p>You can close this window.</p>";
 
+/// Only `Chrome::console` drives this, so the sticky gate is already held.
+impl super::console::Port for Chrome {
+    async fn navigate(&mut self, url: &str) -> Result<(), Error> {
+        self.console_navigate(url).await
+    }
+    async fn eval(
+        &mut self,
+        spec: &super::console::Spec,
+        call: &super::console::Call,
+    ) -> Result<String, Error> {
+        let expression = super::console::expression(spec, call)?;
+        self.console_evaluate(&expression).await
+    }
+    async fn pause(&mut self, duration: Duration) {
+        tokio::time::sleep(duration).await;
+    }
+}
+
+/// Only `Chrome::client` drives this, so the sticky gate is already held. The
+/// fixed expression is the only code ever evaluated; no selector, URL or script
+/// comes from a caller, and no network interception or download is involved.
+impl super::client::Port for Chrome {
+    async fn navigate(&mut self, url: &str) -> Result<(), Error> {
+        if !url.starts_with("https://console.cloud.google.com/auth/clients") {
+            return Err(Error::Invalid);
+        }
+        self.console_navigate(url).await
+    }
+    async fn eval(
+        &mut self,
+        spec: &super::client::Spec,
+        call: &super::client::Call<'_>,
+    ) -> Result<Zeroizing<String>, Error> {
+        let expression = Zeroizing::new(super::client::expression(spec, call)?);
+        self.client_evaluate(&expression).await
+    }
+    async fn pause(&mut self, duration: Duration) {
+        tokio::time::sleep(duration).await;
+    }
+}
+
 pub(super) struct Chrome {
     browser: BrowserSession,
     display: Display,
@@ -64,7 +105,7 @@ impl Chrome {
         crate::browser::capsule_health_mode(&config, true).map_err(|_| Error::Unavailable)?;
         let display = Display::start().await?;
         let mut browser =
-            BrowserSession::launch_mode(config, cancel, Duration::from_secs(22 * 60), true)
+            BrowserSession::launch_mode(config, cancel, super::bootstrap::ATTEMPT_LIFETIME, true)
                 .await
                 .map_err(|_| Error::Unavailable)?;
         let version = browser
@@ -286,7 +327,60 @@ impl Chrome {
         }
     }
 
+    /// Fixed Console branding/scope operation in this same authenticated Chrome.
+    /// Sticky `InUse` while running (a dropped future leaves it unusable); any error,
+    /// timeout or cancellation taints Chrome so no mutating click can be repeated.
+    /// The caller must still `shutdown()`.
+    pub(super) async fn console(
+        &mut self,
+        op: super::console::Op,
+        spec: &super::console::Spec,
+        cancel: &CancellationToken,
+    ) -> Result<super::bootstrap::Reply, Error> {
+        if self.gate != Gate::Clean {
+            return Err(Error::Unavailable);
+        }
+        self.gate = Gate::InUse;
+        match super::console::run(self, op, spec, cancel).await {
+            Ok(reply) => {
+                self.gate = Gate::Clean;
+                Ok(reply)
+            }
+            Err(error) => {
+                self.taint().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Fixed OAuth client reconcile/creation in this same authenticated Chrome.
+    /// Same gate discipline as `console`: any error, timeout or cancellation taints
+    /// Chrome, so a possibly-performed `Create` click can never be repeated. The
+    /// outcome may contain the one-time client secret (private, redacted Debug).
+    pub(super) async fn client(
+        &mut self,
+        op: super::client::Op,
+        spec: &super::client::Spec,
+        cancel: &CancellationToken,
+    ) -> Result<super::client::Outcome, Error> {
+        if self.gate != Gate::Clean {
+            return Err(Error::Unavailable);
+        }
+        self.gate = Gate::InUse;
+        match super::client::run(self, op, spec, cancel).await {
+            Ok(outcome) => {
+                self.gate = Gate::Clean;
+                Ok(outcome)
+            }
+            Err(error) => {
+                self.taint().await;
+                Err(error)
+            }
+        }
+    }
+
     /// True while this Chrome may be used (not tainted, no authorize in flight).
+    #[cfg(test)]
     pub(super) fn is_clean(&self) -> bool {
         self.gate == Gate::Clean
     }
@@ -512,6 +606,98 @@ impl Chrome {
         self.target = target;
         self.session = session;
         Ok(())
+    }
+
+    async fn console_navigate(&mut self, url: &str) -> Result<(), Error> {
+        if !url.starts_with("https://console.cloud.google.com/auth/") {
+            return Err(Error::Invalid);
+        }
+        tokio::time::timeout(Duration::from_secs(20), async {
+            let result = self
+                .browser
+                .cdp
+                .command("Page.navigate", json!({"url":url}), Some(&self.session))
+                .await
+                .map_err(|_| Error::Unavailable)?;
+            if result.get("errorText").is_some() {
+                return Err(Error::Unavailable);
+            }
+            let loader = result
+                .get("loaderId")
+                .and_then(|v| v.as_str())
+                .ok_or(Error::Unavailable)?;
+            // Do not classify the previous document while Page.navigate is
+            // still committing the new one. A cross-origin redirect is checked
+            // by the fixed script after this loader has become authoritative.
+            loop {
+                let frame = self
+                    .browser
+                    .cdp
+                    .command("Page.getFrameTree", json!({}), Some(&self.session))
+                    .await
+                    .map_err(|_| Error::Unavailable)?;
+                if frame
+                    .pointer("/frameTree/frame/loaderId")
+                    .and_then(|v| v.as_str())
+                    == Some(loader)
+                {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Unavailable)?
+    }
+
+    /// Like `console_evaluate`, but the string result (which may hold the one-time
+    /// client secret) is moved out of the CDP value into a zeroizing buffer. The
+    /// transport's own short-lived copies cannot be zeroized; the disposable
+    /// worker process is the lifetime boundary.
+    async fn client_evaluate(&mut self, expression: &str) -> Result<Zeroizing<String>, Error> {
+        let mut result = self
+            .browser
+            .cdp
+            .command_timeout(
+                "Runtime.evaluate",
+                json!({"expression":expression,"returnByValue":true,"timeout":2000}),
+                Some(&self.session),
+                CDP_STEP,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if result.get("exceptionDetails").is_some() {
+            return Err(Error::Unavailable);
+        }
+        match result
+            .pointer_mut("/result/value")
+            .map(serde_json::Value::take)
+        {
+            Some(serde_json::Value::String(value)) => Ok(Zeroizing::new(value)),
+            _ => Err(Error::Unavailable),
+        }
+    }
+
+    async fn console_evaluate(&mut self, expression: &str) -> Result<String, Error> {
+        let result = self
+            .browser
+            .cdp
+            .command_timeout(
+                "Runtime.evaluate",
+                json!({"expression":expression,"returnByValue":true,"timeout":2000}),
+                Some(&self.session),
+                CDP_STEP,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if result.get("exceptionDetails").is_some() {
+            return Err(Error::Unavailable);
+        }
+        result
+            .pointer("/result/value")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+            .ok_or(Error::Unavailable)
     }
 
     pub async fn shutdown(mut self) {

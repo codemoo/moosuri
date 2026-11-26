@@ -89,6 +89,21 @@ pub(super) fn include(
     }
     config.validate()
 }
+/// Exact owners for the runtime-model broker's inert member sockets: the private
+/// lifecycle profile (static members plus durable enrollments) joined with each
+/// registry allocation. A member without an allocation of the enrolled
+/// generation has no socket; the UID is the enrolled one, never guessed.
+pub(crate) fn model_bindings(
+    registry: &Path,
+    config: &Path,
+    socket_root: &Path,
+) -> Result<Vec<crate::runtime_google::Binding>, String> {
+    let c = load(config, socket_root)?;
+    if c.registry_directory != registry || c.model_sockets_root.as_deref() != Some(socket_root) {
+        return Err("model_broker_installation_mismatch".into());
+    }
+    relay_bindings(&c, |_| true)
+}
 fn matching(config: &Config, member: &Member) -> Result<bool, String> {
     let mut members = config.members.iter().filter(|m| {
         m.account_id == member.account_id || m.uid == member.uid || m.email == member.email
@@ -236,6 +251,15 @@ pub(super) async fn run_locked(
     // Register first so the relays can discover this reserved member. On
     // timeout, the durable enrollment is reused by the same invitation.
     let mut sockets = Vec::new();
+    // The runtime-model service creates this inert socket from the enrollment
+    // just registered; kiri-provision requires it before the first mount.
+    if let Some(root) = profile.model_sockets_root.as_ref() {
+        sockets.push((
+            root,
+            "model.sock",
+            "onboard_model_broker_not_ready_retry_same_invitation",
+        ));
+    }
     if let Some(root) = profile.browser_sockets_root.as_ref() {
         sockets.push((
             root,
@@ -279,6 +303,47 @@ pub(super) async fn run_locked(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn model_owners_come_from_enrollment_and_registry_allocation() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let registry = root.join("registry");
+        fs::create_dir(&registry).unwrap();
+        fs::set_permissions(&registry, fs::Permissions::from_mode(0o700)).unwrap();
+        let reserve = |email: &str| {
+            runtime_registry::reserve(&registry, Uuid::new_v4(), email.into()).unwrap()
+        };
+        let (a, b) = (reserve("a@example.invalid"), reserve("b@example.invalid"));
+        let id = |a: &Allocation| Uuid::parse_str(&a.account_id).unwrap();
+        let member = |account: Uuid, generation: i64, email: &str, uid: u32| {
+            serde_json::json!({"account_id": account, "generation": generation,
+                "email": email, "uid": uid})
+        };
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "registry_directory": registry,
+            "mounts_root": root.join("mounts"),
+            "ipc_root": root.join("ipc"),
+            "allocations_root": root.join("assignments"),
+            "model_sockets_root": root.join("model"),
+            "image": "sha256:fixture",
+            "members": [
+                member(id(&a), a.generation, "a@example.invalid", 20001),
+                // Stale enrolled generation and a never-allocated account have no socket.
+                member(id(&b), b.generation + 1, "b@example.invalid", 20002),
+                member(Uuid::new_v4(), 1, "c@example.invalid", 20003),
+            ],
+        }))
+        .unwrap();
+        let owners = relay_bindings(&config, |_| true).unwrap();
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].account_id, id(&a));
+        assert_eq!(owners[0].tenant_id.to_string(), a.tenant_id);
+        assert_eq!(owners[0].volume_id.to_string(), a.volume_id);
+        assert_eq!(owners[0].generation, a.generation);
+        assert_eq!(owners[0].peer_uid, 20001);
+    }
     #[test]
     fn enrollment_requires_a_separate_tree() {
         let enrollment = Path::new("/srv/enrolled");

@@ -2,7 +2,9 @@
 //! One configured Unix socket per owner, with subscription sessions held by
 //! dedicated host workers. No tools, prompt/answer persistence, fallback, retry,
 //! or private Store opening in the broker.
+mod dynamic;
 use crate::engine_login::{Connection, Endpoint, Owner, Route, model_catalog};
+use crate::runtime_google::Binding as Member;
 use clap::Args;
 use fs2::FileExt;
 use moosuri_connectors::model::{
@@ -24,7 +26,7 @@ use moosuri_store::{
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::Read,
     os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -62,6 +64,11 @@ pub struct Options {
     /// Existing owner-only 32-byte random HMAC key; retained across broker restarts.
     #[arg(long)]
     pub fingerprint_key: PathBuf,
+    /// Installation lifecycle profile. Enables dynamic member sockets: every
+    /// enrolled member gets an inert socket, derived from the private enrollment
+    /// and registry allocation, and `--config` may be absent (unconfigured).
+    #[arg(long)]
+    pub lifecycle_config: Option<PathBuf>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -79,7 +86,13 @@ struct Config {
     /// Use a host worker instead of an API credential for every binding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     subscription: Option<Route>,
+    /// Static mode: the exact bindings. Dynamic mode: optional per-member
+    /// budget/worker supplements, which must match the derived owner exactly.
+    #[serde(default)]
     bindings: Vec<Binding>,
+    /// Dynamic mode budget for a member without an explicit binding entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_budget: Option<Budget>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -348,10 +361,37 @@ struct Broker {
     caps: TextCapabilities,
     key: hmac::Key,
     client: Mutex<Option<ClientCache>>,
-    ledger: Mutex<Ledger>,
+    ledger: Arc<Mutex<Ledger>>,
     slots: Arc<Semaphore>,
     stop: CancellationToken,
+    /// Lifecycle-derived members: a missing worker is an explicit unavailable
+    /// state and bindings are supplied per request by the supervisor.
+    dynamic: bool,
 }
+/// Process-lifetime resources shared by every provider generation of a dynamic
+/// broker: one ledger handle, one stable fingerprint key and one admission pool.
+#[derive(Clone)]
+struct Shared {
+    key: hmac::Key,
+    ledger: Arc<Mutex<Ledger>>,
+    slots: Arc<Semaphore>,
+}
+fn load_key(path: &Path) -> Result<hmac::Key, String> {
+    let key = private_bytes(path, 32)?;
+    if key.len() != 32 {
+        return Err("fingerprint_key_invalid".into());
+    }
+    Ok(hmac::Key::new(hmac::HMAC_SHA256, &key))
+}
+fn parse_config(bytes: &[u8]) -> Result<Config, String> {
+    serde_json::from_slice(bytes).map_err(|_| "model_config_invalid".into())
+}
+/// Conservative default for a lifecycle member without an explicit budget.
+const DEFAULT_BUDGET: Budget = Budget {
+    max_calls: 100,
+    max_tokens: 500_000,
+    reservation_tokens: moosuri_core::DEFAULT_MEMBER_MODEL_RESERVATION_TOKENS,
+};
 enum Executor {
     Api(Arc<ModelClient>),
     Login {
@@ -380,14 +420,28 @@ fn epoch(registry: &Path, b: &Binding) -> Result<i64, &'static str> {
 impl Broker {
     fn new(options: &Options, stop: CancellationToken) -> Result<Arc<Self>, String> {
         private_dir(&options.registry)?;
-        let config: Config = serde_json::from_slice(&private_bytes(&options.config, MAX_FRAME)?)
-            .map_err(|_| "model_config_invalid")?;
+        let config = parse_config(&private_bytes(&options.config, MAX_FRAME)?)?;
+        Self::build(options, config, None, stop)
+    }
+    /// `shared` selects dynamic (lifecycle) mode. Static mode opens its own
+    /// ledger/key exactly as before, after all validation.
+    fn build(
+        options: &Options,
+        config: Config,
+        shared: Option<Shared>,
+        stop: CancellationToken,
+    ) -> Result<Arc<Self>, String> {
+        let dynamic = shared.is_some();
         if config.version != 1
-            || config.bindings.is_empty()
+            || (!dynamic && config.bindings.is_empty())
             || config.bindings.len() > 128
             || config.connection_revision.is_nil()
+            || (!dynamic && config.default_budget.is_some())
         {
             return Err("model_config_invalid".into());
+        }
+        if let Some(budget) = config.default_budget {
+            budget.validate().map_err(|_| "model_budget_invalid")?;
         }
         let models = model_catalog(&config.model, config.effort.as_deref(), &config.models)
             .ok_or("model_config_invalid")?;
@@ -436,6 +490,8 @@ impl Broker {
         let mut worker_sockets = BTreeSet::new();
         for b in &config.bindings {
             match (config.subscription, &b.worker) {
+                // A lifecycle member can lack a worker until it is provisioned.
+                (Some(_), None) if dynamic => (),
                 (Some(_), Some(worker)) => {
                     if worker.worker_uid == 0
                         || worker.worker_uid == unsafe { libc::geteuid() }
@@ -456,23 +512,36 @@ impl Broker {
             // An inert listener may be created for reserved/fenced allocations.
             // Ready is required only at actual dispatch/result admission, avoiding
             // the member-ready -> model-socket -> routing-ready startup cycle.
+            // Dynamic supplements are matched against the derived owner per member.
+            if dynamic {
+                continue;
+            }
             let allocated = runtime_registry::lookup_allocated_id(&options.registry, b.account_id)
                 .map_err(|_| "model_binding_invalid")?;
             if !binding_matches(&allocated, b) {
                 return Err("model_binding_invalid".into());
             }
         }
-        let key = private_bytes(&options.fingerprint_key, 32)?;
-        if key.len() != 32 {
-            return Err("fingerprint_key_invalid".into());
-        }
-        let key = hmac::Key::new(hmac::HMAC_SHA256, &key);
+        let (key, ledger, slots) = match shared {
+            Some(s) => (s.key, Some(s.ledger), s.slots),
+            None => (
+                load_key(&options.fingerprint_key)?,
+                None,
+                Arc::new(Semaphore::new(8)),
+            ),
+        };
         let client = if config.subscription.is_none() {
             Some(ClientCache::load(&config, &caps, &key, None)?)
         } else {
             None
         };
-        let ledger = Ledger::open(&options.ledger).map_err(|_| "model_ledger_unavailable")?;
+        // Opened only after every validation above.
+        let ledger = match ledger {
+            Some(ledger) => ledger,
+            None => Arc::new(Mutex::new(
+                Ledger::open(&options.ledger).map_err(|_| "model_ledger_unavailable")?,
+            )),
+        };
         Ok(Arc::new(Self {
             registry: options.registry.clone(),
             config,
@@ -480,13 +549,17 @@ impl Broker {
             caps,
             key,
             client: Mutex::new(client),
-            ledger: Mutex::new(ledger),
-            slots: Arc::new(Semaphore::new(8)),
+            ledger,
+            slots,
             stop,
+            dynamic,
         }))
     }
     fn publish_models(&self) -> Result<(), String> {
         let members: Vec<_> = self.config.bindings.iter().map(|b| b.account_id).collect();
+        self.publish_models_for(&members)
+    }
+    fn publish_models_for(&self, members: &[Uuid]) -> Result<(), String> {
         engine::publish_models(
             &self.registry,
             self.config.connection_revision,
@@ -501,6 +574,55 @@ impl Broker {
             &members,
         )
         .map_err(|_| "model_policy_unavailable".into())
+    }
+    /// Per-member bindings for the current members of a dynamic installation.
+    /// Owner identity and UID come only from the lifecycle/registry derivation;
+    /// the provider config can add a budget and (subscription) worker. A
+    /// supplement naming another owner identity, or a worker whose UID is any
+    /// member's or the broker's, fails that member closed.
+    fn bindings(&self, members: &[Member]) -> BTreeMap<Uuid, Result<Binding, &'static str>> {
+        let uids: BTreeSet<u32> = members.iter().map(|m| m.peer_uid).collect();
+        members
+            .iter()
+            .map(|m| {
+                let supplement = self
+                    .config
+                    .bindings
+                    .iter()
+                    .find(|b| b.account_id == m.account_id);
+                let bound = match supplement {
+                    Some(s)
+                        if s.tenant_id != m.tenant_id
+                            || s.volume_id != m.volume_id
+                            || s.generation != m.generation
+                            || s.peer_uid != m.peer_uid =>
+                    {
+                        Err("model_binding_invalid")
+                    }
+                    Some(s)
+                        if s.worker.as_ref().is_some_and(|w| {
+                            uids.contains(&w.worker_uid)
+                                || w.worker_uid == unsafe { libc::geteuid() }
+                        }) =>
+                    {
+                        Err("model_binding_invalid")
+                    }
+                    _ => Ok(Binding {
+                        account_id: m.account_id,
+                        tenant_id: m.tenant_id,
+                        volume_id: m.volume_id,
+                        generation: m.generation,
+                        peer_uid: m.peer_uid,
+                        budget: supplement
+                            .map(|s| s.budget)
+                            .or(self.config.default_budget)
+                            .unwrap_or(DEFAULT_BUDGET),
+                        worker: supplement.and_then(|s| s.worker.clone()),
+                    }),
+                };
+                (m.account_id, bound)
+            })
+            .collect()
     }
     fn api_client(&self) -> Option<Arc<ModelClient>> {
         let mut cached = self.client.lock().ok()?;
@@ -724,6 +846,9 @@ impl Broker {
         let login = match (self.config.subscription, b.worker.as_ref()) {
             (Some(route), Some(worker)) => Some((route, worker)),
             (None, None) => None,
+            // Subscription sessions are per-member host workers. Never lend
+            // another owner's endpoint to a member that has none yet.
+            (Some(_), None) if self.dynamic => return Reply::error("model_worker_unavailable"),
             _ => return Reply::error("model_binding_invalid"),
         };
         let Ok(key) = self.call_key(b, &r, login) else {
@@ -959,9 +1084,16 @@ impl Drop for SocketGuard {
     }
 }
 async fn listener(root: &Path, b: &Binding) -> Result<(UnixListener, SocketGuard), String> {
+    listener_for(root, b.account_id, b.peer_uid).await
+}
+async fn listener_for(
+    root: &Path,
+    account_id: Uuid,
+    peer_uid: u32,
+) -> Result<(UnixListener, SocketGuard), String> {
     // Bind-mount this persistent directory read-only at /model. Replacing its
     // socket inode after restart leaves the container's directory mount valid.
-    let leaf = root.join(b.account_id.to_string());
+    let leaf = root.join(account_id.to_string());
     match fs::create_dir(&leaf) {
         Ok(()) => {
             fs::set_permissions(&leaf, fs::Permissions::from_mode(0o711))
@@ -987,7 +1119,7 @@ async fn listener(root: &Path, b: &Binding) -> Result<(UnixListener, SocketGuard
     }
     if let Ok(m) = fs::symlink_metadata(&path) {
         if !m.file_type().is_socket()
-            || m.uid() != b.peer_uid
+            || m.uid() != peer_uid
             || m.mode() & 0o077 != 0
             || m.nlink() != 1
         {
@@ -1002,13 +1134,17 @@ async fn listener(root: &Path, b: &Binding) -> Result<(UnixListener, SocketGuard
         }
     }
     let listener = UnixListener::bind(&path).map_err(|_| "model_socket_unavailable")?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .map_err(|_| "model_socket_unavailable")?;
-    if b.peer_uid != unsafe { libc::geteuid() } {
+    // A half-prepared socket is never left behind: it would be refused as
+    // foreign on every retry.
+    if fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).is_err() {
+        let _ = fs::remove_file(&path);
+        return Err("model_socket_unavailable".into());
+    }
+    if peer_uid != unsafe { libc::geteuid() } {
         use std::os::unix::ffi::OsStrExt;
         let c = std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| "model_socket_invalid")?;
-        if unsafe { libc::chown(c.as_ptr(), b.peer_uid, !0) } != 0 {
+        if unsafe { libc::chown(c.as_ptr(), peer_uid, !0) } != 0 {
             let _ = fs::remove_file(&path);
             return Err("model_socket_uid_unavailable".into());
         }
@@ -1035,6 +1171,10 @@ pub async fn run(options: &Options) -> Result<(), String> {
     serve(options, stop).await
 }
 async fn serve(options: &Options, stop: CancellationToken) -> Result<(), String> {
+    if let Some(lifecycle) = &options.lifecycle_config {
+        let source = dynamic::lifecycle_source(options, lifecycle);
+        return dynamic::serve(options, source, stop).await;
+    }
     private_dir(&options.socket_dir)?;
     let lock = OpenOptions::new()
         .read(true)
@@ -1176,6 +1316,7 @@ pub async fn personal_call(socket: &Path, request: &[u8]) -> Result<Vec<u8>, Str
 
 #[cfg(test)]
 mod tests {
+    mod dynamic_sockets;
     mod engine_dispatch;
     mod volume_replay;
     use super::*;
@@ -1268,6 +1409,9 @@ mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
     fn fixture(root: &Path, url: String) -> (Options, Vec<Binding>) {
+        // Match the private installation root independently of the caller's
+        // umask; credentials must never live under a group-writable directory.
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
         let registry = dir(root, "r");
         let ledger = dir(root, "l");
         let socket_dir = dir(root, "s");
@@ -1313,6 +1457,7 @@ mod tests {
                 // for that uid simultaneously; switch sole configured binding
                 // only after stopping the previous synthetic broker below.
                 bindings: vec![bindings[0].clone()],
+                default_budget: None,
             })
             .unwrap(),
         );
@@ -1325,6 +1470,7 @@ mod tests {
                 socket_dir,
                 config,
                 fingerprint_key,
+                lifecycle_config: None,
             },
             bindings,
         )
@@ -2014,6 +2160,7 @@ mod tests {
                 socket_dir: self.socket_dir.clone(),
                 config: self.config.clone(),
                 fingerprint_key: self.fingerprint_key.clone(),
+                lifecycle_config: self.lifecycle_config.clone(),
             }
         }
     }

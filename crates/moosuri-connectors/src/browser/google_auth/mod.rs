@@ -3,7 +3,9 @@
 mod binding;
 pub mod bootstrap;
 mod chrome;
+mod client;
 mod consent;
+mod console;
 mod crypto;
 mod display;
 mod sdk;

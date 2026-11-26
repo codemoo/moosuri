@@ -1,6 +1,6 @@
 [Unit]
 Description=Prepare reserved Moosuri member web invitations
-After=kiri.service
+After=kiri.service moosuri-kiri-model.service
 Wants=kiri.service
 
 [Service]

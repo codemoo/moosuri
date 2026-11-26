@@ -1,0 +1,30 @@
+[Unit]
+Description=Moosuri member model broker (inert member sockets; provider attached later)
+# Member sockets must exist before the engine, recovery worker, invitation
+# onboarding or gateway can start any member container. Ordering from this side
+# also reverses on stop: those units stop before the model sockets disappear.
+Before=kiri.service moosuri-kiri-lifecycle.service moosuri-kiri-onboard.service moosuri-kiri-gateway.service
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+StateDirectory=moosuri-kiri-model
+StateDirectoryMode=0700
+# --config is deliberately absent at installation: the service then serves
+# explicit "unconfigured" sockets for every enrolled member and reloads the
+# owner-only provider file when an administrator later writes it atomically.
+# The file lives in the private model-setup directory (root, 0700) that the
+# gateway's --model-setup-dir names; it is deliberately outside the strict
+# registry directory. The gateway writes the API key there and this unit reads
+# it, so both units must keep running as the same user (root).
+ExecStart=/usr/local/bin/moosuri runtime-model --registry /var/lib/moosuri-control/registry --ledger /var/lib/moosuri-control/model-ledger --socket-dir /var/lib/moosuri-kiri-model --config /var/lib/moosuri-control/model-setup/runtime-model.json --fingerprint-key /etc/moosuri/model-fingerprint.key --lifecycle-config /etc/moosuri/kiri-members.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

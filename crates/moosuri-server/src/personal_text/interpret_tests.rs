@@ -19,8 +19,12 @@ use tower::ServiceExt;
 
 const PASSWORD: &str = "Synthetic-interpret-member-42";
 const TRAVEL: &str = "여행 얘기랑 메모리에 있는 짐 싸기 자료 찾아서 정리해 줘";
+static MEMBER_SETUP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn member(root: &std::path::Path, email: &str) -> (Store, VolumeOwner, String, String) {
+    // Production deliberately bounds concurrent password KDFs. Serialize only
+    // synthetic account preparation; the scenarios themselves remain concurrent.
+    let _setup = MEMBER_SETUP.lock().await;
     fs::create_dir(root).unwrap();
     fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
     let owner = VolumeOwner {
@@ -300,6 +304,131 @@ async fn ordinary_text_is_free_and_unavailable_broker_never_fakes_work() {
         let (status, _) = post(&app, owner, &token, &thread, crafted).await;
         assert!(status.is_client_error(), "{status}");
     }
+}
+
+fn inbox_reply(thread: &str) -> Value {
+    json!({"kind":"inbox_read","thread_id":thread,"scope":"one_inbox_page_metadata_only","limit":5})
+}
+
+#[tokio::test]
+async fn inbox_read_is_one_fixed_instruction_with_a_final_receipt_that_replays_without_effects() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let broker = Broker::start(&root);
+    let (store, owner, token, thread) = member(&root.join("a"), "a@example.test").await;
+    let (other, b, btoken, _bthread) = member(&root.join("b"), "b@example.test").await;
+    let app = personal_text_preview_router(store.clone(), owner, broker.options.clone());
+    let bapp = personal_text_preview_router(other, b, broker.options.clone());
+
+    // A fresh read-only lookup never creates an interpretation or calls the model.
+    let request = body("최근 받은 메일 5개 확인해줘");
+    let mut peek = request.clone();
+    peek["read_only"] = json!(true);
+    let (status, _) = post(&app, owner, &token, &thread, peek.clone()).await;
+    assert!(!status.is_success());
+    assert_eq!(broker.calls(), 0);
+
+    // The proposal is only a proposal; the reply carries no account, connection or query.
+    broker.say(json!({"intent":"inbox_read"}));
+    let (status, first) = post(&app, owner, &token, &thread, request.clone()).await;
+    assert_eq!((status, &first), (StatusCode::OK, &inbox_reply(&thread)));
+    assert_eq!(broker.calls(), 1);
+    assert!(groups(&store, owner, &token, &thread).await.is_empty());
+
+    // The record is final (nothing claimed or planned is left to block the same id), and every
+    // replay, including after a restart, answers without another paid call.
+    drop(app);
+    drop(store);
+    let store = owner.open_verified(&root.join("a")).await.unwrap();
+    let app = personal_text_preview_router(store.clone(), owner, broker.options.clone());
+    for again in [request.clone(), peek.clone()] {
+        let (status, reply) = post(&app, owner, &token, &thread, again).await;
+        assert_eq!((status, &reply), (StatusCode::OK, &inbox_reply(&thread)));
+    }
+    assert_eq!(broker.calls(), 1);
+    let mut changed = request.clone();
+    changed["text"] = json!("받은 메일 5개 확인해줘 다시");
+    assert_eq!(
+        post(&app, owner, &token, &thread, changed).await.0,
+        StatusCode::CONFLICT
+    );
+
+    // Another member cannot replay this member's receipt, in this or any other thread.
+    let (status, reply) = post(&bapp, b, &btoken, &thread, peek.clone()).await;
+    assert!(!status.is_success() && reply["kind"].is_null(), "{reply}");
+    assert!(
+        post(&app, owner, &btoken, &thread, peek)
+            .await
+            .0
+            .is_client_error()
+    );
+    broker.task.abort();
+}
+
+#[tokio::test]
+async fn inbox_read_needs_the_members_own_direct_supported_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let broker = Broker::start(&root);
+    let (store, owner, token, thread) = member(&root.join("a"), "a@example.test").await;
+    let app = personal_text_preview_router(store.clone(), owner, broker.options.clone());
+    // The model says inbox_read for all of these; only the member's own words may authorize it.
+    for (text, expected) in [
+        ("최근 받은 메일 5개 확인해줘", "inbox_read"),
+        ("받은 편지함 보여 주세요", "inbox_read"),
+        ("받은 메일 5개 확인하지 마", "clarify"),
+        ("받은 메일 확인해 줘라고 말했어", "chat"),
+        ("\"받은 메일 확인해줘\"", "chat"),
+        ("받은 메일은 어떻게 확인하는 거야", "chat"),
+        ("만약 받은 메일 확인해줘 하면 어떻게 돼", "chat"),
+        ("받은 메일 10개 확인해줘", "clarify"),
+        ("받은 메일에서 김 대리 메일 찾아줘", "clarify"),
+        ("받은 메일 전체 본문 요약해줘", "clarify"),
+        ("오늘 받은 메일 확인해줘", "clarify"),
+        ("다른 계정 받은 메일 확인해줘", "clarify"),
+        ("other@example.test 받은 메일 확인해줘", "clarify"),
+        ("이 부분 확인해줘", "clarify"),
+        ("받은메일 확인해줘", "inbox_read"),
+        ("내 받은편지함 5건 보여줘", "inbox_read"),
+        ("받은 메일 좀 확인해 주세요.", "inbox_read"),
+        ("메일함 확인해줘", "inbox_read"),
+        ("받은 메일 확인 안 해줘", "clarify"),
+        ("받은 메일 안 보여줘", "clarify"),
+        ("받은 메일 확인 안 할래", "clarify"),
+        ("받은 메일 확인하고 일정 등록해줘", "clarify"),
+        ("받은 메일 확인하고 캘린더에 넣어줘", "clarify"),
+        ("내일 받은 메일 확인해줘", "clarify"),
+        ("나중에 받은 메일 확인해줘", "clarify"),
+        ("새 메일 오면 받은 메일 확인해줘", "clarify"),
+        ("중요 메일함 확인해줘", "clarify"),
+        ("네이버 메일함 확인해줘", "clarify"),
+        ("회사 메일함 보여줘", "clarify"),
+    ] {
+        broker.say(json!({"intent":"inbox_read"}));
+        let (status, reply) = post(&app, owner, &token, &thread, body(text)).await;
+        assert_eq!(status, StatusCode::OK, "{text}: {reply}");
+        assert_eq!(reply["kind"], expected, "{text}: {reply}");
+        if expected == "clarify" && !text.contains("하지 마") {
+            // (negations the keyword guard misses still fall to the scope clarification)
+            // Reports the supported scope instead of claiming search, all mail or body summaries.
+            assert!(
+                reply["message"].as_str().unwrap().contains("최대 5건"),
+                "{text}"
+            );
+        }
+    }
+    // A model that tries to name a target is rejected; no connection or account field exists.
+    for forged in [
+        json!({"intent":"inbox_read","connection_id":"c"}),
+        json!({"intent":"inbox_read","account":"other@example.test"}),
+    ] {
+        broker.say(forged);
+        let (status, reply) = post(&app, owner, &token, &thread, body("받은 메일 확인해줘")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{reply}");
+        assert_eq!(reply["code"], "personal_work_interpret_invalid");
+    }
+    assert!(groups(&store, owner, &token, &thread).await.is_empty());
+    broker.task.abort();
 }
 
 #[tokio::test]

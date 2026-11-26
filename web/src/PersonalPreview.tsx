@@ -662,6 +662,8 @@ function Workspace({
   } | null>(null);
   const browserOpenButton = useRef<HTMLElement | null>(null);
   const [openInbox, setOpenInbox] = useState<GoogleReadIntent | null>(null);
+  // Memory only: which held inbox request ended with an unknown provider outcome (never persisted).
+  const [inboxUnknown, setInboxUnknown] = useState<{ thread: string; request_id: string } | null>(null);
   useEffect(() => {
     if (view !== "connections" || route.service !== "gmail") setOpenInbox(null);
   }, [view, route.service]);
@@ -1036,6 +1038,8 @@ function Workspace({
     }
   }
   async function mailHistory(thread: string) {
+    // A stale call for a thread the member has left must not cancel or blank the selected thread's load.
+    if (selectedRef.current !== thread) return;
     const version = ++mailVersion.current;
     setGoogleReads([]);
     setMailError("");
@@ -1246,6 +1250,9 @@ function Workspace({
         setWorkNotice({ thread, kind: "clarify", text: reply.message, draft: "" });
       } else if (reply?.kind === "preference") {
         setPreference({ thread, view: reply.view });
+      } else if (reply?.kind === "inbox_read") {
+        // A read-only replay never starts a provider read; the receipt is in this thread's mail history.
+        setWorkNotice({ thread, kind: "clarify", text: "메일 확인 결과는 이 대화의 메일 확인 기록에서 볼 수 있습니다.", draft: "" });
       }
     } catch (e) { fail(e); }
   }
@@ -1257,38 +1264,78 @@ function Workspace({
   }
   /** The member's actual /personal/google/inbox read for this thread; without a connection the existing
    * consent flow continues the same request id and returns here. */
-  async function readInbox(thread: string, text: string): Promise<"done" | "connect" | "unavailable" | "failed"> {
-    if (memoryRef.current.pending[thread]) { setError("진행 중인 요청을 먼저 마쳐 주세요."); return "failed"; }
-    const id = crypto.randomUUID();
+  async function readInbox(thread: string, text: string, resume?: string): Promise<"done" | "connect" | "unavailable" | "failed"> {
+    // `resume` is the request id an interpreted message already holds in this thread: the read, a lost response,
+    // a reload and the connect continuation all keep that id, so a saved receipt is reused and never re-read.
+    const held = memoryRef.current.pending[thread];
+    if (resume ? held?.request_id !== resume : held) {
+      if (selectedRef.current === thread) setError("진행 중인 요청을 먼저 마쳐 주세요.");
+      return "failed";
+    }
+    const id = resume ?? crypto.randomUUID();
+    const keep = () => change(m => ({ ...m, pending: { ...m.pending, [thread]: { request_id: id, text, status: "inbox" } } }));
     const hold = (message: string) => {
-      change(m => ({ ...m, pending: { ...m.pending, [thread]: { request_id: id, text, status: "inbox" } } }));
-      setError(message);
+      keep();
+      if (selectedRef.current === thread) setError(message);
     };
+    const finish = () => {
+      setInboxUnknown(u => (u?.request_id === id ? null : u));
+      if (resume) clearSend(thread, { request_id: id, text, status: "inbox" });
+    };
+    // The provider may or may not have been read under this id. Never repeat it automatically: the same id only
+    // re-checks the saved record, and a new read needs the member's explicit action (new id, same text).
+    const unknown = (lost: boolean) => {
+      setInboxUnknown({ thread, request_id: id });
+      hold(`${lost ? "메일 읽기 결과를 확인하지 못했습니다" : "메일을 읽었는지 확인하지 못했습니다"}. ‘메일 확인 계속하기’로 기존 요청 상태를 확인하고 이어갈 수 있습니다. 새로 읽으려면 ‘새로 메일 읽기’를 눌러 주세요.`);
+    };
+    if (resume) keep(); // from here the carrier is the persisted inbox continuation, never an interpretation to redo
     try {
+      if (resume) {
+        let saved = false;
+        try {
+          const listed = await scope.request<{ reads: ThreadGoogleRead[] }>("/personal/google/history", "POST",
+            { thread_id: thread }, undefined, { timeoutMs: 15000 });
+          saved = listed.reads.some(r => r.thread_id === thread && r.request_id === id && r.state === "completed");
+        } catch (e) {
+          if (isAborted(e) || (e instanceof ApiFailure && e.status === 401)) throw e; // anything else: the read route replays by id
+        }
+        if (saved) { finish(); await mailHistory(thread); return "done"; }
+      }
       const found = await scope.request<{ connection: { connection_id: string; epoch: number } | null }>(
         "/personal/google", "GET", undefined, undefined, { timeoutMs: 15000 });
       if (!found.connection) {
-        change(m => ({ ...m, pending: { ...m.pending, [thread]: { request_id: id, text, status: "inbox" } } }));
-        openInboxRequest(thread, id);
+        keep();
+        // Only navigate when this is still the thread the member is in; otherwise the carrier waits for them.
+        if (selectedRef.current === thread) openInboxRequest(thread, id);
         return "connect";
       }
       const read = await scope.request<ThreadGoogleRead>("/personal/google/inbox", "POST",
         { connection_id: found.connection.connection_id, epoch: found.connection.epoch, read: { thread_id: thread, request_id: id } },
         undefined, { timeoutMs: 75000 });
-      if (read.request_id !== id || read.thread_id !== thread || read.state !== "completed") {
+      if (read.request_id === id && read.thread_id === thread && read.state !== "completed") {
+        unknown(false);
+        return "failed";
+      }
+      if (read.request_id !== id || read.thread_id !== thread) {
         hold("메일을 읽지 못했습니다. ‘메일 확인 계속하기’로 같은 요청을 이어갈 수 있습니다.");
         return "failed";
       }
+      finish();
       await mailHistory(thread);
       return "done";
     } catch (e) {
       if (isAborted(e)) return "failed";
       if (e instanceof ApiFailure && e.status === 401) { expired(); return "failed"; }
       if (e instanceof ApiFailure && e.status === 404) {
-        setError("이 설치에서는 Gmail 읽기를 사용할 수 없습니다. 입력을 유지했습니다.");
+        if (selectedRef.current === thread) setError("이 설치에서는 Gmail 읽기를 사용할 수 없습니다. 입력을 유지했습니다.");
         return "unavailable";
       }
-      hold("메일 읽기 결과를 확인하지 못했습니다. ‘메일 확인 계속하기’로 같은 요청을 이어갈 수 있습니다.");
+      unknown(!(e instanceof ApiFailure && e.status === 409));
+      // A lost response may still have saved its receipt: reconcile by id from history, never by reading again.
+      if (resume) {
+        await mailHistory(thread);
+        if (!memoryRef.current.pending[thread] && selectedRef.current === thread) setError("");
+      }
       return "failed";
     }
   }
@@ -1358,6 +1405,18 @@ function Workspace({
     setError("");
     if (handoff.action === "takeover") handoffRequest.current = { thread: selected, workspace: handoff.workspace_id, revision: handoff.revision };
     setWatchThread(selected);
+  }
+  /** Explicit member action after an unknown outcome: same text, a brand-new request id, one read. */
+  function readInboxAgain() {
+    if (!selected) return;
+    const thread = selected, old = memoryRef.current.pending[thread];
+    if (old?.status !== "inbox") return;
+    void locked(async () => {
+      clearSend(thread, old);
+      setInboxUnknown(null);
+      if (await readInbox(thread, old.text) === "unavailable")
+        change(m => ({ ...m, drafts: { ...m.drafts, [thread]: m.drafts[thread] || old.text } }));
+    });
   }
   function readOutcomeMail() {
     if (!selected) return;
@@ -1604,6 +1663,7 @@ function Workspace({
           if (isAborted(e)) throw e;
           if (e instanceof ApiFailure && interpretUnsupported(e.status)) decision = { kind: "chat" }; // old server
           else if (e instanceof ApiFailure && e.status === 401) { clearSend(destination, value, true); expired(); return; }
+          else if (e instanceof ApiFailure && e.code === "personal_text_model_unavailable") failed = "어시스턴트 모델에 연결할 수 없습니다. 관리자의 엔진 연결을 확인해 주세요.";
           else if (e instanceof ApiFailure && e.status >= 400 && e.status < 600) failed = "요청을 업무로 해석하지 못했습니다.";
           else throw e; // unknown outcome: keep the same request_id for a safe re-check
         }
@@ -1632,6 +1692,15 @@ function Workspace({
           void inventory().catch(fail);
           return;
         }
+        if (decision?.kind === "inbox_read") {
+          // The reply is only the instruction. The member's own current connection is read by the existing
+          // authenticated route, under this request id, with its connect continuation when none exists.
+          if (selectedRef.current === destination) setWorkNotice(null);
+          const result = await readInbox(destination, value.text, value.request_id);
+          if (result === "unavailable")
+            clearSend(destination, { request_id: value.request_id, text: value.text, status: "inbox" }, true);
+          return;
+        }
         if (decision?.kind === "work") {
           work.merge(decision.group);
           clearSend(destination, value);
@@ -1645,7 +1714,7 @@ function Workspace({
         }
         if (!ready) {
           clearSend(destination, value, true);
-          setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
+          if (selectedRef.current === destination) setError("답변을 받을 수 없어 메시지를 보내지 못했습니다. 입력을 유지했습니다.");
           return;
         }
       }
@@ -1711,7 +1780,7 @@ function Workspace({
           const inbox = e.status === 422 && e.code === "personal_inbox_requested";
           if (inbox) {
             change(m => ({ ...m, pending: { ...m.pending, [destination]: { request_id: value.request_id, text: value.text, status: "inbox" } } }));
-            openInboxRequest(destination, value.request_id);
+            if (selectedRef.current === destination) openInboxRequest(destination, value.request_id);
             return;
           }
           clearSend(destination, value, !value.follow_up_run_id);
@@ -1740,9 +1809,10 @@ function Workspace({
               [destination]: { ...value, status: "uncertain" },
             },
           }));
-          setError(
-            "전송 결과를 확인하지 못했습니다. 결과를 확인하거나 같은 요청으로 다시 확인하세요.",
-          );
+          if (selectedRef.current === destination)
+            setError(
+              "전송 결과를 확인하지 못했습니다. 결과를 확인하거나 같은 요청으로 다시 확인하세요.",
+            );
         }
       }
     } finally {
@@ -2046,7 +2116,10 @@ function Workspace({
                       <p className="member-chat-status" data-working={pending.status === "sending" || undefined} role="status">
                         {pending.status === "uncertain"
                           ? "아직 전송 결과를 확인하지 못했습니다. 새 요청은 만들지 않았습니다."
-                          : pending.status === "inbox" ? "Gmail에서 메일 확인을 이어갈 수 있습니다."
+                          : pending.status === "inbox"
+                            ? (inboxUnknown?.thread === selected && inboxUnknown.request_id === pending.request_id
+                              ? "메일을 읽었는지 확인하지 못했습니다. 자동으로 다시 읽지 않았습니다."
+                              : "Gmail에서 메일 확인을 이어갈 수 있습니다.")
                           : pending.status === "rejected" ? "이 메시지를 보내지 못했습니다."
                           : pending.browser_request ? "브라우저 요청을 확인하는 중…" : "답변을 기다리는 중…"}
                       </p>
@@ -2054,8 +2127,14 @@ function Workspace({
                     {(pending.status === "rejected" || pending.status === "inbox") && (
                       <div className="member-retry-actions">
                         {pending.status === "inbox" ? (
-                          <Button label="메일 확인 계속하기" variant="ghost" isDisabled={mutating || busy}
-                            onClick={() => openInboxRequest(selected, pending.request_id)} />
+                          <>
+                            <Button label="메일 확인 계속하기" variant="ghost" isDisabled={mutating || busy}
+                              onClick={() => openInboxRequest(selected, pending.request_id)} />
+                            {inboxUnknown?.thread === selected && inboxUnknown.request_id === pending.request_id && (
+                              <Button label="새로 메일 읽기" variant="ghost" isDisabled={mutating || busy}
+                                onClick={readInboxAgain} />
+                            )}
+                          </>
                         ) : (
                           <Button label="이전 메시지 다시 보내기" variant="ghost"
                             isDisabled={(!pending.browser_request && !pending.research_request && !pending.work_request && !pending.member_request && !pending.monitor && !pending.monitor_zone && pending.text_route !== "interpret" && !ready) || mutating || busy}

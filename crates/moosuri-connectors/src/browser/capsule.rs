@@ -865,7 +865,7 @@ async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
     limit: usize,
 ) -> Result<Value, BrowserError> {
-    let mut bytes = Vec::new();
+    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(limit + 1));
     (&mut *reader)
         .take(limit as u64 + 1)
         .read_until(b'\n', &mut bytes)

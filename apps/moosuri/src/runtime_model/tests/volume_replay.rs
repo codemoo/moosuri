@@ -56,7 +56,10 @@ async fn suspension_lost_reply_and_cold_volume_restore_charge_one_model_call() {
     let root = temp.path().canonicalize().unwrap();
     let (url, provider, provider_task) = upstream().await;
     let (options, mut bindings) = fixture(&root, url);
-    // Exactly one 10-token settlement leaves room for one more 2048-token reservation.
+    // This goes through the actual member prompt envelope, which includes the
+    // text-only policy. Reserve enough for that envelope, as selection v2 does.
+    bindings[0].budget.reservation_tokens = 4096;
+    // Exactly one 10-token settlement leaves room for one more reservation.
     bindings[0].budget.max_tokens = bindings[0].budget.reservation_tokens + 10;
     select_binding(&options, &bindings[0]);
     let member = &bindings[0];
@@ -134,7 +137,7 @@ async fn suspension_lost_reply_and_cold_volume_restore_charge_one_model_call() {
     let id = Uuid::new_v4().to_string();
     let example = request(member);
     let pin = ModelPin {
-        reservation_tokens: None,
+        reservation_tokens: Some(member.budget.reservation_tokens),
         selection_epoch: None,
         connection_revision: example.connection_revision,
         model: example.model,
@@ -143,6 +146,14 @@ async fn suspension_lost_reply_and_cold_volume_restore_charge_one_model_call() {
         max_output_tokens: 32,
     };
     let work = prepare_call(&store, &login.user, owner, &thread, &id, &pin).await;
+    let encoded: Request = serde_json::from_slice(work.request()).unwrap();
+    assert!(
+        Budget::text_reservation(
+            encoded.messages.iter().map(|m| m.text.len()).sum(),
+            encoded.messages.len(),
+            encoded.max_output_tokens,
+        ) <= member.budget.reservation_tokens
+    );
     provider.mode.store(2, Ordering::SeqCst);
     let mut link = UnixStream::connect(&socket).await.unwrap();
     link.write_all(work.request()).await.unwrap();

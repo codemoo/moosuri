@@ -133,6 +133,16 @@ async fn send(peer: &mut Peer, value: serde_json::Value) -> Result<()> {
         .map_err(|_| "expired")?
         .map_err(|_| "closed")
 }
+/// Forwards one typed bootstrap response to the authorized gateway only. It may
+/// carry the one-time OAuth client secret: it is serialized straight into a
+/// zeroizing buffer and never logged, printed or placed in a web response.
+async fn send_response(peer: &mut Peer, response: &bootstrap::Response) -> Result<()> {
+    let line = response.to_line().map_err(|_| "invalid")?;
+    timeout(Duration::from_secs(5), peer.get_mut().write_all(&line))
+        .await
+        .map_err(|_| "expired")?
+        .map_err(|_| "closed")
+}
 async fn connected<T>(peer: &mut Peer, operation: impl Future<Output = Result<T>>) -> Result<T> {
     tokio::select! {biased;
         _=peer.read_u8()=>Err("closed"),
@@ -307,7 +317,7 @@ async fn flow(
                 })
                 .await?;
                 match reply {
-                    BootstrapOutcome::Reply(reply) => send(peer, reply.to_wire()).await?,
+                    BootstrapOutcome::Reply(reply) => send_response(peer, &reply).await?,
                     BootstrapOutcome::Terminal(status) => {
                         phase(peer, status).await?;
                         return Ok(());
@@ -436,7 +446,7 @@ pub async fn serve(options: &Options) -> std::result::Result<(), String> {
         let mut checks = interval(Duration::from_secs(2));
         checks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let work = timeout(
-            Duration::from_secs(22 * 60),
+            bootstrap::ATTEMPT_LIFETIME,
             flow(options, &init, &mut peer, &mut attempt),
         );
         tokio::pin!(work);

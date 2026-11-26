@@ -3,7 +3,10 @@
 use super::*;
 use crate::browser::google_auth::{
     Binding, Envelope, PROTOCOL, Recipient, bootstrap,
-    bootstrap::{BOOTSTRAP_SHUTDOWN_GRACE, Reply as BootstrapReply, Request as BootstrapRequest},
+    bootstrap::{
+        BOOTSTRAP_SHUTDOWN_GRACE, PRIVATE_WIRE_LIMIT, Request as BootstrapRequest,
+        Response as BootstrapResponse,
+    },
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -32,34 +35,41 @@ struct PhaseReply {
     status: GooglePhase,
 }
 
-/// One worker answer: a phase, or (only for a bootstrap request) its typed reply.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One worker answer: a phase, or (only for a bootstrap request) its typed
+/// response. The response may carry a one-time OAuth client secret: Debug is
+/// redacted and the type is deliberately not Clone.
+#[derive(Debug)]
 enum Answer {
     Phase(GooglePhase),
-    Bootstrap(BootstrapReply),
+    Bootstrap(BootstrapResponse),
 }
 
-/// Result of a bootstrap command: its typed reply, or the worker's existing
-/// terminal status (blocked / needs_human / unavailable).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Result of a bootstrap command: its typed response (PRIVATE when it holds a
+/// client secret; the caller must never log it or put it in a web response), or the
+/// worker's existing terminal status (blocked / needs_human / unavailable).
+#[derive(Debug)]
 pub enum BootstrapOutcome {
-    Reply(BootstrapReply),
+    Reply(BootstrapResponse),
     Terminal(GooglePhase),
 }
 
 /// Bounded, exact-shape parse of one worker line. A bootstrap request accepts its
-/// typed reply or a terminal status only; any other request accepts phases only.
-fn parse_answer(value: Value, bootstrap: bool) -> Result<Answer, BrowserError> {
+/// typed response or a terminal status only; any other request accepts phases only.
+fn parse_answer(mut value: Value, bootstrap: bool) -> Result<Answer, BrowserError> {
     if value
         .as_object()
         .is_some_and(|m| m.contains_key("bootstrap"))
     {
-        if !bootstrap {
-            return Err(BrowserError::Protocol);
-        }
-        return BootstrapReply::from_wire(&value)
-            .map(Answer::Bootstrap)
-            .map_err(|_| BrowserError::Protocol);
+        let parsed = if bootstrap {
+            BootstrapResponse::from_wire(&value)
+                .map(Answer::Bootstrap)
+                .map_err(|_| BrowserError::Protocol)
+        } else {
+            Err(BrowserError::Protocol)
+        };
+        // The parsed line may have held the client secret.
+        bootstrap::scrub(&mut value);
+        return parsed;
     }
     let phase = serde_json::from_value::<PhaseReply>(value)
         .map_err(|_| BrowserError::Protocol)?
@@ -235,7 +245,7 @@ impl CapsuleReader {
             Ok((recipient, mut reader)) => {
                 observed = true;
                 if started.send(Ok(recipient)).is_ok() {
-                    let deadline = tokio::time::Instant::now() + Duration::from_secs(22 * 60);
+                    let deadline = tokio::time::Instant::now() + bootstrap::ATTEMPT_LIFETIME;
                     let mut liveness = tokio::time::interval(Duration::from_secs(2));
                     loop {
                         let request = tokio::select! { biased;
@@ -258,7 +268,10 @@ impl CapsuleReader {
                             if let Some(body) = request.body {
                                 write(&mut child, &body).await?;
                             }
-                            parse_answer(read_line(&mut reader, 256).await?, bootstrap)
+                            // Bootstrap lines may carry the client secret and are
+                            // bounded by the private wire limit; phases stay tiny.
+                            let limit = if bootstrap { PRIVATE_WIRE_LIMIT } else { 256 };
+                            parse_answer(read_line(&mut reader, limit).await?, bootstrap)
                         };
                         // The worker's longest bootstrap action is bounded at 600 s; an
                         // abandoned wait still ends in the awaited graceful cleanup below.
@@ -436,6 +449,12 @@ impl GoogleAttempt {
             .map_err(|_| BrowserError::Expired)?;
         let answer = response.await.map_err(|_| BrowserError::Expired)??;
         let outcome = match answer {
+            // A response of the wrong kind or bound to another setup/callback is a
+            // protocol violation; dropping `pending` cancels (and cleans up) the
+            // attempt. The secret-bearing value is dropped (zeroized) here.
+            Answer::Bootstrap(reply) if !reply.answers(&request) => {
+                return Err(BrowserError::Protocol);
+            }
             Answer::Bootstrap(reply) => BootstrapOutcome::Reply(reply),
             Answer::Phase(phase) => {
                 self.phase = Some(phase);
@@ -468,15 +487,30 @@ mod google_bootstrap_tests {
 
     #[test]
     fn bootstrap_answers_are_exact_and_not_passthrough() {
+        use bootstrap::Reply;
         let ready = json!({"bootstrap":"ready"});
-        assert_eq!(
+        assert!(matches!(
             parse_answer(ready.clone(), true).unwrap(),
-            Answer::Bootstrap(BootstrapReply::Ready)
-        );
-        assert_eq!(
+            Answer::Bootstrap(BootstrapResponse::Status(Reply::Ready))
+        ));
+        assert!(matches!(
             parse_answer(json!({"bootstrap":"absent"}), true).unwrap(),
-            Answer::Bootstrap(BootstrapReply::Absent)
-        );
+            Answer::Bootstrap(BootstrapResponse::Status(Reply::Absent))
+        ));
+        // Private client lines are typed, exact and redacted in Debug.
+        let setup = Uuid::new_v4();
+        let created = json!({"bootstrap":{"client_created":{
+            "setup_id":setup,
+            "client_id":"123-abc.apps.googleusercontent.com",
+            "redirect_uri":"https://moosuri.example.test/api/v1/mail/oauth/callback",
+            "client_secret":"GOCSPX-canary-secret-value"}}});
+        let answer = parse_answer(created.clone(), true).unwrap();
+        assert!(!format!("{answer:?}").contains("canary"));
+        assert!(matches!(
+            answer,
+            Answer::Bootstrap(BootstrapResponse::Client(_))
+        ));
+        assert!(parse_answer(created, false).is_err());
         // A bootstrap reply to a non-bootstrap request is a protocol error.
         assert!(parse_answer(ready, false).is_err());
         for bad in [

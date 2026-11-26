@@ -36,6 +36,7 @@ mod google;
 mod google_connection;
 mod google_setup;
 mod memory;
+pub(crate) mod model_setup;
 mod tasks;
 mod vault;
 
@@ -100,9 +101,19 @@ pub struct Options {
     /// Identity from the installation-owned Google capsule configuration.
     #[arg(long, requires = "google_runtime_socket")]
     google_runtime_installation: Option<Uuid>,
+    /// Allow first-provider setup for the installation's managed runtime-model.
+    #[arg(long, requires = "model_setup_dir")]
+    model_setup: bool,
+    /// Installer-owned private (0700, canonical, same uid) directory for the
+    /// provider config and key. It must be outside `--registry`; the runtime
+    /// model unit reads the same directory and both units must run as one user.
+    #[arg(long, requires = "model_setup")]
+    model_setup_dir: Option<PathBuf>,
 }
 #[derive(Clone)]
 struct Gateway {
+    model_setup: bool,
+    model_setup_dir: Option<PathBuf>,
     google_jobs: google_connection::Jobs,
     google_runtime: Option<google_connection::portable::Runtime>,
     vault: Option<Arc<vault::Enrollment>>,
@@ -233,7 +244,19 @@ impl Gateway {
             })
             .transpose()?;
         let vault = vault::Enrollment::new(options, vault_site_origin.as_deref())?.map(Arc::new);
+        if options.model_setup {
+            let dir = options
+                .model_setup_dir
+                .as_deref()
+                .ok_or("model_setup_dir_required")?;
+            private_dir(dir)?;
+            if dir.starts_with(&options.registry) || options.registry.starts_with(dir) {
+                return Err("model_setup_dir_invalid".into());
+            }
+        }
         Ok(Self {
+            model_setup: options.model_setup,
+            model_setup_dir: options.model_setup_dir.clone(),
             google_jobs: Default::default(),
             google_runtime: google_connection::portable::Runtime::new(options)?,
             vault,
@@ -1200,6 +1223,7 @@ fn router(g: Gateway) -> Router {
         .merge(google::routes())
         .merge(google_connection::routes())
         .merge(google_setup::routes())
+        .merge(model_setup::routes())
         .merge(admin::routes())
         .with_state(g)
 }
@@ -1303,6 +1327,8 @@ mod tests {
             vault_adapter_key_file: None,
             google_runtime_socket: None,
             google_runtime_installation: None,
+            model_setup: false,
+            model_setup_dir: None,
         }
     }
     #[test]
@@ -1759,7 +1785,7 @@ mod tests {
         second.abort();
         let _ = second.await;
     }
-    async fn real_member(
+    pub(super) async fn real_member(
         options: &Options,
         email: &str,
     ) -> (
@@ -2779,6 +2805,114 @@ mod tests {
         assert_eq!(result["report"]["status"], "unavailable");
         assert!(result["report"]["observed_at"].is_null());
     }
+    /// Every registry operation (admin pin, member route, status) must still
+    /// work next to model setup state, whatever its crash point.
+    async fn model_state_leaves_registry_usable(
+        g: &Gateway,
+        options: &Options,
+        account: Uuid,
+        admin: &HeaderMap,
+        member: &HeaderMap,
+        saved: Option<Uuid>,
+    ) {
+        let endpoint = "/api/v1/personal/admin/engine/setup";
+        let state = json(request(g, endpoint, Method::GET, admin.clone(), "").await).await;
+        assert_eq!(state["saved"], saved.is_some());
+        assert_eq!(
+            state
+                .get("connection_revision")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            saved.map(|s| s.to_string())
+        );
+        assert_eq!(
+            request(g, endpoint, Method::GET, member.clone(), "")
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        runtime_registry::session_route(
+            &options.registry,
+            runtime_registry::SessionDestination::Account(account),
+        )
+        .unwrap();
+        runtime_registry::admin::status(&options.registry, account).unwrap();
+        // Nothing model-related is ever created in the strict registry directory.
+        assert!(fs::read_dir(&options.registry).unwrap().all(|e| {
+            let name = e.unwrap().file_name();
+            let name = name.to_string_lossy().into_owned();
+            !name.starts_with("model-api-key-") && !name.starts_with("runtime-model")
+        }));
+    }
+    async fn check_model_setup_administration(
+        g: &Gateway,
+        options: &Options,
+        account: Uuid,
+        admin: &HeaderMap,
+        member: &HeaderMap,
+    ) {
+        use model_setup::seam::{Crash, crash_at, save_for_test};
+        let mut g = g.clone();
+        let dir = directory(options.registry.parent().unwrap(), "model-setup");
+        g.model_setup = true;
+        g.model_setup_dir = Some(dir.clone());
+        let endpoint = "/api/v1/personal/admin/engine/setup";
+        let initial = json(request(&g, endpoint, Method::GET, admin.clone(), "").await).await;
+        assert_eq!(initial, serde_json::json!({"supported":true,"saved":false}));
+        // Crash points: key only, then pending only (a stale orphan remains).
+        crash_at(&dir, Uuid::new_v4(), b"orphan-key-one", Crash::KeyOnly);
+        model_state_leaves_registry_usable(&g, options, account, admin, member, None).await;
+        crash_at(&dir, Uuid::new_v4(), b"orphan-key-two", Crash::PendingOnly);
+        model_state_leaves_registry_usable(&g, options, account, admin, member, None).await;
+        // A real successful save, then a CAS replacement; orphans are pruned.
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        save_for_test(&dir, first, "synthetic-key-first", None);
+        model_state_leaves_registry_usable(&g, options, account, admin, member, Some(first)).await;
+        save_for_test(&dir, second, "synthetic-key-second", Some(first));
+        model_state_leaves_registry_usable(&g, options, account, admin, member, Some(second)).await;
+        let mut names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                format!("model-api-key-{second}"),
+                model_setup::CONFIG_FILE.to_owned()
+            ]
+        );
+        // Reset so the denial checks below see a clean installation.
+        fs::remove_file(dir.join(model_setup::CONFIG_FILE)).unwrap();
+        fs::remove_file(dir.join(format!("model-api-key-{second}"))).unwrap();
+        for method in [Method::GET, Method::POST] {
+            let input = if method == Method::POST {
+                serde_json::json!({"request_id":Uuid::new_v4(),"api_key":"synthetic-never-dispatched","model":"claude-synthetic","effort":"medium"}).to_string()
+            } else {
+                String::new()
+            };
+            assert_eq!(
+                request(&g, endpoint, method, member.clone(), &input)
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert!(!dir.join(model_setup::CONFIG_FILE).exists());
+        g.model_setup = false;
+        assert_eq!(
+            request(&g, endpoint, Method::GET, admin.clone(), "")
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            request(&g, endpoint, Method::GET, member.clone(), "")
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
     async fn check_google_setup_administration(
         g: &Gateway,
         registry: &Path,
@@ -2942,6 +3076,14 @@ mod tests {
         );
         check_engine_administration(&g, &options.registry, &a, &b, &auth[0].0, &auth[1].0).await;
         check_google_setup_administration(&g, &options.registry, &auth[0].0, &auth[1].0).await;
+        check_model_setup_administration(
+            &g,
+            &options,
+            a.account_id.parse().unwrap(),
+            &auth[0].0,
+            &auth[1].0,
+        )
+        .await;
         let rows = json(list).await;
         let row = |id: &str| {
             rows["members"]
@@ -3002,14 +3144,18 @@ mod tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
-        let google_setup = "/api/v1/personal/admin/google-setup";
-        for (method, body) in [(Method::GET, ""), (Method::POST, "{}")] {
-            assert_eq!(
-                request(&g, google_setup, method, auth[0].0.clone(), body)
-                    .await
-                    .status(),
-                StatusCode::FORBIDDEN
-            );
+        for setup in [
+            "/api/v1/personal/admin/google-setup",
+            "/api/v1/personal/admin/engine/setup",
+        ] {
+            for (method, body) in [(Method::GET, ""), (Method::POST, "{}")] {
+                assert_eq!(
+                    request(&g, setup, method, auth[0].0.clone(), body)
+                        .await
+                        .status(),
+                    StatusCode::FORBIDDEN
+                );
+            }
         }
         let list = json(request(&g, collection, Method::GET, auth[1].0.clone(), "").await).await;
         let current = list["members"]

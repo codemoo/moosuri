@@ -123,3 +123,62 @@ Official references (checked 2026-11-26):
 [client creation through Console](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation),
 [web clients](https://developers.google.com/workspace/guides/create-credentials),
 [GWS](https://github.com/googleworkspace/cli).
+
+
+### Observed agent client and data-access configuration
+
+The 2026-11-27 live Console exposes “Use this client for an AI-powered agent”.
+The installation's delegated Google work uses an agentic client. If a distinct
+traditional interactive Google integration is later added, follow Google's
+separate-client requirement rather than silently mixing both workflows. The
+marker grants no extra scope or verification exemption.
+
+The automatic setup must reconcile the supported Data Access scope set as well
+as branding/audience/client. The observed UI requires Add to table, Update, then
+Save; inspect persisted state before confirmation. Keep Gmail readonly and each
+Workspace service's consent scopes separate despite the common app catalog.
+Testing audience membership is an explicit prerequisite per selected account,
+not proof that the shared app is available to every invited member.
+
+Phone Agent can provide authorized device confirmation in operator acceptance;
+it must not become a dependency of a fresh public installation. Keep the product
+in a visible bounded verification wait while the member approves on their device.
+
+### Private registration and bounded recovery
+
+Migration 9 records intent and confirmed state for each Console command. Direct
+confirmed inserts, replace-downgrades and bypass through the legacy top-level
+intent API are refused. The gateway owns the same browser transport from login
+through SDK, Console, private registration and member consent.
+
+The private client response is setup/callback bound and uses zeroizing wire
+buffers. Retain a newly captured secret for at most three local registration
+attempts, each with a fresh administrator check. Never repeat provider creation
+for a failed local save. A lost local acknowledgement is reconciled only against
+the registered checkpoint and exact saved client/secret under the same live
+lease. Revocation and expired authority stop the attempts. An unresolved secret
+requires the separately journalled rotation work; a new client is not recovery.
+
+Only a worker terminal receipt after teardown releases an active guest fence.
+Gateway timeouts or protocol failures merely start cleanup when the peer drops.
+Status polling retries transient transport failures within its original deadline.
+An ambiguous member OAuth-start POST is not retried, since it may already have
+created OAuth state. GWS waiting is capped from the worker's actual idle start.
+
+### Shared app publishing
+
+An invited member must not depend on manual addition to a test-user list. The
+limited family/friends installation requires an External app with an appropriate
+production publishing status, while retaining Google's unverified-app warning,
+user cap, enterprise policies and any verification requirement. Personal mode is
+not shareable; Testing is only an intermediate development state and has a
+seven-day test authorization lifetime. A published app is not a verified app.
+Production transition still needs actual Console observation and a journalled
+implementation before release. Do not silently declare the current Testing app
+ready for all members.
+
+Google's [limited-audience exception](https://support.google.com/cloud/answer/13464323?hl=en)
+and [audience guidance](https://support.google.com/cloud/answer/15549945?hl=en)
+were checked on 2026-11-27. Limited audiences below 100 users can operate without
+verification with the unverified-app warning. Broader public use is a separate
+provider verification boundary, not something this installer can promise.

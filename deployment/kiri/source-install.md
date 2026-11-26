@@ -60,6 +60,13 @@ Do not replace the password or delete the member to work around the limiter.
 
 This unit prepares installation, browser, Vault and GWS transport. It does not
 claim a connected Google account: new app creation, actual consent and Gmail
-read must pass the separate end-to-end gate. Shared model provisioning and the
-single default public installer entry also remain part of complete fresh-user
-acceptance. No Mac credentials or existing Cloud project may satisfy those gates.
+read must pass the separate end-to-end gate. The candidate installs `moosuri-kiri-model.service` before member onboarding.
+Without a provider it serves explicit unconfigured member sockets. An admin
+can register or replace the installation Anthropic API key and select a model
+from the management screen; keys and config live in root-only
+`/var/lib/moosuri-control/model-setup`, outside the member registry. A saved
+configuration is not proof of working inference: verify a conversation. This
+API path does not create Claude subscription workers. A malformed provider file
+at service startup is rejected until corrected; runtime key/config recovery is
+retried without admitting invalid calls. Final first-provider acceptance and
+the single default public installer entry remain open. No Mac credentials or existing Cloud project may satisfy those gates.

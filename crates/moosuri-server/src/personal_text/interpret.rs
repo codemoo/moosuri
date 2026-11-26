@@ -30,7 +30,7 @@ const WHICH: &str = "몇 번째 작업인지 번호로 알려 주세요.";
 const NEGATED: &str = "하지 말라는 뜻으로 이해했어요. 아무 작업도 바꾸지 않았어요. 원하는 작업을 하나의 문장으로 다시 알려 주세요.";
 const POLICY: &str = concat!(
     "You are a strict classifier for one Korean member message. Return one JSON object, no prose. ",
-    "Schema: {intent:chat|create|tasks|status|evidence|report|refine|exclude|answer|cancel|reuse|preference|clarify, ",
+    "Schema: {intent:chat|create|tasks|status|evidence|report|refine|exclude|answer|cancel|reuse|preference|inbox_read|clarify, ",
     "target:null or 1-based candidate ordinal, items:[{title:string,scope:memory|conversation,",
     "query:string, alternatives:[string]}], report:none|combined|individual, text:string or null, recall:[string], ",
     "preference:{operation:create|edit|forget, subject:string, value:string or null, topic:string or null, lasting:persistent|one_time|stated}}. ",
@@ -63,8 +63,12 @@ const POLICY: &str = concat!(
     "Use edit with lasting=stated when they explicitly change their usual preference from now on. ",
     "A one-off choice, a question or a statement about someone else's preference is chat, never a lasting declaration. ",
     "For a temporary exception to an existing task use exclude/refine, never change permanent memory. ",
+    "inbox_read only when the member directly asks to see their own connected Gmail inbox (current first page: sender, subject, date). ",
+    "Searching mail, all mail, message bodies, summaries, dates, counts other than 5, another account, replying, sending, deleting or labelling is NOT inbox_read: use clarify. ",
+    "Never output an account, connection, address or message id. ",
     "No calendar writes, mail sends or other external effects from these decisions."
 );
+const INBOX_SCOPE: &str = "지금은 연결된 Gmail 받은편지함의 첫 페이지에서 최대 5건의 보낸 사람·제목·날짜만 확인할 수 있어요. 검색, 전체 메일, 본문 요약, 다른 계정은 아직 지원하지 않아요. '받은 메일 5개 확인해줘'처럼 말씀해 주세요.";
 
 // ------------------------------------------------------------------ the closed decision
 
@@ -73,6 +77,7 @@ const POLICY: &str = concat!(
 enum Intent {
     Chat,
     Preference,
+    InboxRead,
     Create,
     Status,
     Tasks,
@@ -359,6 +364,8 @@ enum Plan {
     Recall(RecallSelection),
     Preference(preferences::Plan),
     Clarify(String),
+    /// A fixed, argument-free instruction: the client runs its own authenticated inbox read.
+    InboxRead,
     Create {
         items: Vec<WorkItemInput>,
         report: bool,
@@ -568,6 +575,7 @@ fn plan(decision: Decision, text: &str, group: Option<&ConversationWorkGroup>) -
     }
     match decision.intent {
         Intent::Chat => Plan::Chat,
+        Intent::InboxRead => sources::inbox_read(text),
         Intent::Preference => Plan::Clarify("어떤 기억을 바꿀지 알려 주세요.".into()),
         Intent::Clarify => Plan::Clarify(
             Some(short(decision.text.as_deref().unwrap_or(""), 300))
@@ -906,6 +914,7 @@ enum Outcome {
     Recall(RecallSelection),
     Preference(preferences::Outcome),
     Clarify(String),
+    InboxRead,
     Work {
         group: String,
         focus: WorkFocus,
@@ -1234,7 +1243,8 @@ async fn apply(
         } => Some("읽은 자료에서 확인한 결과입니다."),
         Outcome::Work { .. } => Some("업무 기록에서 현재 상태를 확인할 수 있습니다."),
         Outcome::Clarify(message) => Some(message.as_str()),
-        Outcome::Chat | Outcome::Recall(_) => None,
+        // The inbox read and its own receipt belong to the Gmail route; no ordinary chat turn here.
+        Outcome::Chat | Outcome::Recall(_) | Outcome::InboxRead => None,
     };
     let turn = notice
         .filter(|_| !has_turn)
@@ -1283,6 +1293,9 @@ async fn execute(
             preferences::apply(store, state.owner, &user, epoch, &plan).await?,
         )),
         Plan::Clarify(message) => Ok(Outcome::Clarify(message)),
+        // Authenticated above; nothing is read or stored here. The outcome is final at once so the
+        // same request id is never left claimed and can run the member's own Gmail read.
+        Plan::InboxRead => Ok(Outcome::InboxRead),
         Plan::View {
             group_id,
             focus,
@@ -1378,6 +1391,12 @@ async fn replay(
             }
         }
         Outcome::Clarify(message) => WorkInterpretReply::Clarify { message },
+        Outcome::InboxRead => {
+            // A replay is delivered only to the still-authenticated member of this thread's journal row.
+            let _delivery = state.auth.delivery.read().await;
+            owner(state, headers).await?;
+            WorkInterpretReply::inbox_read(thread)
+        }
         Outcome::Work { group, focus, task } => {
             let _delivery = state.auth.delivery.read().await;
             let user = owner(state, headers).await?;
@@ -1697,7 +1716,7 @@ mod tests {
             effort: None,
             kind: moosuri_core::ProviderKind::OpenAi,
             max_output_tokens: 2048,
-            reservation_tokens: Some(1_000_000),
+            reservation_tokens: Some(moosuri_core::DEFAULT_MEMBER_MODEL_RESERVATION_TOKENS),
         };
         let g = group(&["queued"]);
         let a = build_call(&owner, "r1", "여행 대화 찾아 줘", Some(&g), pin()).unwrap();
@@ -1707,6 +1726,34 @@ mod tests {
         assert_ne!(a.call, c.call);
         let sent: Value = serde_json::from_slice(&a.bytes).unwrap();
         assert!(sent.get("tools").is_none() && sent["max_output_tokens"] == 512);
+        // The real default must also admit the largest escaped input and the
+        // full candidate set, not just a short synthetic utterance.
+        let mut full = group(&["needs_input"; MAX_ITEMS]);
+        for task in &mut full.tasks {
+            task.title = "가".repeat(60);
+        }
+        let maximum = build_call(
+            &owner,
+            "max-input",
+            &"\\".repeat(moosuri_core::WORK_INTERPRET_MAX_TEXT),
+            Some(&full),
+            pin(),
+        )
+        .unwrap();
+        let maximum: Value = serde_json::from_slice(&maximum.bytes).unwrap();
+        assert_eq!(maximum["max_output_tokens"], MAX_OUTPUT_TOKENS);
+        let messages = maximum["messages"].as_array().unwrap();
+        let text_bytes = messages
+            .iter()
+            .map(|m| m["text"].as_str().unwrap().len())
+            .sum();
+        assert!(
+            moosuri_store::runtime_model_ledger::Budget::text_reservation(
+                text_bytes,
+                messages.len(),
+                MAX_OUTPUT_TOKENS,
+            ) <= moosuri_core::DEFAULT_MEMBER_MODEL_RESERVATION_TOKENS
+        );
         assert!(sent["ordinal"].as_u64().unwrap() <= 1_000_000);
         // Candidate context carries bounded names, never ids or stored text.
         let prompt = sent["messages"][1]["text"].as_str().unwrap();

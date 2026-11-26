@@ -31,6 +31,15 @@ const BIN: &str = "/usr/local/bin/moosuri";
 const VAULT_BIN: &str = "/usr/local/bin/moosuri-vault-service";
 const MEMBERS: &str = "/etc/moosuri/kiri-members.json";
 const QUICK: Duration = Duration::from_secs(60);
+/// Everything first-member onboarding waits for. The model service starts first
+/// (with no provider configured) so every member socket exists before any
+/// member container is provisioned.
+const START_BEFORE_ONBOARD: [&str; 4] = [
+    "moosuri-kiri-model.service",
+    "moosuri-kiri-gws.service",
+    "moosuri-kiri-browser.service",
+    "moosuri-google-browser.socket",
+];
 
 #[derive(Args)]
 pub struct Options {
@@ -332,6 +341,7 @@ fn require_fresh(layout: &Layout) -> Result<()> {
         "/var/lib/moosuri-vault",
         "/var/lib/moosuri-kiri-browser",
         "/var/lib/moosuri-kiri-lifecycle",
+        render::MODEL_SOCKETS,
         "/run/moosuri-kiri-google",
         "/run/moosuri-google-browser",
         "/run/moosuri-member-proxy",
@@ -387,6 +397,12 @@ fn lay_down(
         ("/var/lib/moosuri-control/gateway", 0o700),
         ("/var/lib/moosuri-control/invitations", 0o700),
         ("/var/lib/moosuri-control/enrolled", 0o700),
+        // Dedicated shared model ledger. The sockets directory is the model
+        // unit's StateDirectory and is created by systemd at first start.
+        (render::MODEL_LEDGER, 0o700),
+        // Private model setup state (provider config and key), outside the
+        // strict registry directory so registry operations never see it.
+        (render::MODEL_SETUP_DIR, 0o700),
     ] {
         layout.ensure_dir(&layout.at(path), mode)?;
     }
@@ -409,6 +425,7 @@ fn lay_down(
         0o644,
     )?;
     ensure_adapter_key(layout)?;
+    ensure_model_key(layout)?;
     for (name, bytes) in r.profile(&bundle.images.member) {
         layout.write_file(
             &layout.at(&format!("{}/{name}", render::ETC)),
@@ -465,6 +482,33 @@ fn ensure_adapter_key(layout: &Layout) -> Result<()> {
     rand::rngs::OsRng.fill_bytes(&mut raw[..]);
     let text = Zeroizing::new(format!("{}\n", host::hex(&raw[..])));
     layout.write_file(&path, text.as_bytes(), 0o400, &[])
+}
+
+/// Random raw 32-byte fingerprint key for the model broker, mode 0400. It keys
+/// the durable ledger's request fingerprints, so an existing valid key is always
+/// kept on resume or reboot (rotation would orphan receipts); anything else at
+/// the path is a conflict. No provider credential is created here.
+fn ensure_model_key(layout: &Layout) -> Result<()> {
+    let path = layout.at(render::MODEL_KEY);
+    if layout.exists(&path)? {
+        fn invalid<E>(_: E) -> String {
+            "kiri_install_model_key_invalid".into()
+        }
+        let (mut file, len) = host::open_regular(&path, 33).map_err(invalid)?;
+        let m = file.metadata().map_err(invalid)?;
+        let mut raw = Zeroizing::new(Vec::new());
+        (&mut file)
+            .take(33)
+            .read_to_end(&mut raw)
+            .map_err(invalid)?;
+        if m.mode() & 0o777 != 0o400 || len != 32 || raw.len() != 32 {
+            return Err("kiri_install_model_key_invalid".into());
+        }
+        return Ok(());
+    }
+    let mut raw = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(&mut raw[..]);
+    layout.write_file(&path, &raw[..], 0o400, &[])
 }
 
 fn systemctl(exec: &dyn Exec, items: &[&str], reason: &str) -> Result<()> {
@@ -763,6 +807,7 @@ fn onboard(exec: &dyn Exec, r: &Receipt, secret: &Zeroizing<String>) -> Result<(
                 "--operations-root",
                 "/var/lib/moosuri-control/invitations",
                 "--enable-local-gws",
+                "--enable-text-preview",
                 "--password-stdin",
             ]),
             Input::Secret(input),
@@ -1083,11 +1128,7 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
         &["daemon-reload"],
         "kiri_install_daemon_reload_failed",
     )?;
-    for unit in [
-        "moosuri-kiri-gws.service",
-        "moosuri-kiri-browser.service",
-        "moosuri-google-browser.socket",
-    ] {
+    for unit in START_BEFORE_ONBOARD {
         start(&exec, unit)?;
     }
     onboard(&exec, &receipt, &secret)?;

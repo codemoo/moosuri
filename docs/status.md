@@ -1,12 +1,29 @@
 # 현재 상태
 
-운영 게이트웨이·회원 실행본과 Google 연결 확인은 2026-11-26, 운영 모델 설정 확인은 2026-11-21 기준이다. 운영 Linux는 **회원마다 컨테이너 하나를 쓰는 Kiri 0.2.1**로 서비스한다. 공개 한 줄 설치기는 **표준 서버 개발판**을 설치한다. [설치판 안내](install.md) · [Kiri 운영 안내](../deployment/kiri/README.md)
+운영 Google 연결과 모델 장애 확인은 2026-11-27 기준이다. 운영 Linux는 **회원마다 컨테이너 하나를 쓰는 Kiri 0.2.1**로 서비스한다. 공개 한 줄 설치기는 **표준 서버 개발판**을 설치한다. [설치판 안내](install.md) · [Kiri 운영 안내](../deployment/kiri/README.md)
 
 새 설치의 목표는 기존 Cloud 프로젝트·OAuth 앱·결제 계정·GWS 설정·개인 개발 파일 없이 공개 프로젝트만 받아 사용하는 것이다. 운영 Google 연결에는 개인 Kiri 도우미와 고정 브라우저·수신 키 등록 의존성이 남아 있어 이 조건을 만족하지 못한다. 공개 소스에는 회원별 새 인증 실행기와 동적 볼트 수신자 통합을 추가했으며, 공개 설치기의 자동 구성과 운영 전환은 아직 남아 있다. 볼트 인계는 설치 전체 회원 모드와 초대 회원의 기본 주소 상속을 구현했고, Linux 실제 프로세스 두 회원으로 접근 분리·로그아웃·재시작 6개 흐름을 확인했다. 운영 게이트웨이는 검증한 새 실행 파일로 갱신하되 기존 Google 도우미 호환을 위해 단일 회원 설정을 유지한다. 11월 26일 Linux에서 개발자 경로를 제외하자 연결·등록 도우미가 공개 소스에 없는 `fresh_browser` import에서 실패했다. 설치 패키징, 회원별 볼트·브라우저 준비, 새 Google 앱 자동 설정과 두 회원의 실제 연결을 하나의 열린 작업으로 관리한다. [명세와 검증 시나리오](../openspec/changes/automate-installation-google-app/tasks.md)
 
 공개 Rust 브라우저 실행기는 별도 시험 환경에서 Kiri 0.2.2와 Docker의 실제 실행·격리 검증을 마쳤다. 고정 엔진 소켓, 실제 커널 제한과 두 회원의 브라우저 분리·종료를 검사한다. 운영 Kiri 0.2.1은 그대로이며, 이 Chromium 기반 조회 실행기는 Google 로그인을 위한 전용 Chrome·OAuth 자동 설정을 아직 대체하지 않는다. [진행 순서와 Linux 증적](../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-public-browser-prerequisite) 회원 준비 도구도 Kiri 0.2.2에서 관리자·두 회원 생성과 독립 복구·엔진 재시작을 검증했다. 첫 이미지 생성의 응답 제한 문제를 수정했으며, 운영 엔진은 아직 변경하지 않았다.
 
 공개 소스의 새 Google 인증 실행기는 공식 Chrome 158과 일회용 수신 키를 사용한다. Linux Docker와 Kiri 0.2.2에서 암호문 전달·계정 불일치·기기 확인·동일 프로필 동의·취소·정리 10개 합성 시나리오를 확인했다. 실제 Google 서비스가 아닌 격리된 시험 공급자 결과다. 게이트웨이·Vault 통합은 Linux 실제 프로세스와 Kiri의 합성 공급자로 동시 두 회원·취소·로그아웃·서비스 종료 등 10개 흐름을 확인했다. OAuth 앱 자동 생성, 빈 서버 설치와 운영 전환은 계속 진행 중이다. [인증 실행기 검증](../openspec/changes/automate-installation-google-app/tasks.md#portable-google-authentication-runtime)
+
+## Google 실계정 확인 — 2026-11-27
+
+기존 운영 설치에서 회원 볼트 계정 재사용 → 새 Kiri Google 로그인 → 연결된
+Z Flip5 기기 승인 → 같은 브라우저의 Gmail 동의 → 연결 완료를 확인했다.
+새 무과금 프로젝트의 External·에이전트용 웹 OAuth 클라이언트를 실제 Console에서
+생성하고 관리자 화면으로 설치에 등록했다. 앱은 Testing이며 해당 테스트 계정만
+검증했다. 비밀값은 Linux에서 처리했다.
+
+실제 GWS 경로로 받은편지함 5건을 조회하고 같은 대화의 저장 기록이 새로고침 후
+표시되는 것을 확인했다. 다만 “최근 받은 메일 5개 확인해줘”라는 자연어 요청은
+업무 해석 단계에서 실패했다. 이후 API 조회 성공으로 이 문제를 완료 처리하지
+않는다. 응답은 HTTP 422 `personal_text_model_unavailable`이며, 설치 설정이
+가리키는 Claude 워커 소켓과 실행 서비스가 없다. 대화 해석 계약에도 받은편지함
+조회 동작이 없어 두 경로를 함께 고쳐야 한다. OAuth 최초 설정의 제품 자동화, 두 회원, 빈 서버 설치와 이 대화 처리
+실패를 [49개 사용자 여정](../openspec/changes/automate-installation-google-app/journeys.md)으로
+관리한다. 공개 main과 운영 실행 파일은 이번 확인에서 변경하지 않았다.
 
 ## 빈 Linux 서버 설치 개편 — 개발 후보
 
@@ -20,21 +37,27 @@
 요청 ID·서비스 권한 문제를 진단 중 보정한 결과다. 수정은 설치 코드에 반영했으나
 최종 통합 소스로 새 서버에 보정 없이 설치하는 검증은 남아 있다.
 
-첫 모델 공급자 등록과 새 회원의 모델 소켓 자동 구성, 같은 Kiri에서 새 Google
-OAuth 앱 생성·회원 동의·실제 Gmail 조회도 미완료다. 이 후보는 공개 main과
+개발 후보에는 관리자 API 연결 등록·교체, 새 회원의 모델 소켓 자동 구성과 대화의
+받은편지함 조회 연결을 구현하고 Linux 합성 여정으로 확인했다. 독립 Claude 검토에서
+발견한 설정 저장·회원 장애 격리·응답 유실·대화 전환 오류를 수정했다. 실제 Console의
+브랜딩·External 테스트 사용자·권한 읽기도 확인했다. 같은 브라우저에서 OAuth
+클라이언트를 발급하고 비밀을 설치에 등록하는 경로는 후보에 통합했으며, 저장
+실패·응답 유실·권한 철회와 중복 생성 방지를 Linux 합성 공급자로 검증했다.
+실제 자동 발급·비밀 유실 복구, 공유 앱 운영 전환, 실제 모델 대화와 최종 빈 설치·
+두 회원 검증은 미완료다. 이 후보는 공개 main과
 운영에 반영하지 않았다. [설치 안내](../deployment/kiri/source-install.md) ·
 [구현 단위와 실제 검증 기록](../openspec/changes/automate-installation-google-app/tasks.md)
 
 ## 운영 중인 Kiri
 
-11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트에 Google 로그인 항목을 암호화 저장했다. Google Workspace 설치 앱과 회원 권한은 미등록이다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)
+11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트에 Google 로그인 항목을 암호화 저장했다. 11월 27일 설치용 Google 앱과 해당 회원의 Gmail 읽기 권한을 등록하고 실제 조회했다. 다른 서비스·회원의 실계정 검증은 남아 있다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)
 
 | 영역 | 확인한 동작 | 남은 일 |
 | --- | --- | --- |
 | 계정과 개인 데이터 | 로그인·대화·수동 기억·Google 권한은 회원 볼륨에 저장한다. 회원은 기억을 여러 페이지에 걸쳐 검색하고 같은 로그인 세션에서 화면을 오가며 초안을 이어 쓸 수 있다. 설치 관리자는 회원을 초대·정지하고 사용량을 확인한다. [관리 안내](../deployment/kiri/admin.md) | 현재 운영은 새 볼륨으로 시작했다. 기존 데이터와 키를 보존하는 전환 및 독립 복구는 일부 합성 자료로만 검증했다. [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md) |
-| 모델 | 설치 관리자만 모델과 추론 강도를 지정한다. 11월 21일 운영 회원 소켓에서 Claude Sonnet 5.5 / medium으로 산술 응답, 다음 문서 선택, 시간표의 출발 시각과 승강장 답변을 확인했다. [엔진 설정](../deployment/kiri/admin.md) | 운영 ChatGPT 연결에는 별도 인증이 필요하다. [구독 연결](../deployment/kiri/subscriptions.md) |
+| 모델 | 설치 관리자만 모델과 추론 강도를 지정한다. 11월 21일 운영 회원 소켓에서 Claude Sonnet 5.5 / medium 실제 응답을 확인했다. [엔진 설정](../deployment/kiri/admin.md) | **11월 27일 현재 장애**: 등록된 Claude 워커가 없어 대화 해석이 실패한다. 첫 공급자·회원 소켓 자동 준비와 운영 연결 복구를 진행 중이다. [구독 연결](../deployment/kiri/subscriptions.md) |
 | 작업 브라우저 | 대화에서 공개 페이지를 읽고 같은 탭에서 조건을 바꾼 후 작업을 재개한다. 등록한 회원의 Google 로그인은 전용 Kiri Chrome에서 실행한다. Google이 계정을 확인한 뒤 같은 프로필에 회원 연결 탭을 여는 기능을 운영에 배포했다. [사용 안내](../deployment/kiri/browser.md) | 실계정은 Google 비밀번호 화면까지 도달했다. 볼트 자동 입력·계정 확인과 같은 프로필에서의 실제 동의, 실물 iOS·Android 재진입, 동시 사용 지연 측정이 남았다. [운영 워크로그](reviews/2026-11-25-google-vault-connection.md) |
-| Google Workspace | Google 연결은 먼저 회원 볼트에서 Google 계정을 확인한다. 가입 이메일과 다른 Google 계정도 선택할 수 있고, 선택한 계정과 공급자가 확인한 계정이 일치할 때만 권한을 저장한다. 설치 앱이 없는 관리자도 볼트 확인까지 진행할 수 있다. [연결 절차](../deployment/kiri/google.md) | 운영 Kiri에서 Gmail 연결 버튼과 볼트 열림을 확인했다. 운영 계정은 볼트 항목 재사용과 기기 승인 후 Google 로그인을 완료했다. OAuth 앱 등록·서비스 동의·Gmail 조회는 미완료다. [검증과 재개 조건](reviews/2026-11-26-google-account-selection.md) |
+| Google Workspace | 볼트 계정 재사용·새 Kiri 로그인·기기 승인·동일 브라우저 Gmail 동의와 실제 5건 조회를 11월 27일 확인했다. 설치 앱은 External/Testing이다. [연결 절차](../deployment/kiri/google.md) | 최초 OAuth 앱 자동 생성, 두 회원 실계정, 자연어 조회와 최종 빈 서버 설치가 남아 있다. [49개 사용자 여정](../openspec/changes/automate-installation-google-app/journeys.md) |
 | 볼트 | Google 로그인 항목이 없으면 이메일과 비밀번호를 암호화 저장하고, 하나면 재사용하며, 여러 개면 선택한다. Linux Chromium에서 세 흐름과 선택 이메일의 암호문 바인딩을 확인하고 운영에 배포했다. [검증 기록](reviews/2026-11-26-google-account-selection.md) | 운영에서 볼트 잠금 해제·신규 Google 항목 저장·Kiri 인계를 확인했다. 기기 승인 후 Google 로그인을 확인했다. 서비스 OAuth 동의와 조회는 미완료다. |
 
 ## 회원 UI 개편과 검증 범위

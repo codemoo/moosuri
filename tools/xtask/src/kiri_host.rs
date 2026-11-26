@@ -53,7 +53,8 @@ fn configure_domain_ports() -> Check<()> {
             args.extend([
                 "--retry",
                 "20",
-                "--retry-connrefused",
+                // curl's connrefused retry excludes an absent Unix socket.
+                "--retry-all-errors",
                 "--retry-delay",
                 "1",
                 "--retry-max-time",

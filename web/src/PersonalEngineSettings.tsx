@@ -167,7 +167,7 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
         </section>
       )}
       {engine && <>
-        {(!engine.configured || (engine.kind === "anthropic" && engine.connection_mode === "api")) && <PersonalEngineSetup key={account} account={account} expired={expired} unavailable={unavailable} onSaved={() => setRefresh(value => value + 1)} />}
+        {(!engine.configured || (engine.kind === "anthropic" && ["api", "claude_code"].includes(engine.connection_mode ?? ""))) && <PersonalEngineSetup key={account} account={account} subscriptionRevision={engine.connection_mode === "claude_code" ? engine.connection_revision : undefined} expired={expired} unavailable={unavailable} onSaved={() => setRefresh(value => value + 1)} />}
         {engine.configured && <ProviderUsage key={account + "/" + engine.connection_revision + "/" + engine.revision} engine={engine} account={account} current={current} expired={expired} unavailable={unavailable} />}
         <section className="member-page-list management-engine-overview" aria-labelledby="engine-host-setup">
           <h2 id="engine-host-setup">공급자 추가와 모델 목록 갱신</h2>

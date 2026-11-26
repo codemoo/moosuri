@@ -8,8 +8,9 @@ const path = "/personal/admin/engine/setup";
 /** Claude connection form. The key exists in the password input and one request,
  * never in component state, storage, model context or response projections.
  * Replacing a saved connection names its current revision (compare-and-set). */
-export function PersonalEngineSetup({ account, onSaved, expired, unavailable }: {
+export function PersonalEngineSetup({ account, onSaved, expired, unavailable, subscriptionRevision }: {
   account: string; onSaved: () => void; expired: () => void; unavailable: () => void;
+  subscriptionRevision?: string | null;
 }) {
   const scope = useScope(account, "installation-engine-setup");
   const [setup, setSetup] = useState<Setup | null>(null);
@@ -21,6 +22,8 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable }: 
   const effortInput = useRef<HTMLSelectElement>(null);
   const pending = useRef(false);
   const request = useRef(crypto.randomUUID());
+  const subscription = subscriptionRevision !== undefined;
+  const subscriptionMismatch = subscription && (!setup?.saved || !subscriptionRevision || setup.connection_revision !== subscriptionRevision);
   function fail(e: unknown) {
     if (isAborted(e)) return;
     if (e instanceof ApiFailure && e.status === 401) expired();
@@ -46,7 +49,7 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable }: 
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (pending.current || !setup?.supported || (setup.saved && !replacing)) return;
+    if (pending.current || !setup?.supported || subscriptionMismatch || (setup.saved && !replacing)) return;
     const replace = replacing ? setup.connection_revision : undefined;
     if (replacing && !replace) return;
     const key = keyInput.current?.value ?? "";
@@ -83,9 +86,11 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable }: 
     } finally { pending.current = false; setBusy(false); }
   }
   if (!setup?.supported) return error ? <p role="alert">{error}</p> : null;
+  if (subscriptionMismatch) return <p role="alert" className="preview-error">현재 연결 상태를 확인하지 못했습니다. 위의 새로고침을 누른 뒤 다시 시도해 주세요.</p>;
   const form = !setup.saved || replacing;
   return <section className="member-page-list management-engine-overview" aria-labelledby="engine-first-connection">
     <h2 id="engine-first-connection">Claude 연결</h2>
+    {subscription && <p className="management-note">API 키로 교체하면 현재 구독 로그인 연결을 대신해 관리자의 Anthropic API를 사용합니다. 회원들의 사용량은 이 API 계정에 별도로 청구됩니다.</p>}
     {error && <p role="alert" className="preview-error">{error}</p>}
     {!form && <>
       <p role="status">설치에 연결 설정이 등록되어 있습니다. 위 엔진 상태를 새로고침하고 대화에서 응답을 확인해 주세요.</p>

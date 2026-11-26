@@ -1093,3 +1093,18 @@ The reviewed candidate source and this evidence are being published as a develop
 preview on main. This is source publication, not a claim that production, the default
 installer or all50 journeys are complete. The production server remains on its prior
 runtime until the separately verified data-preserving transition is applied.
+
+
+### Managed model recovery from an unavailable subscription
+
+Production preparation found that the preserved model config uses a missing
+owner-bound Claude subscription worker. Even with the managed setup endpoint,
+the UI's API-only gate hid the existing explicit replacement path. It now exposes
+that path for managed Claude subscription connections too. It names the switch
+to the administrator's separately billed API connection before any submission.
+The displayed subscription revision must match the managed file; missing or
+mismatched setup refuses the form. No connection or credential is changed by
+opening the screen. Independent Claude Sonnet5.5/medium review prompted the
+billing copy and revision check. Linux current-source engine cases20 and typecheck
+passed. The actual replacement and inference still require an authorized API
+credential and remain open; no developer subscription authentication is reused.

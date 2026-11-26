@@ -50,6 +50,8 @@ struct Config {
     google_sockets_root: Option<PathBuf>,
     // Exact HTTPS origin from the installation's trusted gateway configuration.
     public_origin: Option<String>,
+    /// Default for newly enrolled members; explicit member settings take precedence.
+    vault_origin: Option<String>,
     browser_sockets_root: Option<PathBuf>,
     image: String,
     #[serde(default = "engine_socket")]
@@ -138,7 +140,7 @@ impl Config {
                 None
             },
             browser_sockets_root: self.browser_root(m).cloned(),
-            vault_origin: m.vault_origin.clone(),
+            vault_origin: m.vault_origin.clone().or_else(|| self.vault_origin.clone()),
             enable_local_gws: self.local_gws(m),
             enable_text_preview: m.enable_text_preview,
             uid: m.uid,
@@ -153,6 +155,11 @@ impl Config {
     }
     fn validate(&self) -> Result<(), String> {
         self.gws_callback()?;
+        if self.vault_origin.as_deref().is_some_and(|origin| {
+            !moosuri_server::personal_tasks::member_vault::valid_origin(origin)
+        }) {
+            return Err("kiri_lifecycle_invalid_vault_origin".into());
+        }
         if self.version != 1 || self.members.len() > 128 {
             return Err("kiri_lifecycle_invalid_config".into());
         }
@@ -627,6 +634,32 @@ mod tests {
             "https://example.test/path",
         ] {
             c.public_origin = Some(origin.into());
+            assert!(c.validate().is_err());
+        }
+    }
+    #[test]
+    fn installation_vault_default_reaches_new_members_without_replacing_explicit_origins() {
+        let mut c = configuration(Path::new("/srv/registry"));
+        c.members = serde_json::from_value(json!([
+            {"account_id":Uuid::new_v4(),"generation":1,"email":"a@example.invalid","uid":10001},
+            {"account_id":Uuid::new_v4(),"generation":1,"email":"b@example.invalid","uid":10002,"vault_origin":"https://existing-vault.example.test"}
+        ])).unwrap();
+        assert_eq!(c.provision(&c.members[0]).vault_origin, None);
+        c.vault_origin = Some("https://vault.example.test".into());
+        assert!(c.validate().is_ok());
+        assert_eq!(c.provision(&c.members[0]).vault_origin, c.vault_origin);
+        assert_eq!(
+            c.provision(&c.members[1]).vault_origin.as_deref(),
+            Some("https://existing-vault.example.test")
+        );
+        // An empty installation must reject an unsafe default before any invitation.
+        c.members.clear();
+        for origin in [
+            "http://evil.example.test",
+            "https://user@vault.example.test",
+            "https://vault.example.test/path",
+        ] {
+            c.vault_origin = Some(origin.into());
             assert!(c.validate().is_err());
         }
     }

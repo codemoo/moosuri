@@ -13,6 +13,11 @@ struct Behaviour {
     tenant: Option<Uuid>,
     digest: Option<String>,
     used: bool,
+    handoff: Option<String>,
+    grant: Option<String>,
+    lifecycle: Option<Uuid>,
+    ack_digest: Option<String>,
+    ack_failure: bool,
 }
 struct Member {
     allocation: Allocation,
@@ -55,7 +60,8 @@ async fn member(options: &Options, email: &str) -> Member {
                             return (StatusCode::from_u16(status).unwrap(), Json(serde_json::json!({"code":"forbidden"}))).into_response();
                         }
                         let exp = now().unwrap() as i64 + 30;
-                        Json(serde_json::json!({"token":"c".repeat(64),"vault_origin":ORIGIN,"expires_at":exp})).into_response()
+                        let token = b.lock().unwrap().handoff.clone().unwrap_or_else(|| "c".repeat(64));
+                        Json(serde_json::json!({"token":token,"vault_origin":ORIGIN,"expires_at":exp})).into_response()
                     }
                     AUTHORITY_PATH => {
                         assert!(!h.contains_key(header::COOKIE));
@@ -69,11 +75,22 @@ async fn member(options: &Options, email: &str) -> Member {
                         }
                         let tenant = s.tenant.unwrap_or_else(|| a.tenant_id.parse().unwrap());
                         let (grant, operation, digest) = match &request {
-                            Request::Exchange { .. } => (Some("d".repeat(64)), None, None),
+                            Request::Exchange { .. } => (Some(s.grant.clone().unwrap_or_else(|| "d".repeat(64))), None, None),
                             Request::Commit { operation, digest, .. } => (None, Some(*operation), Some(s.digest.clone().unwrap_or(digest.clone()))),
+                            Request::LifecycleNext => {
+                                if s.lifecycle.is_none() { return StatusCode::NOT_FOUND.into_response(); }
+                                (None, s.lifecycle, Some("logout".into()))
+                            },
+                            Request::LifecycleAck { event } => {
+                                if s.ack_failure { return StatusCode::SERVICE_UNAVAILABLE.into_response(); }
+                                if s.lifecycle != Some(*event) { return StatusCode::CONFLICT.into_response(); }
+                                let digest = s.ack_digest.clone().unwrap_or_else(|| "logout".into());
+                                if digest == "logout" { s.lifecycle = None; }
+                                (None, Some(*event), Some(digest))
+                            },
                             _ => (None, None, None),
                         };
-                        Json(Reply { owner: Owner { account: a.account_id.parse().unwrap(), tenant, installation: Uuid::new_v4(), epoch: 1 }, grant, operation, digest }).into_response()
+                        Json(Reply { owner: Owner { account: a.account_id.parse().unwrap(), tenant, installation: a.account_id.parse().unwrap(), epoch: 1 }, grant, operation, digest }).into_response()
                     }
                     _ => StatusCode::NOT_FOUND.into_response(),
                 }
@@ -597,3 +614,6 @@ fn enrollment_is_all_or_nothing_and_legacy_link_only_is_unchanged() {
     assert!(g.vault.is_none());
     assert_eq!(g.vault_site_origin.as_deref(), Some(ORIGIN));
 }
+
+#[path = "members_tests.rs"]
+mod members_tests;

@@ -70,19 +70,29 @@ pub struct Options {
     /// Only this trusted Unix group can connect to the public HTTP gateway socket.
     #[arg(long, requires = "proxy_socket_dir")]
     proxy_gid: Option<u32>,
-    /// Canonical account UUID of the one member enrolled for v2-vault handoff.
+    /// Restrict vault enrollment to one member (legacy installation mode).
     #[arg(
         long,
+        group = "vault_enrollment",
         requires = "vault_site_origin",
         requires = "vault_adapter_listen",
         requires = "vault_adapter_key_file"
     )]
     vault_member: Option<Uuid>,
+    /// Enroll authenticated members in the installation vault automatically.
+    #[arg(
+        long,
+        group = "vault_enrollment",
+        requires = "vault_site_origin",
+        requires = "vault_adapter_listen",
+        requires = "vault_adapter_key_file"
+    )]
+    vault_all_members: bool,
     /// Fixed loopback address of the service-only vault authority adapter.
-    #[arg(long, requires = "vault_member")]
+    #[arg(long, requires = "vault_enrollment")]
     vault_adapter_listen: Option<std::net::SocketAddr>,
-    /// Absolute owner-only file holding the random 64-hex adapter key (created if empty/missing).
-    #[arg(long, requires = "vault_member")]
+    /// Existing absolute owner-only 0400 file holding the random 64-hex adapter key.
+    #[arg(long, requires = "vault_enrollment")]
     vault_adapter_key_file: Option<PathBuf>,
 }
 #[derive(Clone)]
@@ -1280,6 +1290,7 @@ mod tests {
             proxy_socket_dir: None,
             proxy_gid: None,
             vault_member: None,
+            vault_all_members: false,
             vault_adapter_listen: None,
             vault_adapter_key_file: None,
         }

@@ -1,16 +1,18 @@
-//! Opt-in v2-vault enrollment for exactly one named member account. Without the
+//! Opt-in v2-vault enrollment for one account or all installation members. Without the
 //! installer option the legacy link-only status is unchanged and no listener exists.
 //! Browser traffic reaches the public router only; the authority adapter is a
 //! separate loopback listener protected by an owner-only random key.
 use super::*;
 use moosuri_vault_protocol::{AuthorityReply as Reply, AuthorityRequest as Request, Handoff};
 use std::{future::Future, net::SocketAddr, pin::Pin};
+mod lifecycle;
 
 const STATUS_PATH: &str = "/api/v1/personal/vault";
 const HANDOFF_PATH: &str = "/api/v1/personal/vault/handoff";
 const AUTHORITY_PATH: &str = "/internal/member-vault/authority";
 const KEY_HEADER: &str = "x-moosuri-vault-adapter";
-const MAX_TOKENS: usize = 256;
+const MAX_TOKENS: usize = 4096;
+const MAX_MEMBER_TOKENS: usize = 32;
 const HANDOFF_TTL: u64 = 30;
 // Mirrors Store's fixed vault grant lifetime.
 const GRANT_TTL: u64 = 86_400;
@@ -38,7 +40,6 @@ struct Entry {
 #[derive(Default)]
 struct Table {
     tokens: HashMap<[u8; 32], Entry>,
-    lifecycle: Option<(Uuid, String)>,
 }
 fn scope_of(a: &SessionAllocation) -> Result<Scope, StatusCode> {
     let id = |s: &str| Uuid::parse_str(s).map_err(|_| StatusCode::SERVICE_UNAVAILABLE);
@@ -52,12 +53,13 @@ fn scope_of(a: &SessionAllocation) -> Result<Scope, StatusCode> {
 }
 
 pub(super) struct Enrollment {
-    account: Uuid,
+    account: Option<Uuid>,
     origin: String,
     key_tag: hmac::Tag,
     listen: SocketAddr,
     // In memory only: a gateway restart requires a fresh handoff.
     table: Mutex<Table>,
+    lifecycle: tokio::sync::Mutex<lifecycle::State>,
 }
 
 fn hex64(value: &str) -> bool {
@@ -105,9 +107,16 @@ fn load_key(path: &Path) -> Result<Zeroizing<String>, String> {
 }
 impl Enrollment {
     pub(super) fn new(options: &Options, site: Option<&str>) -> Result<Option<Self>, String> {
-        let Some(account) = options.vault_member else {
+        let account = options.vault_member;
+        if account.is_some() && options.vault_all_members {
+            return Err("vault_enrollment_invalid".into());
+        }
+        if account.is_none() && !options.vault_all_members {
+            if options.vault_adapter_listen.is_some() || options.vault_adapter_key_file.is_some() {
+                return Err("vault_enrollment_incomplete".into());
+            }
             return Ok(None);
-        };
+        }
         let (Some(origin), Some(listen), Some(key_file)) = (
             site,
             options.vault_adapter_listen,
@@ -115,7 +124,8 @@ impl Enrollment {
         ) else {
             return Err("vault_enrollment_incomplete".into());
         };
-        if account.is_nil() || !listen.ip().is_loopback() || listen.port() == 0 {
+        if account.is_some_and(|id| id.is_nil()) || !listen.ip().is_loopback() || listen.port() == 0
+        {
             return Err("vault_enrollment_invalid".into());
         }
         if !key_file.is_absolute() {
@@ -131,10 +141,15 @@ impl Enrollment {
             ),
             listen,
             table: Mutex::new(Table::default()),
+            lifecycle: tokio::sync::Mutex::new(lifecycle::State::default()),
         }))
     }
     pub(super) fn enrolled(&self, a: &Allocation) -> bool {
-        Uuid::parse_str(&a.account_id).is_ok_and(|id| id == self.account)
+        Uuid::parse_str(&a.account_id)
+            .is_ok_and(|id| !id.is_nil() && self.account.is_none_or(|account| id == account))
+    }
+    pub(super) fn fixed_member(&self, a: &Allocation) -> bool {
+        self.account.is_some() && self.enrolled(a)
     }
     fn table(&self) -> Result<std::sync::MutexGuard<'_, Table>, StatusCode> {
         let mut t = self
@@ -149,7 +164,20 @@ impl Enrollment {
     fn register(&self, token: &str, kind: Kind, scope: Scope, ttl: u64) -> Result<(), StatusCode> {
         let key = key_digest(token);
         let mut t = self.table()?;
-        if t.tokens.len() >= MAX_TOKENS && !t.tokens.contains_key(&key) {
+        if t.tokens
+            .get(&key)
+            .is_some_and(|e| e.kind != kind || e.scope != scope)
+        {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        if !t.tokens.contains_key(&key)
+            && (t.tokens.len() >= MAX_TOKENS
+                || t.tokens
+                    .values()
+                    .filter(|e| e.scope.account == scope.account)
+                    .count()
+                    >= MAX_MEMBER_TOKENS)
+        {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         t.tokens.insert(
@@ -163,6 +191,14 @@ impl Enrollment {
         Ok(())
     }
     /// Missing, expired, wrong-type or stale mappings are all unauthorized.
+    fn token_scope(&self, token: &str, kind: Kind) -> Result<Scope, StatusCode> {
+        self.table()?
+            .tokens
+            .get(&key_digest(token))
+            .filter(|e| e.kind == kind)
+            .map(|e| e.scope.clone())
+            .ok_or(StatusCode::UNAUTHORIZED)
+    }
     fn authorize(
         &self,
         token: &str,
@@ -267,7 +303,7 @@ async fn status(
                     serde_json::from_slice(&bytes).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
                 if status != StatusCode::OK
                     || member.vault_origin != v.origin
-                    || member.account != v.account
+                    || member.account.to_string() != allocation.account_id
                 {
                     return Err(StatusCode::SERVICE_UNAVAILABLE);
                 }
@@ -454,24 +490,22 @@ async fn adapter(
             .inflight
             .try_acquire()
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        // Registry identity, generation and routing are checked before and after.
-        let a = resolve(&g, runtime_registry::SessionDestination::Account(v.account)).await?;
+        if token_of(&request).is_none() {
+            return lifecycle::handle(&g, v, &request).await;
+        }
+        // Only the server's token mapping selects a member. The adapter protocol
+        // never accepts a caller-supplied account or routing header.
+        let (token, kind) = token_of(&request).ok_or(StatusCode::BAD_REQUEST)?;
+        let registered = v.token_scope(token, kind)?;
+        let a = resolve(
+            &g,
+            runtime_registry::SessionDestination::Account(registered.account),
+        )
+        .await?;
         if !v.enrolled(&a) {
             return Err(StatusCode::UNAUTHORIZED);
         }
-        // Admission before any member-runtime work: the token must map to this exact
-        // volume, generation and registry epoch. Missing/stale mappings are denied.
-        let original = match token_of(&request) {
-            Some((token, kind)) => Some(v.authorize(token, kind, &a)?),
-            None => None,
-        };
-        let pending = match &request {
-            Request::LifecycleAck { event } => match &v.table()?.lifecycle {
-                Some((id, action)) if id == event => Some(action.clone()),
-                _ => return Err(StatusCode::CONFLICT),
-            },
-            _ => None,
-        };
+        let original = v.authorize(token, kind, &a)?;
         let payload = serde_json::to_vec(&request).map_err(|_| StatusCode::BAD_REQUEST)?;
         let upstream = g
             .proxy(&a, Method::POST, AUTHORITY_PATH, Some(&payload), None)
@@ -494,31 +528,21 @@ async fn adapter(
         if status != StatusCode::OK
             || reply.owner.account.to_string() != a.account_id
             || reply.owner.tenant.to_string() != a.tenant_id
-            || original
-                .as_ref()
-                .is_some_and(|s| s.account != reply.owner.account || s.tenant != reply.owner.tenant)
+            || original.account != reply.owner.account
+            || original.tenant != reply.owner.tenant
             || !matches(&request, &reply)
-            || pending
-                .as_deref()
-                .is_some_and(|action| reply.digest.as_deref() != Some(action))
         {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        match (&request, original) {
-            (Request::Exchange { .. }, Some(scope)) => {
+        match &request {
+            Request::Exchange { .. } => {
                 let grant = reply
                     .grant
                     .as_deref()
                     .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-                v.register(grant, Kind::Grant, scope, GRANT_TTL)?;
+                v.register(grant, Kind::Grant, original, GRANT_TTL)?;
             }
-            (Request::Close { grant }, _) => v.forget(grant),
-            (Request::LifecycleNext, _) => {
-                if let (Some(id), Some(action)) = (reply.operation, reply.digest.clone()) {
-                    v.table()?.lifecycle = Some((id, action));
-                }
-            }
-            (Request::LifecycleAck { .. }, _) => v.table()?.lifecycle = None,
+            Request::Close { grant } => v.forget(grant),
             _ => {}
         }
         Ok(response(

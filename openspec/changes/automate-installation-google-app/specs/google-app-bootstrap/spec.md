@@ -67,3 +67,25 @@ distribution while keeping each member's vault and service tokens private.
 #### Scenario: Provider restricts the audience
 - **WHEN** Google requires testing membership or verification
 - **THEN** the connection identifies the unfinished provider step without substituting another member's grant
+
+### Requirement: Installation vault access remains member scoped
+The installation SHALL support vault enrollment for authenticated members without
+restarting or assigning a new adapter per member. Server-owned token mappings
+SHALL bind account, tenant, volume, generation and registry authorization epoch.
+The authority protocol SHALL NOT accept a member selector from the caller.
+
+#### Scenario: A member joins after gateway startup
+- **WHEN** an active member with the installation vault origin signs in
+- **THEN** their handoff and vault session resolve only to their own private runtime
+
+#### Scenario: A handoff or grant collides
+- **WHEN** another member returns a token already registered for another scope or kind
+- **THEN** registration fails and the existing mapping is preserved
+
+#### Scenario: An event acknowledgement fails
+- **WHEN** a member runtime fails to acknowledge a delivered vault lifecycle event
+- **THEN** another member can receive their event and the failed durable event remains retryable
+
+#### Scenario: Vault enrollment does not enroll a browser
+- **WHEN** installation-wide vault access is enabled but only an owner-specific Google helper exists
+- **THEN** the helper does not receive another member's request

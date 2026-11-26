@@ -189,3 +189,13 @@ Sources: [Linux](https://docs.runkiri.com/linux/),
 [API source](https://github.com/libracoder/kiri/blob/b249eccc2ed708ce10d7feeb82b6c0869b112443/crates/kiri/src/daemon/api.rs),
 [Linux container source](https://github.com/libracoder/kiri/blob/b249eccc2ed708ce10d7feeb82b6c0869b112443/crates/kiri-init/src/linux/container.rs),
 [volumes](https://github.com/libracoder/kiri/blob/b249eccc2ed708ce10d7feeb82b6c0869b112443/crates/kiri/src/daemon/volumes.rs).
+
+## Installation-wide vault handoff
+
+Run `python3 member-vault.py /absolute/path/moosuri /absolute/path/moosuri-vault-service`
+as a nonroot Linux user. The stdlib-only fixture starts real gateway, member and
+vault processes with two synthetic member stores in a temporary private directory.
+It checks a member added after gateway startup, one-time handoffs, both directions
+of account isolation, logout, gateway restart/reopening and registry fencing.
+It makes no model or Google calls. It does not validate browser recipient setup,
+client encryption UI, HTTPS provisioning or the public installer.

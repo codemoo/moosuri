@@ -40,8 +40,10 @@ configuration; browser sessions, vault keys and Google tokens are member data.
 
 The current public `install.sh` runs the standard server, while Kiri is manually
 assembled. The guest imports `fresh_browser`/`secure_google` from a private skill;
-the connection systemd service launches a developer VM wrapper. The gateway's
-vault adapter is also enrolled for one account. These are release-blocking
+the connection systemd service launches a developer VM wrapper. The gateway now
+supports installation-wide vault enrollment, with member-scoped token routing
+and lifecycle delivery. Production retains fixed-member mode until its Google
+browser/recipient transport supports the same allocations. These are release-blocking
 integration gaps, not prerequisites to ask a new installer to supply manually.
 Until packaged and tested, retain the current support warning and do not switch
 the public install command to an incomplete Kiri deployment.

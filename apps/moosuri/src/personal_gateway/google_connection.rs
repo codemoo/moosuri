@@ -85,7 +85,9 @@ async fn authorize(
     a: &SessionAllocation,
     session: &str,
 ) -> Result<String, StatusCode> {
-    if !g.vault.as_ref().is_some_and(|v| v.enrolled(a)) {
+    // The current browser/key helper is explicitly enrolled for one account.
+    // Installation-wide vault access alone does not authorize that helper.
+    if !g.vault.as_ref().is_some_and(|v| v.fixed_member(a)) {
         return Err(StatusCode::FORBIDDEN);
     }
     let (status, bytes, _) = g

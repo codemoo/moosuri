@@ -120,3 +120,42 @@ never accepted Google's terms, and it does not prove a clean public Moosuri
 installation, automatic OAuth issuance, member consent or a real Gmail read.
 The temporary operator harness must become the existing Rust-owned setup path;
 it is not a product implementation or another required user-operated tool.
+
+### Portable member vault unit — 2026-11-26
+
+- [x] Add installation-wide enrollment while retaining explicit single-member mode.
+- [x] Inherit the installation vault origin during new-member provisioning.
+- [x] Route tokens by server-owned allocation scope; reject collisions and bound per-member capacity.
+- [x] Bind lifecycle redelivery/Ack to the original owner and allocation; continue after an unavailable member.
+- [x] Run Linux component checks, real-process member scenarios and independent review.
+
+Linux: vault gateway 16 passed; lifecycle/onboarding 10 passed. Nine new gateway
+scenarios cover invitation after startup, collisions, fences/restart, event
+redelivery and mismatched Ack, event fencing, empty-member discovery/concurrent
+admission, CLI mode constraints, per-member capacity and failed-Ack fairness.
+The inheritance scenario also checks explicit overrides and invalid defaults.
+
+The public stdlib-only `deployment/kiri/linux-vm-smoke/member-vault.py` ran real
+release gateway, two private member stores and the vault service on Linux:
+MV-01 through MV-06 passed. It checked a member added after startup, single-use
+handoffs, both directions of account isolation, logout isolation, gateway
+restart/fresh handoff and registry fencing. It also confirmed the old Google
+owner helper is denied in installation-wide mode. These are real processes and
+HTTP/Unix requests with synthetic identities, not browser UI or separate UID
+container acceptance. Initial harness failures (HTTP helper name shadowing and
+missing member header) were fixed before the six passing scenarios.
+
+Independent Claude Sonnet 5.5 / medium found a pending lifecycle Ack could starve
+other members. The routing cache now expires after 30 seconds, drops on upstream
+Ack failure, and resumes discovery; a Linux scenario confirms the other member
+progresses and the original durable event remains retryable. Its key-permission
+migration concern was checked against the base: 0400/no-create was already the
+implementation and had existing regression coverage; only stale CLI help changed.
+
+The gateway release was deployed in the existing fixed-member mode. The public
+shell, vault health and executing binary were verified; the member image,
+registry schema and Google helper were not changed. The installation-wide mode
+is available and tested, but enabling it in production awaits the member-aware
+Google browser/recipient transport. A shared vault origin does not enroll a
+Google recipient or make OAuth/GWS ready. The overall clean-install gates above
+remain open.

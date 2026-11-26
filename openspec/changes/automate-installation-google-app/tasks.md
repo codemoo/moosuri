@@ -427,3 +427,34 @@ installation artifacts from public source, provision the Linux services, then
 implement same-profile SDK/Console app creation and actual member consent/GWS.
 The conservative post-login cleanup fence is retained; only key-only preparation
 can retry immediately. Overall clean-install and real-provider gates remain open.
+
+### Private SDK and same-profile callback — 2026-11-27
+
+The pinned SDK uses an empty private configuration inside the Google-auth capsule.
+Its loopback callback is intercepted in the same Chrome profile that signed into
+Google, validated by session/top frame/method/state, then delivered over a fixed
+local TCP connection. Successful capture closes the intercepted tab and opens a
+new tab in that same profile; it never disables Fetch, which could resume an
+unaccounted paused request. Failed/cancelled attempts taint the browser and cannot
+be retried in place. The normal proxy still refuses private destinations.
+
+Linux component checks: 23 authentication tests and 4 CDP tests passed. Actual
+pinned Chrome in the confined, network-disabled image passed valid capture,
+second capture in the same profile, wrong state, iframe, popup, subresource,
+burst and retry-after-error cases. The public `sdk-browser-smoke.py` harness
+runs failing cases in separate capsules. An initial fixture incorrectly tried
+to restart a one-use X display in the same capsule; that fixture was corrected.
+
+The real SDK returns exit 1 when asked to revoke an empty account list. Cleanup
+now first proves the private configuration is empty, or requires successful
+revocation followed by a fresh empty list. A failed revoke remains a failure
+even if it removed local credentials. The actual SDK's empty-config cleanup
+was run twice successfully through the Rust runner. No grant or provider write
+was made in this test. Independent Claude Sonnet 5.5 / medium closure review
+found no supported high/medium defect in this component.
+
+Still open: parent controller/worker integration with cooperative cancellation,
+at least 65 seconds for SDK cleanup before container removal, fresh administrator
+heartbeats, provider project reconciliation, Console branding/audience/client,
+private atomic client registration, member consent/GWS, and a real Gmail read.
+These component results do not establish an automatic Google setup or deployment.

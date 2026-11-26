@@ -5,10 +5,11 @@ mod chrome;
 mod consent;
 mod crypto;
 mod display;
+mod sdk;
 mod worker;
 pub use binding::{Binding, Envelope, PROTOCOL, Recipient};
 pub use crypto::Receiver;
-pub use worker::{serve, installation_probe};
+pub use worker::{installation_probe, serve};
 #[cfg(test)]
 mod tests;
 

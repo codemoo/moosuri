@@ -1,7 +1,7 @@
 use super::BrowserError;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
@@ -13,7 +13,14 @@ pub(super) struct Cdp {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     next: u64,
     loaded: HashSet<(String, String)>,
+    /// Only `Fetch.requestPaused` events are queued (at most `MAX_PAUSED`); every
+    /// other asynchronous event is still discarded. The queue holds URLs that may
+    /// carry secrets, so it is never logged and `Cdp` has no `Debug`.
+    paused: VecDeque<Value>,
+    paused_overflow: bool,
 }
+
+const MAX_PAUSED: usize = 8;
 
 impl Cdp {
     pub async fn connect(endpoint: &str) -> Result<Self, BrowserError> {
@@ -36,6 +43,8 @@ impl Cdp {
             socket,
             next: 0,
             loaded: HashSet::new(),
+            paused: VecDeque::new(),
+            paused_overflow: false,
         })
     }
     async fn receive(&mut self) -> Result<Value, BrowserError> {
@@ -61,6 +70,13 @@ impl Cdp {
                             self.loaded.clear();
                         }
                         self.loaded.insert((session.to_owned(), loader.to_owned()));
+                    }
+                    if value.get("method").and_then(Value::as_str) == Some("Fetch.requestPaused") {
+                        if self.paused.len() < MAX_PAUSED {
+                            self.paused.push_back(value.clone());
+                        } else {
+                            self.paused_overflow = true;
+                        }
                     }
                     return Ok(value);
                 }
@@ -105,6 +121,41 @@ impl Cdp {
             }
         }
         Err(BrowserError::Protocol)
+    }
+    /// `command` with an explicit bound. A reply that arrives late is discarded by
+    /// the monotonic-id match in later commands.
+    pub async fn command_timeout(
+        &mut self,
+        method: &'static str,
+        params: Value,
+        session: Option<&str>,
+        limit: Duration,
+    ) -> Result<Value, BrowserError> {
+        tokio::time::timeout(limit, self.command(method, params, session))
+            .await
+            .unwrap_or(Err(BrowserError::Protocol))
+    }
+    async fn pump_forever(&mut self) -> BrowserError {
+        loop {
+            if let Err(error) = self.receive().await {
+                return error;
+            }
+        }
+    }
+    /// Reads asynchronous events for at most `wait` (queueing paused requests)
+    /// while no command is pending. Never waits longer than `wait`.
+    pub async fn pump(&mut self, wait: Duration) -> Result<(), BrowserError> {
+        match tokio::time::timeout(wait, self.pump_forever()).await {
+            Ok(error) => Err(error),
+            Err(_) => Ok(()),
+        }
+    }
+    /// Takes every queued `Fetch.requestPaused` event (whole CDP messages, with
+    /// their `sessionId`; callers match the session when consuming). If events were
+    /// dropped because the queue was full, the batch is returned with `overflow`.
+    pub fn take_paused(&mut self) -> (Vec<Value>, bool) {
+        let overflow = std::mem::take(&mut self.paused_overflow);
+        (self.paused.drain(..).collect(), overflow)
     }
     pub fn before_navigation(&mut self, session: &str) {
         self.loaded.retain(|(sid, _)| sid != session);
@@ -186,6 +237,39 @@ mod tests {
         .unwrap();
         server.await.unwrap();
     }
+    #[tokio::test]
+    async fn only_paused_requests_are_queued_with_a_fixed_bound() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!(
+            "ws://{}/devtools/browser/synthetic",
+            listener.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut events = vec![json!({"method":"Page.frameNavigated","params":{}})];
+            for n in 0..10 {
+                events.push(json!({"method":"Fetch.requestPaused","sessionId":"s","params":{"requestId":n.to_string()}}));
+            }
+            for event in events {
+                socket
+                    .send(Message::Text(event.to_string().into()))
+                    .await
+                    .unwrap();
+            }
+            std::future::pending::<()>().await;
+        });
+        let mut cdp = Cdp::connect(&endpoint).await.unwrap();
+        cdp.pump(Duration::from_millis(300)).await.unwrap();
+        let (events, overflow) = cdp.take_paused();
+        assert_eq!(events.len(), MAX_PAUSED);
+        assert!(overflow);
+        assert_eq!(events[0]["params"]["requestId"], "0");
+        let (events, overflow) = cdp.take_paused();
+        assert!(events.is_empty() && !overflow);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn protocol_rejects_a_response_for_another_target_session() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

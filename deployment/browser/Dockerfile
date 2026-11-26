@@ -29,8 +29,16 @@ RUN test "$(dpkg --print-architecture)" = amd64 \
     && echo 'a656b2db00a8cb7f13a1d754f6aad91f84014906452c6dfb7f3ead93035da03b  /tmp/chrome.deb' | sha256sum -c - \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb \
     && test "$(google-chrome-stable --product-version)" = 158.0.8127.88 \
+    && curl -fsSL --retry 2 https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-594.0.1-linux-x86_64.tar.gz -o /tmp/gcloud.tar.gz \
+    && echo '8fc798fd0638428551f80277a568112d08afcf9cafd967d1cf39ae0918df2a1d  /tmp/gcloud.tar.gz' | sha256sum -c - \
+    && tar -xzf /tmp/gcloud.tar.gz -C /opt --no-same-owner \
+    && test "$(cat /opt/google-cloud-sdk/VERSION)" = 594.0.1 \
+    && test -x /opt/google-cloud-sdk/bin/gcloud \
+    && chmod -R go-w /opt/google-cloud-sdk \
     && apt-get purge -y chromium chromium-common curl \
-    && rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
+    && rm /tmp/chrome.deb /tmp/gcloud.tar.gz && rm -rf /var/lib/apt/lists/*
+# Pinned Cloud SDK (bundled Python included) lives only in this target. The
+# component updater is never invoked; the Rust runner clears the environment.
 CMD ["--google-auth"]
 
 FROM runtime AS test

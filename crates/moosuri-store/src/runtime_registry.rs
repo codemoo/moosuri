@@ -113,7 +113,7 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || !(1..=7).contains(&version) {
+    if id != APP_ID || !(1..=8).contains(&version) {
         return Err(StoreError::InvalidInput);
     }
     if version == 1 {
@@ -155,6 +155,16 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!(
             "../../../migrations/installation_registry/0007_quota_receipts.sql"
+        ))?;
+        tx.commit()?;
+    }
+    // `version` was read before these transactions. Concurrent migrators are excluded only by
+    // the exclusive directory lock held for the lifetime of the returned handle (not by the
+    // SQLite transaction), so never move the version read or that lock acquisition apart.
+    if version <= 7 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0008_google_bootstrap.sql"
         ))?;
         tx.commit()?;
     }

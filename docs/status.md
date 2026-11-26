@@ -8,9 +8,7 @@
 
 공개 소스의 새 Google 인증 실행기는 공식 Chrome 158과 일회용 수신 키를 사용한다. Linux Docker와 Kiri 0.2.2에서 암호문 전달·계정 불일치·기기 확인·동일 프로필 동의·취소·정리 10개 합성 시나리오를 확인했다. 실제 Google 서비스가 아닌 격리된 시험 공급자 결과다. 게이트웨이·Vault 통합은 Linux 실제 프로세스와 Kiri의 합성 공급자로 동시 두 회원·취소·로그아웃·서비스 종료 등 10개 흐름을 확인했다. OAuth 앱 자동 생성, 빈 서버 설치와 운영 전환은 계속 진행 중이다. [인증 실행기 검증](../openspec/changes/automate-installation-google-app/tasks.md#portable-google-authentication-runtime)
 
-## 운영 중인 Kiri
-
-### 빈 Linux 서버 설치 개편 — 개발 후보
+## 빈 Linux 서버 설치 개편 — 개발 후보
 
 기준은 다른 사람이 아무 설정도 없는 Ubuntu 24.04 서버에 공개 소스를 받아
 설치하는 경우다. 개발자의 Mac 인증, 기존 Google 프로젝트·OAuth 클라이언트,
@@ -26,6 +24,8 @@
 OAuth 앱 생성·회원 동의·실제 Gmail 조회도 미완료다. 이 후보는 공개 main과
 운영에 반영하지 않았다. [설치 안내](../deployment/kiri/source-install.md) ·
 [구현 단위와 실제 검증 기록](../openspec/changes/automate-installation-google-app/tasks.md)
+
+## 운영 중인 Kiri
 
 11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트에 Google 로그인 항목을 암호화 저장했다. Google Workspace 설치 앱과 회원 권한은 미등록이다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)
 

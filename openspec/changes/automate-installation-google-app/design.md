@@ -18,6 +18,15 @@ and application verification are provider boundaries. Show the specific required
 action in the existing connection flow and resume the same setup afterward.
 Do not substitute Cloud Shell, a developer's credentials or an unrelated project.
 
+Project and API preparation can use the official Google Cloud CLI installed
+inside the isolated Kiri setup runtime. Its initial SDK authorization runs in
+that same Chrome profile, with a new private configuration and no inherited
+Cloud credentials. This avoids needing the installation's own OAuth client in
+order to create its first project. Keep CLI credentials within the temporary
+runtime and expose only bounded setup results to Rust. Google Console still
+owns the OAuth client configuration. This route was verified for a fresh,
+unbilled project and five Workspace APIs; it is not yet product integration.
+
 ## Installation boundary
 
 The installer must provision the member runtime, browser transport, vault origin
@@ -65,6 +74,8 @@ another Google account or make it production verified.
 Official references (checked 2026-11-26):
 [Workspace project setup: billing is optional](https://developers.google.com/workspace/guides/create-project),
 [Resource Manager: project creation does not associate billing](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),
+[SDK browser authorization](https://docs.cloud.google.com/sdk/gcloud/reference/auth/login),
+[versioned SDK archives](https://docs.cloud.google.com/sdk/docs/downloads-versioned-archives),
 [client creation through Console](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation),
 [web clients](https://developers.google.com/workspace/guides/create-credentials),
 [GWS](https://github.com/googleworkspace/cli).

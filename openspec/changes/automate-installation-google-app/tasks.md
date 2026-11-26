@@ -96,3 +96,27 @@ The Linux source-only smoke used Python isolated mode with only
 `enroll_google_connection` and `google_console` each failed on missing
 `fresh_browser`. This is a failed clean-install check, not a test environment
 workaround to hide by adding the developer's private module directory.
+
+### Real no-billing provider experiment
+
+A new isolated Kiri Chrome signed in after Google device verification. Its
+Console project form offered only existing billing accounts, so no account was
+selected. In that same disposable Kiri container, the official Cloud SDK 594.0.1
+was installed and authorized from an empty SDK configuration. The documented
+unversioned Linux archive matched SHA-256
+`c6fdba4cb1551b0da7c1d744eb0dfaf68b59861238d6a6b5ef6bad1ba596b567` and its embedded
+version was checked. The version-named archive had different bytes and was not
+executed under that checksum; packaging must pin the tested artifact exactly.
+
+The official CLI created a fresh project and enabled Gmail, Drive, Docs, Sheets
+and Slides APIs. Provider queries confirmed ACTIVE, all five APIs enabled,
+`billingEnabled=false`, and no billing account linked. No existing project or
+client was reused. The new project's OAuth overview displayed its initial
+configuration form. No branding or OAuth client was saved in this experiment.
+
+This proves that the observed Console billing requirement is avoidable through
+a supported unbilled creation route. It does not simulate an account that has
+never accepted Google's terms, and it does not prove a clean public Moosuri
+installation, automatic OAuth issuance, member consent or a real Gmail read.
+The temporary operator harness must become the existing Rust-owned setup path;
+it is not a product implementation or another required user-operated tool.

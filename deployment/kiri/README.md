@@ -9,7 +9,7 @@
 호스트 운영자는 비공개 설치 레지스트리에서 이메일을 정규화하고 계정·테넌트·볼륨 UUID를 발급한다. 동일 초대를 재시도할 때 원래 요청 ID를 사용한다. 비밀번호와 로그인 세션은 개인 볼륨에만 저장된다.
 
 1. 운영자 전용(0700) 디렉터리를 만든 뒤 `moosuri account-runtime --registry "$REGISTRY" reserve --request-id "$REQUEST" --email "$EMAIL"`을 실행한다. 출력으로 받은 account_id, tenant_id, volume_id, generation을 아래에서 사용한다.
-2. Linux 호스트에 Kiri 0.2.1과 검증한 무수리 OCI 이미지를 준비한다. 실행 파일은 `/usr/local/bin/moosuri`이고 이를 유일한 Entrypoint로 둔다. 프로비저너는 로컬 image config의 전체 `sha256:…`를 사용한다. 실험 이미지에는 Rust 바이너리와 해당 아키텍처의 ELF 로더·실행 라이브러리가 들어 있다.
+2. Linux 호스트에 Kiri 0.2.1 또는 0.2.2와 검증한 무수리 OCI 이미지를 준비한다. 실행 파일은 `/usr/local/bin/moosuri`이고 이를 유일한 Entrypoint로 둔다. 프로비저너는 로컬 image config의 전체 `sha256:…`를 사용한다. 실험 이미지에는 Rust 바이너리와 해당 아키텍처의 ELF 로더·실행 라이브러리가 들어 있다.
 3. 호스트 관리자가 전용 UID/GID와 크기 제한이 있는 별도 파일시스템을 할당한다. `$MOUNTS/$VOLUME`에 `nodev,nosuid,noexec`로 마운트하고 그 안에 개인 UID 소유의 0700 디렉터리 `member-data`, `scratch`, `ipc`를 만든다. 마지막 디렉터리를 `$IPC/$ACCOUNT`에 bind mount한다. 프로비저너는 IPC도 같은 한도의 파일시스템에 있어야 시작한다. 레지스트리·IPC 상위·UID 예약 디렉터리는 운영자 전용이다.
 4. 개인 UID로 `moosuri personal-volume --root "$MEMBER_DATA" --account "$ACCOUNT" --tenant "$TENANT" --volume "$VOLUME" --generation "$GENERATION" initialize --name "$NAME" --email "$EMAIL"`을 실행한다. 터미널에서 임시 비밀번호를 입력한다. 설치 프로그램은 `--password-stdin`으로 비공개 파이프를 사용할 수 있다. 접수된 계정과 볼륨의 연결은 영속화되며 동일 요청으로 기존 비밀번호가 바뀌지 않는다.
 5. 호스트에서 아래 명령을 실행한다. 시작 전 실제 마운트·소유자·엔진 버전·이미지와 컨테이너의 실행 구성을 확인한다. 생성 응답이 유실되면 같은 자원을 찾아 대조한다. 루트 파일시스템은 읽기 전용이고 `/data`, `/tmp`, `/ipc`만 각각 준비한 개인 경로를 사용한다. 운영 중 시작과 재시작은 호스트가 조율한다.
@@ -33,6 +33,8 @@
 회원 전용 도메인의 기존 TLS server 블록에 [nginx 위치 설정](member-proxy.nginx.conf)을 포함한다. 이 예시는 nginx가 클라이언트 연결을 직접 받는 배치용이다. 로드 밸런서가 앞에 있으면 신뢰하는 프록시에서 온 주소만 nginx real-IP 모듈로 복원한다. 텍스트 응답은 최대 85초 걸릴 수 있어 예시의 upstream 대기 시간은 100초다.
 
 호스트 부팅 때 회원을 다시 기동하려면 [Kiri 수명주기 서비스](lifecycle/README.md)에 준비된 회원을 등록한다. 서비스는 새 계정을 만들거나 정지된 세대를 활성화하지 않는다.
+
+회원 프로비저너는 0.2.1과 0.2.2를 지원하지만 새 공개 브라우저 실행기는 0.2.2만 허용한다. 기존 `kiri-0.2.1-none-v1` 할당 기록은 그대로 보존한다. 이는 실제 엔진 버전 표시가 아닌 UID·볼륨 계약 식별자다. 새 이미지의 첫 생성·시작 응답은 최대 30초 기다리며, 응답이 불확실하면 같은 컨테이너를 확인한다. [새 버전 검증과 제한](../../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-member-engine-compatibility)
 
 ## 공용 모델 개발판
 

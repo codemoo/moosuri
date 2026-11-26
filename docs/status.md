@@ -4,7 +4,7 @@
 
 새 설치의 목표는 기존 Cloud 프로젝트·OAuth 앱·결제 계정·GWS 설정·개인 개발 파일 없이 공개 프로젝트만 받아 사용하는 것이다. 현재 Google 연결에는 개인 Kiri 도우미와 고정 브라우저·수신 키 등록 의존성이 남아 있어 이 조건을 만족하지 못한다. 볼트 인계는 설치 전체 회원 모드와 초대 회원의 기본 주소 상속을 구현했고, Linux 실제 프로세스 두 회원으로 접근 분리·로그아웃·재시작 6개 흐름을 확인했다. 운영 게이트웨이는 검증한 새 실행 파일로 갱신하되 기존 Google 도우미 호환을 위해 단일 회원 설정을 유지한다. 11월 26일 Linux에서 개발자 경로를 제외하자 연결·등록 도우미가 공개 소스에 없는 `fresh_browser` import에서 실패했다. 설치 패키징, 회원별 볼트·브라우저 준비, 새 Google 앱 자동 설정과 두 회원의 실제 연결을 하나의 열린 작업으로 관리한다. [명세와 검증 시나리오](../openspec/changes/automate-installation-google-app/tasks.md)
 
-공개 Rust 브라우저 실행기는 별도 시험 환경에서 Kiri 0.2.2와 Docker의 실제 실행·격리 검증을 마쳤다. 고정 엔진 소켓, 실제 커널 제한과 두 회원의 브라우저 분리·종료를 검사한다. 운영 Kiri 0.2.1은 그대로이며, 이 Chromium 기반 조회 실행기는 Google 로그인을 위한 전용 Chrome·OAuth 자동 설정을 아직 대체하지 않는다. [진행 순서와 Linux 증적](../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-public-browser-prerequisite)
+공개 Rust 브라우저 실행기는 별도 시험 환경에서 Kiri 0.2.2와 Docker의 실제 실행·격리 검증을 마쳤다. 고정 엔진 소켓, 실제 커널 제한과 두 회원의 브라우저 분리·종료를 검사한다. 운영 Kiri 0.2.1은 그대로이며, 이 Chromium 기반 조회 실행기는 Google 로그인을 위한 전용 Chrome·OAuth 자동 설정을 아직 대체하지 않는다. [진행 순서와 Linux 증적](../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-public-browser-prerequisite) 회원 준비 도구도 Kiri 0.2.2에서 관리자·두 회원 생성과 독립 복구·엔진 재시작을 검증했다. 첫 이미지 생성의 응답 제한 문제를 수정했으며, 운영 엔진은 아직 변경하지 않았다.
 
 ## 운영 중인 Kiri
 

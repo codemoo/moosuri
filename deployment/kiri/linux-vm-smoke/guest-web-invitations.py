@@ -42,7 +42,8 @@ def run(*args, secret=None):
         timeout=120,
     )
     if result.returncode:
-        raise RuntimeError(f"{Path(args[0]).name} {args[1]} exited with {result.returncode}")
+        codes = re.findall(r"\b(?:kiri|onboard|invite|storage)_[a-z0-9_]+\b", result.stderr)
+        raise RuntimeError(f"{Path(args[0]).name} {args[1]} exited with {result.returncode}: {codes[:3]}")
     return result.stdout
 
 
@@ -63,19 +64,20 @@ class Gateway(http.client.HTTPConnection):
         self.sock.connect(str(GATEWAY / "gateway.sock"))
 
 
-def post(path, body, cookies, account=None):
+def post(path, body, cookies, account=None, method="POST"):
     headers = {
         "Content-Type": "application/json",
         "Host": "personal.internal",
         "Origin": ORIGIN,
         "X-Real-IP": "192.0.2.50",
         "Cookie": cookies.output(header="", sep=";").strip(),
+        "Sec-Fetch-Site": "same-origin",
     }
     if account:
         headers["X-Moosuri-Account"] = account
     client = Gateway("personal.internal")
     try:
-        client.request("POST", "/api/v1/" + path, json.dumps(body), headers)
+        client.request(method, "/api/v1/" + path, json.dumps(body) if method == "POST" else None, headers)
         response = client.getresponse()
         for key, value in response.getheaders():
             if key.lower() == "set-cookie":
@@ -146,7 +148,7 @@ def waiting(request):
     return record.exists() and json.loads(record.read_text())["stage"] == "password_required"
 
 
-def exercise(owner_email, owner_password, common):
+def exercise(owner_email, owner_password, common, verify_recovery=False):
     status, user, jar = login(owner_email, owner_password)
     assert status == 200 and user["password_change_required"]
     owner = user["user"]["id"]
@@ -241,7 +243,7 @@ def exercise(owner_email, owner_password, common):
     assert json.loads(
         run(*worker, "--finish-request", other, "--password-stdin", secret=second_password)
     )["ready"]
-    status, second, _ = login(invitations[other], second_password)
+    status, second, second_member = login(invitations[other], second_password)
     assert status == 200 and second["user"]["id"] == expanded[other]["invitation"]["account_id"]
     passed("increased capacity admitted the second member with a separate UID and volume")
 
@@ -266,12 +268,74 @@ def exercise(owner_email, owner_password, common):
         for s in (owner_password, replacement, password, changed, second_password)
     )
     passed("the service journal and host queue excluded all synthetic passwords")
+    if verify_recovery:
+        recover_members([(owner, jar), (account, member), (second["user"]["id"], second_member)])
+
+
+def recover_members(members):
+    """Only after create_fixture's disposable-guest and empty-installation gates."""
+    def engine(method, path):
+        client = http.client.HTTPConnection("localhost", timeout=15)
+        client.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.sock.settimeout(15)
+        client.sock.connect("/run/kiri/docker.sock")
+        try:
+            client.request(method, "/v1.47" + path)
+            response = client.getresponse()
+            raw = response.read(1 << 20)
+            assert response.status in (200, 204), "engine request failed"
+            return json.loads(raw) if raw else None
+        finally:
+            client.close()
+
+    def inventory():
+        rows = [engine("GET", "/containers/moosuri-member-" + str(uuid.UUID(a)) + "/json") for a, _ in members]
+        assert all(row["State"]["Running"] for row in rows)
+        return rows
+
+    def identity(row):
+        assert row["Config"]["Labels"]["org.moosuri.runtime"] == "kiri-0.2.1-none-v1"
+        return {k:row[k] for k in ("Id", "Image", "Config", "HostConfig", "Mounts")}
+
+    def sessions():
+        for account, jar in members:
+            status, user = post("auth/session", None, jar, account, method="GET")
+            assert status == 200 and user["user"]["id"] == account
+            other = next(a for a, _ in members if a != account)
+            status, selected = post("auth/session", None, jar, other, method="GET")
+            assert status in (401, 403) or status == 200 and selected["user"]["id"] == account
+
+    state = CONTROL / "recovery-check"
+    state.mkdir(mode=0o700)
+    command = [BINARY, "kiri-lifecycle", "--experimental", "--config", CONFIG,
+               "--state-directory", state, "--once"]
+    before = inventory()
+    sessions()
+    run(*command)
+    assert [identity(r) for r in inventory()] == [identity(r) for r in before]
+    passed("KR-01: reconciliation preserves member IDs, profiles and mounts")
+    engine("POST", "/containers/" + before[1]["Id"] + "/stop")
+    assert engine("GET", "/containers/" + before[2]["Id"] + "/json")["State"]["Running"] is True
+    run(*command)
+    after = inventory()
+    assert [identity(r) for r in after] == [identity(r) for r in before]
+    assert after[2]["State"]["Pid"] == before[2]["State"]["Pid"]
+    sessions()
+    passed("KR-02: stopped member recovers while sibling PID and sessions remain")
+    assert {row["Id"] for row in engine("GET", "/containers/json?all=1")} == {row["Id"] for row in before}
+    run("systemctl", "restart", "kiri")
+    run(*command)
+    assert [identity(r) for r in inventory()] == [identity(r) for r in before]
+    sessions()
+    passed("KR-03: daemon restart preserves identities, mounts and member-bound sessions")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="loaded sha256 ID of the matching member runtime image")
-    image = parser.parse_args().image
+    parser.add_argument("--recovery", action="store_true", help="also exercise member and engine restart in this disposable guest")
+    args = parser.parse_args()
+    image = args.image
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
         parser.error("expected the loaded image SHA-256 ID")
     create_fixture(image)
@@ -311,7 +375,7 @@ def main():
     )
     try:
         until(lambda: (GATEWAY / "gateway.sock").is_socket(), 15, "Gateway did not start")
-        exercise(owner, password, common)
+        exercise(owner, password, common, args.recovery)
     finally:
         gateway.terminate()
         gateway.wait(timeout=15)

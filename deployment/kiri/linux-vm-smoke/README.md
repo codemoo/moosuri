@@ -85,6 +85,23 @@ the installation, issues two synthetic web invitations and waits for the
 shipped timer's first activation. It checks both logins, password rotation,
 capacity, retries and installation identity. [November 21 results](../../../docs/reviews/2026-11-20-kiri-scenarios.md#관리자-웹-초대와-호스트-자동-준비)
 
+### Kiri 0.2.2 member recovery
+
+The same public invitation harness accepts `--recovery` to verify unchanged
+reconciliation, recovery of one member without restarting its sibling, and an
+engine restart with member-bound sessions and complete inspected profiles intact.
+It requires a fresh marked guest and refuses the engine restart if unrelated
+containers exist. Build or obtain the member image through the public
+[Dockerfile](../Dockerfile), load its exact ID into Kiri, and install the candidate
+host binary and stock onboarding units as above. This harness prepares its own
+synthetic installation; it is not the public product installer.
+
+```sh
+sudo python3 guest-web-invitations.py "$MEMBER_IMAGE_ID" --recovery
+```
+
+[November 26 results, cold-create correction and remaining integration](../../../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-member-engine-compatibility)
+
 ## Member task history and recurring searches on Linux
 
 Run this check as a regular Linux user with Python Playwright and its Chromium and WebKit browsers installed. From the repository root, build the web assets before the executable so that the gateway serves the updated UI.

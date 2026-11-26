@@ -111,3 +111,21 @@ launcher acceptance, preserving the browser sandbox and private-network denial.
 #### Scenario: One of two members closes their worker
 - **WHEN** the first member's worker shuts down in an accepted Linux deployment
 - **THEN** the second member's page stays available and the cleaned slot can be reused
+
+### Requirement: Member allocation survives a compatible Kiri release
+The member provisioner SHALL accept only explicitly verified Linux Kiri API
+versions. A compatible release SHALL preserve the existing allocation identity,
+UID, volume and inspected isolation contract. Browser and member engine support
+SHALL be stated separately.
+
+#### Scenario: A compatible member engine is used
+- **WHEN** the member provisioner runs on verified Kiri 0.2.1 or 0.2.2 with Linux API 1.47
+- **THEN** it reconciles the original allocation profile without replacing identities or weakening inspected limits
+
+#### Scenario: An unverified engine is presented
+- **WHEN** the Kiri version, operating system or API version is outside the verified set
+- **THEN** member provisioning stops before creating or starting a container
+
+#### Scenario: One member requires recovery
+- **WHEN** the lifecycle service recovers a stopped member in an accepted deployment
+- **THEN** the member keeps its allocation and session data while the running sibling retains its process and access

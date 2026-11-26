@@ -1,4 +1,4 @@
-//! Linux Kiri 0.2.1 provisioning preview. Experimental operator command; it does not enable any host service.
+//! Linux Kiri provisioning preview. Experimental operator command; it does not enable any host service.
 //! Identity is authoritative in runtime_registry; these allocations only reserve host
 //! UID/path ownership. No image pulling, shell commands, volume initialization,
 //! mount creation, container replacement, or production installation occurs here.
@@ -23,7 +23,16 @@ const ENTRYPOINT: &str = "/usr/local/bin/moosuri";
 const API: &str = "/v1.47";
 const BODY_LIMIT: usize = 1 << 20;
 const LABEL: &str = "org.moosuri.runtime";
+// This identifies the persisted allocation contract, not the installed engine.
+// Preserve it across compatible engine updates so existing UID/volume leases
+// are reconciled rather than replaced.
 const PROFILE: &str = "kiri-0.2.1-none-v1";
+
+fn supported_engine(version: &Value) -> bool {
+    matches!(version["KiriVersion"].as_str(), Some("0.2.1" | "0.2.2"))
+        && version["ApiVersion"] == "1.47"
+        && version["Os"] == "linux"
+}
 
 #[derive(Args, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -280,11 +289,8 @@ fn expected_member(args: &Options, initialized: bool) -> Result<(Expected, Engin
         .transpose()?;
     let engine = Engine(args.engine_socket.clone());
     let version = engine.required("GET", "/version", None)?;
-    if version["KiriVersion"] != "0.2.1"
-        || version["ApiVersion"] != "1.47"
-        || version["Os"] != "linux"
-    {
-        return Err("kiri_provision_requires_kiri_0_2_1_linux_api_1_47".into());
+    if !supported_engine(&version) {
+        return Err("kiri_provision_requires_kiri_0_2_1_or_0_2_2_linux_api_1_47".into());
     }
     let image = engine.required("GET", &format!("{API}/images/{}/json", args.image), None)?;
     if image["Id"] != args.image
@@ -430,7 +436,10 @@ fn validate_member_data(
 }
 
 pub(crate) fn validate_limits(a: &Options) -> Result<(), String> {
-    if a.vault_origin.as_deref().is_some_and(|origin| !moosuri_server::personal_tasks::member_vault::valid_origin(origin)) {
+    if a.vault_origin
+        .as_deref()
+        .is_some_and(|origin| !moosuri_server::personal_tasks::member_vault::valid_origin(origin))
+    {
         return Err("kiri_provision_invalid_vault_origin".into());
     }
     if a.enable_local_gws && a.google_sockets_root.is_none() {
@@ -721,7 +730,18 @@ impl Engine {
     ) -> Result<(u16, Value), String> {
         let mut s =
             UnixStream::connect(&self.0).map_err(|_| "kiri_provision_engine_unavailable")?;
-        s.set_read_timeout(Some(Duration::from_secs(10)))
+        // First use can unpack a large member image or wake the Kiri VM.
+        // Keep ordinary inspection bounded at 10s; do not force an operator
+        // retry merely because a cold create/start takes longer than that.
+        let read_seconds = if method == "POST"
+            && (path.starts_with(&format!("{API}/containers/create?"))
+                || path.starts_with(&format!("{API}/containers/")) && path.ends_with("/start"))
+        {
+            30
+        } else {
+            10
+        };
+        s.set_read_timeout(Some(Duration::from_secs(read_seconds)))
             .and_then(|_| s.set_write_timeout(Some(Duration::from_secs(10))))
             .map_err(|_| "kiri_provision_engine_timeout_setup_failed")?;
         let body = body
@@ -800,21 +820,36 @@ fn reconcile(engine: &Engine, e: &Expected, start: bool) -> Result<String, Strin
             "POST",
             &format!("{API}/containers/create?name={}", e.name),
             Some(e.create()),
-        )?;
-        if !created["Warnings"].as_array().is_some_and(|a| a.is_empty()) {
-            return Err("kiri_provision_create_warning".into());
+        );
+        match created {
+            Ok(created) => {
+                if !created["Warnings"].as_array().is_some_and(|a| a.is_empty()) {
+                    return Err("kiri_provision_create_warning".into());
+                }
+                inspect = engine.required("GET", &path, None)?;
+            }
+            Err(error) => {
+                // A cold image can outlive the response deadline. Reconcile
+                // the original name once; never issue another create here.
+                let observed = engine.request("GET", &path, None);
+                inspect = match observed {
+                    Ok((200, value)) => value,
+                    _ => return Err(error),
+                };
+            }
         }
-        inspect = engine.required("GET", &path, None)?;
     } else if status != 200 {
         return Err(format!("kiri_provision_engine_http_{status}"));
     }
     verify_inspect(&inspect, e)?;
     if start && inspect["State"]["Running"] == false {
-        engine.required("POST", &format!("{API}/containers/{}/start", e.name), None)?;
+        let start = engine.required("POST", &format!("{API}/containers/{}/start", e.name), None);
         inspect = engine.required("GET", &path, None)?;
         verify_inspect(&inspect, e)?;
         if inspect["State"]["Running"] != true {
-            return Err("kiri_provision_start_not_running".into());
+            return Err(start
+                .err()
+                .unwrap_or_else(|| "kiri_provision_start_not_running".into()));
         }
     }
     Ok(if inspect["State"]["Running"] == true {
@@ -939,6 +974,24 @@ fn verify_inspect(v: &Value, e: &Expected) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::{os::unix::net::UnixListener, thread};
+    #[test]
+    fn accepts_only_the_two_verified_linux_engines_and_preserves_allocation_contract() {
+        for version in ["0.2.1", "0.2.2"] {
+            assert!(supported_engine(
+                &json!({"KiriVersion":version,"ApiVersion":"1.47","Os":"linux"})
+            ));
+        }
+        for bad in [
+            json!({"Version":"0.2.2","ApiVersion":"1.47","Os":"linux"}),
+            json!({"KiriVersion":"0.2.3","ApiVersion":"1.47","Os":"linux"}),
+            json!({"KiriVersion":"0.2.2","ApiVersion":"1.48","Os":"linux"}),
+            json!({"KiriVersion":"0.2.2","ApiVersion":"1.47","Os":"windows"}),
+        ] {
+            assert!(!supported_engine(&bad));
+        }
+        assert_eq!(expected().reservation()["profile"], "kiri-0.2.1-none-v1");
+        assert_eq!(expected().labels()[LABEL], "kiri-0.2.1-none-v1");
+    }
     fn expected() -> Expected {
         Expected {
             name: "moosuri-member-00000000-0000-0000-0000-000000000001".into(),
@@ -1122,6 +1175,53 @@ mod tests {
         let requests = worker.join().unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].0.starts_with("GET "));
+    }
+    #[test]
+    fn uncertain_create_and_start_are_inspected_without_repeating_writes() {
+        let e = expected();
+        let (_dir, engine, worker) = fake(vec![
+            (404, json!({})),
+            (
+                500,
+                json!({"message":"synthetic lost create acknowledgement"}),
+            ),
+            (200, inspect(&e, false)),
+            (
+                500,
+                json!({"message":"synthetic lost start acknowledgement"}),
+            ),
+            (200, inspect(&e, true)),
+        ]);
+        assert_eq!(reconcile(&engine, &e, true).unwrap(), "running");
+        let requests = worker.join().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|(line, _)| line.starts_with("POST "))
+                .count(),
+            2
+        );
+        assert!(requests[2].0.starts_with("GET "));
+        assert!(requests[4].0.starts_with("GET "));
+    }
+    #[test]
+    fn uncertain_creation_never_adopts_foreign_or_missing_container() {
+        let e = expected();
+        let mut foreign = inspect(&e, false);
+        foreign["Config"]["Labels"]["org.moosuri.account"] = json!(Uuid::new_v4());
+        for response in [(200, foreign), (404, json!({}))] {
+            let (_dir, engine, worker) = fake(vec![(404, json!({})), (500, json!({})), response]);
+            assert!(reconcile(&engine, &e, true).is_err());
+            let requests = worker.join().unwrap();
+            assert_eq!(requests.len(), 3);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|(line, _)| line.starts_with("POST "))
+                    .count(),
+                1
+            );
+        }
     }
     #[test]
     fn missing_member_is_inspected_before_explicit_start() {

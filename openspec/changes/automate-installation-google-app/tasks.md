@@ -15,8 +15,8 @@ individual prerequisite as completion of Google setup):
    single-member routing pending the portable Google transport.
 2. Public browser launcher on verified Kiri — implementation and Linux browser
    acceptance and independent review complete; published as the browser prerequisite.
-3. Member provisioning/lifecycle compatibility with the verified Kiri version,
-   preserving existing allocation identities.
+3. Member provisioning/lifecycle compatibility with Kiri 0.2.2 — implemented
+   and accepted in a disposable Linux guest; existing allocation identities retained.
 4. Public installation packaging and member/attempt-bound fresh official Chrome
    and credential recipient; remove private Python imports and owner socket.
 5. Fresh unbilled Google project, OAuth branding/client and shared installation
@@ -247,3 +247,54 @@ profile-path TOCTOU and load/reliability work remain outside this browser unit.
 The browser prerequisite is published without a production Kiri upgrade.
 Member provisioning on 0.2.2, official Google Chrome, portable recipient delivery,
 clean installation packaging and actual OAuth/GWS acceptance remain open.
+
+
+## 2026-11-26 member engine compatibility
+
+Member provisioning accepts exactly Linux Kiri 0.2.1 or 0.2.2 / API 1.47.
+The historical `kiri-0.2.1-none-v1` allocation label identifies the unchanged
+storage/UID contract; it is not the currently running engine version. The
+existing image, UID, volume, generation, mount and isolation comparisons remain.
+The public browser additionally requires 0.2.2 and its custom seccomp profile.
+
+The first blank member installation exposed a cold-image create taking about
+14 seconds, beyond the original 10-second engine read timeout. The initialized
+volume and created stopped container remained intact; a same-request retry
+completed. The fix gives create/start responses 30 seconds, retains 10 seconds
+for inspection, and re-inspects the original container after an uncertain
+create/start result without repeating the write. Foreign or absent results
+remain failures. Thirteen Linux provisioner tests passed, including uncertain
+create/start recovery, foreign resource rejection and preserved allocation labels.
+
+After removing only that synthetic installation and reloading its image, the
+final source-integrated host binary ran the public `guest-web-invitations.py
+--recovery` harness on Ubuntu 24.04.5 / Kiri 0.2.2. Eight onboarding scenarios
+passed: authenticated invitations, stock timer/capacity waiting, repeat identity,
+password rotation, retry/isolation, second UID/volume, installation conflict and
+absence of passwords from the service journal/queue. Three recovery scenarios
+passed: KR-01 unchanged reconciliation, KR-02 recover A while B keeps its PID,
+and KR-03 daemon restart with the same IDs, complete inspected profiles, mounts
+and member-bound login sessions. The test refuses to restart the engine if any
+container outside those three synthetic members exists.
+
+The member software image was the already built immutable
+`sha256:14ee962e016b7f1e313da829f3966a0b1fb62fc8b3b5dd59643838e6232a902d`;
+no running production container, member data or credentials were copied. These
+are host provisioner/lifecycle checks with the existing member software, not a
+public installer or a fresh end-to-end Google connection. A new installer must
+build/obtain its member software through the public distribution instead.
+
+Independent Claude Sonnet 5.5 / medium found no introduced authentication or
+identity weakening in the Rust changes. Its fixture findings were addressed:
+exact engine inventory before restart, full HostConfig/profile comparisons and
+specific cross-member responses. This check does not claim a live production
+0.2.1-to-0.2.2 upgrade, full guest reboot, cold-start load guarantees, OAuth setup
+or signed artifact attestation. Production remains on 0.2.1 pending the portable
+Google runtime and complete installation integration.
+
+A read-only kernel probe through actual exec processes in the three recovered
+member containers confirmed their distinct configured UIDs, zero capability
+sets, NoNewPrivs=1 and Seccomp=2; read-only root; nodev/nosuid/noexec data, scratch
+and IPC mounts; empty IPv4 route tables; and effective cgroup limits of 128 MiB,
+64 PIDs and `25000 100000` CPU quota/period. This checks effective member-container
+state on this guest, not arbitrary future Kiri releases or other host kernels.

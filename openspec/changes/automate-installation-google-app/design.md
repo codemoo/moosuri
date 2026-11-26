@@ -97,6 +97,24 @@ Application reuse and user consent are independent. Testing audience membership
 must be explicit in status; registering an app alone does not grant access to
 another Google account or make it production verified.
 
+Use External audience for an installation shared by independent Google accounts.
+Personal mode cannot satisfy that contract: Google limits it to the creator and
+does not allow later conversion to External or Internal. An existing application
+must never be silently converted or replaced to avoid an audience restriction.
+
+Capture the new web client's secret into the private registration path at creation.
+Google only reveals its full value once. After an interrupted creation, reconcile
+the stable client name, project and exact callback, then adopt an already committed
+private file when present. If the secret was lost before local commit, use the
+same client's supported secret-rotation flow; do not pretend a masked value is
+recoverable or create another client. Rotation itself needs a pre-write intent,
+bounded reconciliation and explicit handling of Google's two-secret limit. Until
+that recovery is implemented and tested, the client-creation gate stays open.
+
+These provider requirements were rechecked on 2026-11-27 in
+[Google Auth Platform onboarding](https://support.google.com/cloud/answer/15544987?hl=en)
+and [client and secret management](https://support.google.com/cloud/answer/15549257?hl=en).
+
 Official references (checked 2026-11-26):
 [Workspace project setup: billing is optional](https://developers.google.com/workspace/guides/create-project),
 [Resource Manager: project creation does not associate billing](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),

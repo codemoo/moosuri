@@ -95,6 +95,35 @@ fn configure_domain_ports() -> Check<()> {
     ensure(matches(&api(true)?), "kiri_host_domain_ports_not_applied")
 }
 
+/// Chromium's path differs from official Chrome. Ubuntu's Chrome policy does
+/// not grant user namespaces to /usr/lib/chromium/chromium. Install the public
+/// executable-specific admission policy without relaxing host-wide restrictions.
+fn configure_chromium_apparmor() -> Check<()> {
+    use std::io::Write;
+    const POLICY: &[u8] = include_bytes!("../../../deployment/browser/apparmor.moosuri-chromium");
+    let path = Path::new("/etc/apparmor.d/moosuri-chromium");
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            ensure(meta.is_file() && meta.uid() == 0 && meta.nlink() == 1
+                && meta.mode() & 0o022 == 0, "kiri_host_chromium_policy_unsafe")?;
+            ensure(fs::read(path).map_err(|_| "kiri_host_chromium_policy_unreadable")? == POLICY,
+                "kiri_host_chromium_policy_conflict")?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let directory = path.parent().unwrap();
+            let mut file = tempfile::Builder::new().prefix(".moosuri-chromium-")
+                .tempfile_in(directory).map_err(|_| "kiri_host_chromium_policy_write_failed")?;
+            file.write_all(POLICY).and_then(|()| file.as_file().sync_all())
+                .map_err(|_| "kiri_host_chromium_policy_write_failed")?;
+            file.persist_noclobber(path).map_err(|_| "kiri_host_chromium_policy_conflict")?;
+            fs::File::open(directory).and_then(|file| file.sync_all())
+                .map_err(|_| "kiri_host_chromium_policy_write_failed")?;
+        }
+        Err(_) => return Err("kiri_host_chromium_policy_unreadable".into()),
+    }
+    run("apparmor_parser", &["-r", path.to_str().unwrap()])
+}
+
 pub fn run_host(args: &[String]) -> Check<()> {
     ensure(args.is_empty(), "usage: kiri-host")?;
     ensure(
@@ -219,6 +248,7 @@ pub fn run_host(args: &[String]) -> Check<()> {
         "kiri_host_chrome_apparmor_profile_missing",
     )?;
     run("apparmor_parser", &["-r", "/etc/apparmor.d/chrome"])?;
+    configure_chromium_apparmor()?;
     run(
         "systemctl",
         &["enable", "--now", "docker.service", "kiri.service"],

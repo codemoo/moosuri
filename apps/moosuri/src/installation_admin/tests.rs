@@ -63,6 +63,19 @@ async fn actual_installed_private_login_bootstrap_and_temporary_password_boundar
         .await
         .is_err()
     );
+    for _ in 0..2 {
+        let adopted = bootstrap_adopting_password(
+            registry.path(),
+            id,
+            "a@example.test",
+            ipc_root.path(),
+            uid,
+            Zeroizing::new("Synthetic-temporary-password-42".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(adopted.role, "admin");
+    }
     let initial = store
         .login(
             "a@example.test".into(),
@@ -123,5 +136,26 @@ async fn actual_installed_private_login_bootstrap_and_temporary_password_boundar
     for secret in ["Synthetic-changed-password-42", "moosuri_session"] {
         assert!(!bytes.windows(secret.len()).any(|b| b == secret.as_bytes()));
     }
+    // The real HTTP limiter must remain distinguishable from a transient start.
+    let mut limited = false;
+    for _ in 0..20 {
+        let error = bootstrap_adopting_password(
+            registry.path(),
+            id,
+            "a@example.test",
+            ipc_root.path(),
+            uid,
+            Zeroizing::new("Synthetic-wrong-password-42".into()),
+        )
+        .await
+        .err()
+        .expect("wrong password must be refused");
+        if error == "member_login_rate_limited" {
+            limited = true;
+            break;
+        }
+        assert_eq!(error, "member_login_required");
+    }
+    assert!(limited);
     task.abort();
 }

@@ -576,3 +576,90 @@ at `adc8be7` passed host preparation and is building all artifacts in the dispos
 VM. Later host-only revisions are `0429b1c` and `4c246eb`. Completed installation,
 post-probe crash/resume, installed member/Vault scenarios and reboot are not yet
 claimed. Production and public main remain unchanged.
+
+### Empty-server acceptance findings — 2026-11-27
+
+The controlling user journey starts with another person's empty Ubuntu server.
+Existing Mac credentials, developer helpers, owner routing, model worker config,
+Cloud projects and OAuth clients are not installation prerequisites or acceptance
+evidence. OS installation may ask for the administrator identity, public origins
+and TLS choice; provider credentials belong to the later authenticated setup.
+
+The `adc8be7` source build completed all artifacts. Actual Chromium startup then
+failed because Ubuntu's AppArmor policy for Chromium was not loaded by the host
+tool. The host tool now installs and loads the repository's exact Chromium policy
+alongside the official Chrome policy, without weakening the host sandbox. Linux
+build and independent Claude Sonnet 5.5 / medium review passed. Using that updated
+host tool with the already-built bundle allowed both real browser probes to pass.
+This mixed diagnostic run does not close unmodified-source CI-01.
+
+After both probe receipts were saved, the exact installer process was stopped and
+killed, then resumed with the same bundle, inputs and password. It retained the
+installation identity and created the first member. Admin promotion then failed:
+the installer reused the member-allocation request ID for a different registry
+operation. Repeated retries hid the conflict behind HTTP 429. The correction uses
+a stable, domain-separated administrator request derived from the durable receipt
+and retries only startup failures; rate limiting is explicit and terminal. The
+first-admin fix is independently reviewed. Both the stable-request registry case
+and the real private-HTTP temporary-password adoption/replay/429 case passed on
+Linux. The later installer suite passed 22 cases.
+
+The diagnostic guest was completed using the existing authenticated bootstrap
+command with the corrected request identity, retaining the original bundle and
+all member state. An attempt to run a different installer executable against that
+bundle was refused; no artifact integrity guard was weakened. The next real check
+found the gateway crash-looping despite a momentary systemd active state: systemd
+reset the proxy runtime directory's group between the pre-command and ExecStart.
+The unit now declares its group directly. Both public HTTPS endpoints must respond
+before completion is recorded, including completed-install replay. Independent
+Claude review found no blocker; curl is included in the preflight tool list.
+
+With those explicit diagnostic corrections, installed CI-02/03/04/05/06/08 passed:
+HTTPS administrator and single-use Vault handoff; exact replay and conflict refusal;
+timer-prepared second UID/volume with GWS 0.22.0; separate real Kiri recipients;
+cross-member refusal, cancel and logout; no synthetic secret in argv/journal/receipt.
+A real reboot passed CI-07: the receipt, member enrollment, adapter key and both
+browser evidence files retained their hashes, and HTTPS admin/Vault recovered.
+Post-probe crash/resume retained the original adapter key and both probe receipts.
+This is recovery/component evidence. **CI-01 remains open until the final source
+revision installs on a new empty VM without any diagnostic correction.**
+
+Model onboarding remains a separate required usable unit. A source-only audit
+confirmed that the web engine page selects an already-published catalog; it cannot
+create the first provider connection. `runtime-model` is the only shared inference
+service and currently loads fixed member bindings. Implement dynamic enrollment
+using the existing lifecycle member records and registry engine state, start it
+unconfigured without credentials, and expose first provider registration to the
+authenticated administrator. Add the service, stable fingerprint key, member
+socket mounts and text-preview capability to the same installer. A new registry
+or a second inference framework is unnecessary. Validate first-member chat,
+second-member automatic attachment, disable/change, restart, generation fencing
+and provider failure with Claude Sonnet 5.5 / medium. Public-installer convergence
+and a clean-source rerun remain required after integration.
+
+### Same-browser SDK preparation foundation — 2026-11-27
+
+The private worker/controller now carries fixed typed SDK actions after the Vault
+Google login, with a stable project identity, administrator heartbeat and no CLI
+or CDP input from a member. The authenticated recipient owns the run identity.
+The controller persists SDK intent before dispatch. A failed or killed cleanup
+leaves a durable fence across lease expiry. Proven root-broker teardown records
+every closed browser run, including before a late claim/begin commits, and never
+clears a successor. Both systemd service templates allow the SDK cleanup grace.
+No HTTP or operator command bypasses this fence.
+
+Independent Claude reviews found and led to fixes for lost cleanup proof, lease-only
+recovery, late start/claim after teardown, mismatched run IDs and unused-SDK exit
+classification. Linux registry cases: 16 passed; relay: 2 passed; controller: 4
+passed. Worker/SDK suite: 36 passed, 1 ignored, 1 project-probe fixture failed; that
+single failed case passed on its focused rerun. Its transient cause is unproven,
+so the broad run is not described as fully green. Earlier affected capsule cases
+passed 31. Real Kiri/tini 0, 7 and SIGKILL/137 exit propagation was checked separately.
+
+This foundation is not called by the user connection route yet. Console branding,
+External audience, web client creation/secret recovery, atomic shared registration,
+same-profile service consent and real Gmail read remain open. The research login
+expired at Google device verification; there is no live authenticated research
+session to reuse. Actual SDK revoke-failure/forced-kill acceptance and recovery from
+truly unknown remote revocation also remain open. Production and public main are
+unchanged; migration 8 and these checkpoint fields have never been deployed.

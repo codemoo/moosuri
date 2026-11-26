@@ -54,6 +54,9 @@ origins, member limits and administrator identity. Installation and first-member
 request IDs stay the same. Changed inputs are refused; do not delete private
 state to force a retry. Root-owned supplied certificates are supported with the
 paired `--tls-certificate` and `--tls-key` options instead of Certbot.
+If a previous failed attempt exhausted member login attempts and reports
+`member_login_rate_limited`, wait five minutes before resuming the same command.
+Do not replace the password or delete the member to work around the limiter.
 
 This unit prepares installation, browser, Vault and GWS transport. It does not
 claim a connected Google account: new app creation, actual consent and Gmail

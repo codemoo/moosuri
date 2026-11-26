@@ -81,6 +81,49 @@ fn receipt() -> Receipt {
 }
 
 #[test]
+fn first_admin_has_a_distinct_replayable_registry_operation() {
+    use moosuri_core::{AccountSummary, Role, SessionView};
+    use moosuri_store::runtime_registry::{self, admin};
+    let tmp = tempfile::tempdir().unwrap();
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let r = receipt();
+    let restored: Receipt = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+    assert_eq!(r.admin_request(), restored.admin_request());
+    assert_ne!(r.admin_request(), r.request_id);
+    assert_eq!(
+        r.admin_request().to_string(),
+        "d7c6651a-ee72-48ac-b436-2ec8871c7fc1"
+    );
+    let a = runtime_registry::reserve(tmp.path(), r.request_id, r.admin_email.to_ascii_lowercase())
+        .unwrap();
+    runtime_registry::set_routing(tmp.path(), &a, true).unwrap();
+    let view = SessionView {
+        user: AccountSummary {
+            id: a.account_id.clone(),
+            name: r.admin_name.clone(),
+            email: r.admin_email.to_ascii_lowercase(),
+            role: Role::Member,
+            must_change_password: false,
+        },
+        password_change_required: false,
+        chat_draft_scope: None,
+    };
+    assert!(matches!(
+        admin::bootstrap(tmp.path(), r.request_id, &a, &view),
+        Err(moosuri_store::StoreError::Conflict)
+    ));
+    let first = admin::bootstrap(tmp.path(), r.admin_request(), &a, &view).unwrap();
+    assert_eq!(first.role, "admin");
+    let again = admin::bootstrap(tmp.path(), restored.admin_request(), &a, &view).unwrap();
+    assert_eq!(first.role_revision, again.role_revision);
+    assert_eq!(
+        runtime_registry::reserve(tmp.path(), r.request_id, r.admin_email.to_ascii_lowercase())
+            .unwrap(),
+        a
+    );
+}
+
+#[test]
 fn unsupported_hosts_and_uid_or_group_inputs_are_clear() {
     assert!(parse_os_release("ID=ubuntu\nVERSION_ID=\"24.04\"\n").is_ok());
     for bad in [

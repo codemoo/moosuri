@@ -52,8 +52,9 @@ kernel/AppArmor policy, and permission to build the optional Chromium image.
 On Ubuntu 24.04+, the capsule executable needs an AppArmor profile granting
 `userns`. The supplied [executable policy](apparmor.moosuri-chromium) attaches only
 to `/usr/lib/chromium/chromium`, following Ubuntu's application-specific browser
-policy. Install it as `/etc/apparmor.d/moosuri-chromium` and load it with
-`apparmor_parser -r /etc/apparmor.d/moosuri-chromium` during host provisioning.
+policy. The source installer's `xtask kiri-host` installs it atomically as
+`/etc/apparmor.d/moosuri-chromium` and loads it with `apparmor_parser -r`.
+For manual provisioning, install and load that same file before starting a capsule.
 Review an existing profile before replacing it. This is a host-wide path policy,
 not an image pin: a host process executing that path from an unconfined task can
 also gain user-namespace admission. Its `unconfined` flag supplies no file/network

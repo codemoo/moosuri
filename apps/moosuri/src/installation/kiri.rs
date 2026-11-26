@@ -92,6 +92,19 @@ struct Receipt {
     complete: bool,
 }
 impl Receipt {
+    /// A separate, stable operation identity for first-admin promotion. The
+    /// registry deliberately refuses reusing a member-allocation request here.
+    /// Deriving from the durable receipt also resumes older incomplete installs.
+    fn admin_request(&self) -> Uuid {
+        use sha2::{Digest, Sha256};
+        let mut digest = Sha256::new();
+        digest.update(b"moosuri:kiri-install:first-admin:v1\0");
+        digest.update(self.installation_id.as_bytes());
+        digest.update(self.request_id.as_bytes());
+        let mut bytes = [0; 16];
+        bytes.copy_from_slice(&digest.finalize()[..16]);
+        uuid::Builder::from_random_bytes(bytes).into_uuid()
+    }
     /// Operator inputs that must not change on a resumed installation.
     fn inputs(&self) -> (String, &str, &str, &str, &str, u32, u64, &str) {
         (
@@ -468,6 +481,49 @@ fn start(exec: &dyn Exec, unit: &str) -> Result<()> {
     systemctl(exec, &["is-active", "--quiet", unit], &reason)
 }
 
+/// A transient systemd active state does not prove the gateway can serve HTTP.
+/// Check both public routes through the installed TLS proxy before completion.
+fn web_ready(exec: &dyn Exec, r: &Receipt) -> Result<()> {
+    let (cert, _) = r.tls().paths();
+    for origin in [&r.public_origin, &r.vault_origin] {
+        let host = render::host_of(origin)?;
+        let resolve = format!("{host}:443:127.0.0.1");
+        let url = format!("{origin}/");
+        exec.run(
+            "curl",
+            &args(&[
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--output",
+                "/dev/null",
+                "--noproxy",
+                "*",
+                "--resolve",
+                &resolve,
+                "--cacert",
+                &cert,
+                "--connect-timeout",
+                "3",
+                "--max-time",
+                "5",
+                "--retry",
+                "5",
+                "--retry-delay",
+                "1",
+                "--retry-max-time",
+                "25",
+                "--retry-all-errors",
+                &url,
+            ]),
+            Input::None,
+            Duration::from_secs(35),
+        )?
+        .ok("kiri_install_web_not_ready")?;
+    }
+    Ok(())
+}
+
 fn reload_nginx(exec: &dyn Exec) -> Result<()> {
     exec.run("nginx", &args(&["-t"]), Input::None, QUICK)?
         .ok("kiri_install_nginx_config_rejected")?;
@@ -760,10 +816,10 @@ async fn complete_admin(r: &Receipt, secret: &Zeroizing<String>) -> Result<()> {
     }
     let uid = *r.uid_pool.first().ok_or("kiri_install_receipt_invalid")?;
     let mut last = String::new();
-    for _ in 0..40 {
+    for _ in 0..10 {
         match crate::installation_admin::bootstrap_adopting_password(
             registry,
-            r.request_id,
+            r.admin_request(),
             &r.admin_email,
             Path::new("/srv/moosuri-storage/ipc"),
             uid,
@@ -772,11 +828,20 @@ async fn complete_admin(r: &Receipt, secret: &Zeroizing<String>) -> Result<()> {
         .await
         {
             Ok(_) => return Ok(()),
-            // A different secret on retry cannot be silently replaced.
-            Err(e) if e == "member_login_required" || e == "member_password_adoption_rejected" => {
-                return Err(format!("kiri_install_admin_{e}"));
+            // Only service startup is retriable. Authorization, malformed
+            // replies and request conflicts must retain their original cause.
+            Err(e)
+                if matches!(
+                    e.as_str(),
+                    "allocation_not_ready"
+                        | "invalid_member_socket"
+                        | "member_unavailable"
+                        | "member_login_unavailable"
+                ) =>
+            {
+                last = e
             }
-            Err(e) => last = e,
+            Err(e) => return Err(format!("kiri_install_admin_{e}")),
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
@@ -885,7 +950,7 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
         "ip",
         "nginx",
         "systemctl",
-        "chgrp",
+        "curl",
         "mkfs.ext4",
         "blkid",
         "openssl",
@@ -907,6 +972,7 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
                 return Err("kiri_install_conflicting_existing_installation".into());
             }
             if existing.complete {
+                web_ready(&exec, &existing)?;
                 println!("This Kiri installation is already complete; nothing was changed.");
                 return Ok(());
             }
@@ -1032,6 +1098,7 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
     }
     configure_tls(&layout, &exec, &receipt, o.certbot_email.as_deref())?;
     start(&exec, "moosuri-kiri-onboard.timer")?;
+    web_ready(&exec, &receipt)?;
 
     let mut done = receipt.clone();
     done.complete = true;

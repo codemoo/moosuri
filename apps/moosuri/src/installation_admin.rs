@@ -268,6 +268,9 @@ async fn bootstrap_inner(
     )
     .await?;
     if status != StatusCode::OK {
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Err("member_login_rate_limited".into());
+        }
         if adopt && !matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
             return Err("member_login_unavailable".into());
         }

@@ -361,7 +361,7 @@ impl CapsuleReader {
         cleanup
     }
 }
-fn free_member_slot(prefix: &str, names: &[u8]) -> Result<String, BrowserError> {
+pub(super) fn free_member_slot(prefix: &str, names: &[u8]) -> Result<String, BrowserError> {
     let names = std::str::from_utf8(names).map_err(|_| BrowserError::Protocol)?;
     let slots = [format!("{prefix}0"), format!("{prefix}1")];
     if names

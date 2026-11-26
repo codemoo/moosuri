@@ -1,0 +1,9 @@
+# Host-wide executable-path user namespace admission, not file/network
+# confinement or image attestation. The Kiri capsule enforces those boundaries.
+# Use the distribution's existing chrome profile when present. Never load a
+# second differently named profile for the same executable attachment path.
+abi <abi/4.0>,
+include <tunables/global>
+profile chrome /opt/google/chrome/chrome flags=(unconfined) {
+  userns,
+}

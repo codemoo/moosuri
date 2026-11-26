@@ -129,3 +129,31 @@ SHALL be stated separately.
 #### Scenario: One member requires recovery
 - **WHEN** the lifecycle service recovers a stopped member in an accepted deployment
 - **THEN** the member keeps its allocation and session data while the running sibling retains its process and access
+
+
+### Requirement: A fresh capsule owns each authentication secret
+The installation SHALL use a fresh official Chrome capsule and a one-use guest
+recipient for every Google connection. Ciphertext SHALL authenticate the
+installation, account, tenant, volume, generation, authorization epoch,
+challenge, member and selected Google email, and callback origin. The private
+key and decrypted password SHALL stay inside that capsule.
+
+#### Scenario: A vault prepares delivery
+- **WHEN** the gateway reserves a recipient
+- **THEN** Chrome remains stopped until successful decryption and a separate reauthorized release
+
+#### Scenario: A different allocation receives the packet
+- **WHEN** another allocation, challenge or recipient key attempts decryption
+- **THEN** the packet is rejected before Chrome starts
+
+#### Scenario: A Google password page identifies another account
+- **WHEN** the visible password recipient differs from the selected vault account or Google rejects the browser
+- **THEN** no password is submitted and the attempt ends without fallback
+
+#### Scenario: A connection is cancelled
+- **WHEN** the controller closes or a termination signal arrives
+- **THEN** the owned browser and temporary profile are removed, another member remains unaffected, and a success receipt is not emitted
+
+#### Scenario: The provider returns to the callback
+- **WHEN** the page contains a denial or a mismatched callback state
+- **THEN** the worker does not report return success; only the gateway's actual callback processing can grant a connection

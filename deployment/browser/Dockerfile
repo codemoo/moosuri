@@ -18,6 +18,19 @@ RUN mkdir -p /profiles/persistent && chown 10001:10001 /profiles/persistent && c
     && chmod 0555 /capsule/entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "--", "/capsule/entrypoint.sh"]
 
+FROM runtime AS google-auth
+# Google's official Chrome Linux distribution currently supports amd64. Never
+# silently replace this authentication runtime with distro Chromium on ARM.
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && apt-get update && apt-get install -y --no-install-recommends curl openssl xvfb xauth x11-utils \
+    && curl -fsSL --retry 2 https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.88-1_amd64.deb -o /tmp/chrome.deb \
+    && echo 'a656b2db00a8cb7f13a1d754f6aad91f84014906452c6dfb7f3ead93035da03b  /tmp/chrome.deb' | sha256sum -c - \
+    && apt-get install -y --no-install-recommends /tmp/chrome.deb \
+    && test "$(google-chrome-stable --product-version)" = 158.0.8127.88 \
+    && apt-get purge -y chromium chromium-common curl \
+    && rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
+CMD ["--google-auth"]
+
 FROM runtime AS test
 RUN apt-get update && apt-get install -y --no-install-recommends python3 openssl libnss3-tools && rm -rf /var/lib/apt/lists/*
 # This generated CA/key pair belongs only to the test image and owned CONNECT

@@ -1,6 +1,24 @@
 //! Check effective kernel restrictions before starting a browser, not just
 //! options echoed by the container engine.
 #[cfg(target_os = "linux")]
+pub(super) fn ephemeral_auth_storage() -> bool {
+    use std::mem::MaybeUninit;
+    std::fs::read_to_string("/sys/fs/cgroup/memory.swap.max").is_ok_and(|v| v.trim() == "0")
+        && [c"/tmp", c"/profiles"].iter().all(|path| {
+            let mut stat = MaybeUninit::<libc::statfs>::uninit();
+            // SAFETY: static terminated paths; read the structure only on success.
+            unsafe {
+                libc::statfs(path.as_ptr(), stat.as_mut_ptr()) == 0
+                    && stat.assume_init().f_type == libc::TMPFS_MAGIC
+            }
+        })
+}
+#[cfg(not(target_os = "linux"))]
+pub(super) fn ephemeral_auth_storage() -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn enforced() -> bool {
     use std::{ffi::CStr, mem::MaybeUninit};
     fn mounted_with(path: &CStr, required: libc::c_ulong) -> bool {

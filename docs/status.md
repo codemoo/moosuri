@@ -6,6 +6,8 @@
 
 공개 Rust 브라우저 실행기는 별도 시험 환경에서 Kiri 0.2.2와 Docker의 실제 실행·격리 검증을 마쳤다. 고정 엔진 소켓, 실제 커널 제한과 두 회원의 브라우저 분리·종료를 검사한다. 운영 Kiri 0.2.1은 그대로이며, 이 Chromium 기반 조회 실행기는 Google 로그인을 위한 전용 Chrome·OAuth 자동 설정을 아직 대체하지 않는다. [진행 순서와 Linux 증적](../openspec/changes/automate-installation-google-app/tasks.md#2026-11-26-public-browser-prerequisite) 회원 준비 도구도 Kiri 0.2.2에서 관리자·두 회원 생성과 독립 복구·엔진 재시작을 검증했다. 첫 이미지 생성의 응답 제한 문제를 수정했으며, 운영 엔진은 아직 변경하지 않았다.
 
+공개 소스의 새 Google 인증 실행기는 공식 Chrome 158과 일회용 수신 키를 사용한다. Linux Docker와 Kiri 0.2.2에서 암호문 전달·계정 불일치·기기 확인·동일 프로필 동의·취소·정리 10개 합성 시나리오를 확인했다. 실제 Google 서비스가 아닌 격리된 시험 공급자 결과다. 게이트웨이·Vault 통합, OAuth 앱 자동 생성, 빈 서버 설치와 운영 전환은 계속 진행 중이다. [인증 실행기 검증](../openspec/changes/automate-installation-google-app/tasks.md#portable-google-authentication-runtime)
+
 ## 운영 중인 Kiri
 
 11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트에 Google 로그인 항목을 암호화 저장했다. Google Workspace 설치 앱과 회원 권한은 미등록이다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)

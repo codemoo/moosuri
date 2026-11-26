@@ -116,6 +116,13 @@ async fn main() {
         println!("{proxy}");
         return;
     }
+    if std::env::args().len() == 2 && std::env::args().nth(1).as_deref() == Some("--google-auth") {
+        std::process::exit(if moosuri_connectors::browser::google_auth::serve().await {
+            0
+        } else {
+            1
+        });
+    }
     let workspace = std::env::args().nth(1).as_deref() == Some("--workspace");
     if std::env::args().len() > 2 || (std::env::args().nth(1).is_some() && !workspace) {
         eprintln!("unsupported worker argument");

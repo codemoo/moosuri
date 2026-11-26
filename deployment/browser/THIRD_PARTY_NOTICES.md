@@ -26,3 +26,10 @@ compatibility changes. The test worker checks the actual clone3 denial.
 
 This attribution and the included license apply to both profiles; they do not
 imply Microsoft or Playwright endorses moosuri or its containment claims.
+
+
+The optional `google-auth` image downloads Google Chrome directly from Google's
+Debian repository. Chrome is governed by Google's terms and its included
+third-party notices, not the Moosuri source license. The repository does not
+vendor Chrome binaries or replace their license. See
+<https://www.google.com/chrome/terms/>.

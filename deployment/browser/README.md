@@ -280,3 +280,35 @@ use but do not cap cookies/site storage. Do not describe this option as indefini
 or guaranteed crash-durable login retention. The synthetic smoke now exercises
 persistent-cookie continuity across worker restart and requires a blank recovery,
 no prior GET/POST replay and invalid old frame tokens.
+
+
+## Google authentication runtime (integration in progress)
+
+`Dockerfile --target google-auth` packages official Google Chrome
+158.0.8127.88 (amd64 only), Xvfb, OpenSSL and the Rust `--google-auth` worker.
+It has no private skill, Python runtime or persistent browser profile. This is
+an authentication component; the public installer and production gateway are
+not yet wired to it. See the [open integration work](../../openspec/changes/automate-installation-google-app/tasks.md#portable-google-authentication-runtime).
+
+The typed `CapsuleReader::start_google` interface requires a verified Kiri 0.2.2
+configuration, a matching installation identity and no workspace recovery. It
+prepares a public recipient before Chrome starts, waits for encrypted delivery
+and a separate release, then allows only fixed login/consent operations. The
+caller must authenticate the current member/session and obtain authoritative
+OAuth configuration. A worker return receipt never substitutes for the actual
+OAuth callback. Two installation-wide engine slots bound concurrency; an orphan
+occupies its slot until explicitly reconciled, rather than being silently adopted.
+
+Ubuntu hosts may already provide the AppArmor `chrome` profile granting Chrome
+user namespaces. Reuse it. Install `apparmor.chrome` only if that profile is
+absent; never attach a second differently named profile to the same Chrome
+executable. This host-wide path rule is not capsule attestation. The actual
+seccomp/cgroup/network restrictions remain mandatory.
+
+Build the separate `google-auth-test.Dockerfile` with
+`--build-arg GOOGLE_IMAGE=<built-google-auth-image>` for synthetic acceptance.
+Run `google-auth-smoke.py --engine docker --image sha256:<test-image>`; on Kiri,
+use `--engine kiri --launcher /absolute/google_capsule_smoke` after building the
+Rust example. The fixture uses test TLS certificates and synthetic credentials,
+never real Google accounts. Test Python/cryptography are contributor-only.
+Do not deploy this test image or its trust store.

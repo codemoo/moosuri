@@ -4,6 +4,7 @@
 pub mod capsule;
 mod cdp;
 mod confinement;
+pub mod google_auth;
 mod net;
 pub mod proxy;
 pub mod workspace;
@@ -120,6 +121,44 @@ pub struct BrowserSession {
     javascript_enabled: bool,
 }
 
+// Own the process group from spawn, including cancellation before a complete
+// BrowserSession exists. A Child's kill_on_drop alone kills only its leader.
+struct StartingChild(Option<Child>, Option<u32>);
+impl StartingChild {
+    fn new(child: Child) -> Self {
+        let pid = child.id();
+        Self(Some(child), pid)
+    }
+    fn take(mut self) -> Child {
+        self.1 = None;
+        self.0.take().expect("owned browser child")
+    }
+}
+impl std::ops::Deref for StartingChild {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        self.0.as_ref().expect("owned browser child")
+    }
+}
+impl std::ops::DerefMut for StartingChild {
+    fn deref_mut(&mut self) -> &mut Child {
+        self.0.as_mut().expect("owned browser child")
+    }
+}
+impl Drop for StartingChild {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.1 {
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.start_kill();
+        }
+    }
+}
+
 impl BrowserSession {
     pub async fn launch(
         config: BrowserConfig,
@@ -132,9 +171,18 @@ impl BrowserSession {
         cancellation: CancellationToken,
         lifetime: Duration,
     ) -> Result<Self, BrowserError> {
-        capsule_health(&config)?;
+        Self::launch_mode(config, cancellation, lifetime, false).await
+    }
+    async fn launch_mode(
+        config: BrowserConfig,
+        cancellation: CancellationToken,
+        lifetime: Duration,
+        google_auth: bool,
+    ) -> Result<Self, BrowserError> {
+        capsule_health_mode(&config, google_auth)?;
         // Only the dedicated workspace worker can opt into the fixed volume profile.
-        let persistent = lifetime > Duration::from_secs(120)
+        let persistent = !google_auth
+            && lifetime > Duration::from_secs(120)
             && std::env::var("MOOSURI_BROWSER_PROFILE").ok().as_deref() == Some("bounded");
         let deadline = Instant::now() + lifetime;
         if cancellation.is_cancelled() {
@@ -172,7 +220,7 @@ impl BrowserSession {
                 }
             }
         }
-        let preferences = json!({"session":{"restore_on_startup":5},"profile":{"default_content_setting_values":{"javascript": if config.javascript_enabled {1} else {2},"automatic_downloads":2,"notifications":2,"geolocation":2,"media_stream_mic":2,"media_stream_camera":2,"popups":2}}});
+        let preferences = json!({"credentials_enable_service":false,"autofill":{"profile_enabled":false,"credit_card_enabled":false},"session":{"restore_on_startup":5},"profile":{"password_manager_enabled":false,"default_content_setting_values":{"javascript": if config.javascript_enabled {1} else {2},"automatic_downloads":2,"notifications":2,"geolocation":2,"media_stream_mic":2,"media_stream_camera":2,"popups":2}}});
         tokio::fs::write(profile.join("Default/Preferences"), preferences.to_string())
             .await
             .map_err(|_| BrowserError::Setup)?;
@@ -182,7 +230,6 @@ impl BrowserSession {
             .env("PATH", "/usr/bin:/bin")
             .env("LANG", "C.UTF-8")
             .env("HOME", &profile)
-            .arg("--headless=new")
             .arg("--remote-debugging-address=127.0.0.1")
             .arg("--remote-debugging-port=0")
             .arg(format!("--user-data-dir={}", profile.display()))
@@ -208,11 +255,18 @@ impl BrowserSession {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
+        if google_auth {
+            command
+                .env("DISPLAY", ":99")
+                .env("XAUTHORITY", "/tmp/moosuri-google-display/Xauthority");
+        } else {
+            command.arg("--headless=new");
+        }
         // No --no-sandbox or --disable-setuid-sandbox fallback is permitted.
         #[cfg(unix)]
         command.process_group(0);
         let mut child = match command.spawn() {
-            Ok(child) => child,
+            Ok(child) => StartingChild::new(child),
             Err(_) => {
                 if !persistent {
                     let _ = tokio::fs::remove_dir_all(&profile).await;
@@ -277,7 +331,7 @@ impl BrowserSession {
                 return Err(BrowserError::Setup);
             }
         }
-        let child = Arc::new(Mutex::new(Some(child)));
+        let child = Arc::new(Mutex::new(Some(child.take())));
         let watched = child.clone();
         let stop = cancellation.clone();
         let watchdog = tokio::spawn(async move {
@@ -707,7 +761,10 @@ fn capsule_status_confined(status: &str) -> bool {
     .all(|expected| status.lines().any(|line| line == *expected))
 }
 
-fn capsule_health(config: &BrowserConfig) -> Result<(), BrowserError> {
+fn capsule_health_mode(config: &BrowserConfig, google_auth: bool) -> Result<(), BrowserError> {
+    if google_auth && !confinement::ephemeral_auth_storage() {
+        return Err(BrowserError::IsolationRequired);
+    }
     if !cfg!(target_os = "linux") {
         return Err(BrowserError::IsolationRequired);
     }
@@ -735,7 +792,12 @@ fn capsule_health(config: &BrowserConfig) -> Result<(), BrowserError> {
     }
     if !marker_matches(&marker, config.proxy)
         || config.profile_root != std::path::Path::new("/profiles")
-        || config.chromium != std::path::Path::new("/usr/bin/chromium")
+        || config.chromium
+            != std::path::Path::new(if google_auth {
+                "/usr/bin/google-chrome-stable"
+            } else {
+                "/usr/bin/chromium"
+            })
     {
         return Err(BrowserError::IsolationRequired);
     }

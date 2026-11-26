@@ -54,6 +54,30 @@ workflow decisions belong in Rust. React shows progress and recovery in the
 same Google connection flow. No Cloud Shell, local Mac credential dependency,
 model-visible password, raw Console trace or client-secret download is required.
 
+### Portable authentication worker
+
+The public Rust worker runs inside a fresh Kiri capsule. It prepares a one-use
+RSA-3072 recipient before starting Chrome; only the public SPKI leaves the
+capsule. Retain the vault's RSA-OAEP-SHA256/AES-256-GCM envelope, with a new
+versioned binding covering installation, account, tenant, volume, generation,
+authorization epoch, challenge, member email, selected Google email and callback
+origin. The private key exists only in the capsule's private tmpfs and is removed
+when the attempt exits. OpenSSL supplies RSA operations; ring supplies AES-GCM.
+No host key enrollment or private Python module is a runtime dependency.
+
+An authenticated gateway reserves the attempt, transports its public recipient
+to the vault, then forwards the vault ciphertext. Successful decryption is not
+authorization to open Chrome: the worker waits for a separate release after the
+gateway rechecks the exact member/session/allocation. Connection loss, malformed
+messages or deadline expiry end the worker. Only enumerated phase receipts leave
+it; CDP, provider page contents, passwords and cookies remain inside.
+
+The official Chrome build runs with its sandbox and a private X display; it is
+separate from the public research browser protocol. The same ephemeral profile
+must serve account authentication, SDK setup, Console setup and member consent.
+There is no general script or browser-input method on the authentication wire.
+Provider rejection is terminal, and a device challenge remains a visible wait.
+
 Before external writes, recheck the initiating administrator and installation
 identity. Bind the client to the server's HTTPS callback. Persist provider
 resource identifiers, pre-write intentions and checkpoints without secrets so a lost response does

@@ -1,7 +1,9 @@
 //! Trusted fixed Docker launcher for one unauthenticated rendered-page read.
 //! No command, mount, environment, action or tenant comes from model arguments.
 use super::{BrowserError, net::public_url, private_proxy};
+mod google;
 pub(super) mod workspace;
+pub use google::{GoogleAttempt, GooglePhase};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -310,6 +312,16 @@ impl CapsuleReader {
         name: &str,
         profile: Option<Uuid>,
     ) -> Command {
+        self.worker_command_mode(account, read, name, profile, false)
+    }
+    fn worker_command_mode(
+        &self,
+        account: Uuid,
+        read: Uuid,
+        name: &str,
+        profile: Option<Uuid>,
+        google_auth: bool,
+    ) -> Command {
         #[cfg(test)]
         if let Some(f) = &self.fixture {
             let mut c = Command::new("/bin/sh");
@@ -379,6 +391,9 @@ impl CapsuleReader {
             .arg(format!("--label=io.moosuri.browser.workspace={workspace}"))
             .arg(format!("--label=io.moosuri.browser.account={account}"))
             .arg("--label=io.moosuri.browser.kind=bounded-profile-v1");
+        }
+        if google_auth {
+            c.arg("--memory-swap=768m");
         }
         c.arg(&self.config.image_id);
         c

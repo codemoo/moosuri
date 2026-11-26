@@ -298,3 +298,65 @@ sets, NoNewPrivs=1 and Seccomp=2; read-only root; nodev/nosuid/noexec data, scra
 and IPC mounts; empty IPv4 route tables; and effective cgroup limits of 128 MiB,
 64 PIDs and `25000 100000` CPU quota/period. This checks effective member-container
 state on this guest, not arbitrary future Kiri releases or other host kernels.
+
+
+## Portable Google authentication runtime
+
+The public Rust worker and typed Kiri launcher now replace the private browser
+modules at the **runtime component** boundary. They do not yet replace the
+production gateway/owner helper or close the blank-install exit gate.
+
+- [x] Guest-only RSA-3072 recipient with allocation/epoch/challenge/origin binding.
+- [x] Vault ciphertext delivery and a separate authorized release before Chrome.
+- [x] Official Chrome 158.0.8127.88 on private Xvfb/tmpfs with zero swap, bounded
+  processes/memory, sandbox, no persistent profile or password manager.
+- [x] Fixed account and consent operations; no general CDP/script protocol.
+- [x] Cancellation, provider denial, wrong callback state and owned cleanup.
+- [x] Linux real-browser fixture and independent Claude review.
+- [ ] Authenticated installation socket, gateway reservations and dynamic vault
+  recipient integration; development drafts remain unpublished until accepted.
+- [ ] Same-browser SDK/Console setup, public installer, real two-member Google
+  consent/GWS read and matched production deployment.
+
+Final runtime evidence on 2026-11-26: Linux Rust browser suite **57 passed**,
+including real Node WebCrypto/Rust interoperability and browser callback script
+execution. `google-auth-smoke.py` passed GR-01–10 using Docker and the real Rust
+Kiri launcher on Ubuntu 24.04.5/kernel 6.8/Kiri 0.2.2. Only synthetic accounts,
+passwords and TLS provider responses were used. The test proxy cannot forward
+to Google or the public internet.
+
+| Scenario | Observed result |
+| --- | --- |
+| GR-01 | Ciphertext to official Chrome login and same-profile consent |
+| GR-02 | Device-verification wait and continuation |
+| GR-03/04 | Mismatched account and rejected browser receive no password |
+| GR-05 | Changed allocation cannot decrypt or start Chrome |
+| GR-06 | Stale challenge cannot release Chrome |
+| GR-07 | Cancelling one member preserves a sibling attempt |
+| GR-08 | Exact provider effects and no remaining owned authentication container |
+| GR-09 | EOF and SIGTERM abort before password delivery |
+| GR-10 | Denied and wrong-state callbacks never report success |
+
+The fixture caught a duplicate JavaScript declaration in callback checking and
+an earlier Tokio stdin shutdown hang; both were fixed. The launcher fixture
+initially passed a lab-user-owned seccomp file to a root process, correctly
+failing closed. It now creates an owner-only fixture copy. Docker can close its
+attach stream on SIGTERM without a receipt; the test checks nonzero exit and
+container removal, never interpreting EOF as successful teardown.
+
+Test image: `sha256:3a3bdbfc07ffe865019d7e50a1c11799ba1d9088ce8a161ed7ad7a7bbbf229ef`.
+The official Chrome Debian package is pinned by version and SHA-256 in the
+Dockerfile. Images are built from public source; no image was pushed or deployed.
+
+An initial large Claude review timed out. A bounded independent Claude Sonnet
+5.5 / medium review of the launcher, worker, crypto, Chrome adapter and callback
+script found no introduced high/medium defects. Earlier reviews covered the
+remaining confinement/account/consent code. Low-priority diagnostic masking and
+conservative timeout observations are retained for later troubleshooting; they
+do not establish or block provider acceptance. Review does not cover the later
+unpublished gateway/Vault draft.
+
+Ubuntu already provided `/etc/apparmor.d/chrome`. Loading another differently
+named profile for the same executable caused a userns transition denial. Reuse
+that distro profile; `apparmor.chrome` is a fallback only. This is host path-based
+userns admission, not image attestation or a file/network sandbox.

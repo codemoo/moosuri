@@ -168,8 +168,8 @@ pub fn current(root: &Path, s: &AdminSession) -> Result<Option<Setup>> {
 /// restarts; a second claim while another lease is live is refused. A changed Google account
 /// or callback is refused too, except for a claim after the old lease ended while the
 /// checkpoint is still `Project` with no intent (nothing was written): that corrects the
-/// identity and keeps the same setup id. Claiming an already `Registered` checkpoint just
-/// returns it.
+/// identity and keeps the same setup id. Use `current` for a completed installation;
+/// `claim` always reserves a new run, including for a Registered checkpoint.
 pub fn claim(
     root: &Path,
     s: &AdminSession,
@@ -186,7 +186,7 @@ pub fn claim(
     check(&tx, s)?;
     let now = crate::now()?;
     let reused: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM installation_google_bootstrap_runs WHERE run_id=?1)",
+        "SELECT EXISTS(SELECT 1 FROM installation_google_bootstrap_runs WHERE run_id=?1) OR EXISTS(SELECT 1 FROM installation_google_bootstrap_sdk_closed WHERE run_id=?1)",
         [run.to_string()],
         |r| r.get(0),
     )?;
@@ -202,6 +202,15 @@ pub fn claim(
             |r| r.get(0),
         )?;
         if busy {
+            return Err(StoreError::Conflict);
+        }
+        // An unresolved temporary SDK grant outlives the ordinary lease.
+        let pending: bool = tx.query_row(
+            "SELECT sdk_run IS NOT NULL FROM installation_google_bootstrap WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )?;
+        if pending {
             return Err(StoreError::Conflict);
         }
         // Identity may be corrected only before any provider write was even attempted
@@ -310,12 +319,99 @@ pub fn register<T>(
 /// run cannot release a successor.
 pub fn release(root: &Path, s: &AdminSession, run: Uuid) -> Result<()> {
     leased(root, s, run, |tx, _, _| {
+        if sdk_pending(tx)?.is_some() {
+            return Err(StoreError::Conflict);
+        }
         tx.execute(
             "UPDATE installation_google_bootstrap SET lease_until=0 WHERE singleton=1",
             [],
         )?;
         Ok(())
     })
+}
+
+fn sdk_pending(c: &Connection) -> Result<Option<String>> {
+    let row: Option<Option<String>> = c
+        .query_row(
+            "SELECT sdk_run FROM installation_google_bootstrap WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(row.flatten())
+}
+
+/// Private root-broker observation, never an HTTP/operator API. Lookup by the
+/// authenticated browser challenge lets teardown acknowledge even if the peer
+/// disappears after begin_sdk commits but before Authorize arrives. This does
+/// not clear anything and does not grant authority to dispatch SDK operations.
+pub fn sdk_cleanup_for_run(root: &Path, run: Uuid) -> Result<Option<Uuid>> {
+    if run.is_nil() {
+        return Err(StoreError::InvalidInput);
+    }
+    let (_dir, c) = open(root, false)?;
+    let setup: Option<String> = c
+        .query_row(
+            "SELECT setup_id FROM installation_google_bootstrap WHERE singleton=1 AND sdk_run=?1",
+            [run.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    setup
+        .map(|s| Uuid::parse_str(&s).map_err(|_| StoreError::Corrupt))
+        .transpose()
+}
+
+/// The run with an unresolved temporary SDK login, if any. Observation only.
+pub fn pending_sdk_run(root: &Path, s: &AdminSession) -> Result<Option<Uuid>> {
+    let (_dir, mut c) = open(root, false)?;
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    check(&tx, s)?;
+    sdk_pending(&tx)?
+        .map(|v| Uuid::parse_str(&v).map_err(|_| StoreError::Corrupt))
+        .transpose()
+}
+
+/// Persist the single dispatch intent BEFORE the worker is sent Authorize. Call once per
+/// claimed run, with the leased administrator. A repeat (even of the same run), a run that
+/// was already cleaned, or a foreign/expired run is refused. Renews the lease (180s).
+pub fn begin_sdk(root: &Path, s: &AdminSession, run: Uuid) -> Result<()> {
+    if run.is_nil() {
+        return Err(StoreError::InvalidInput);
+    }
+    leased(root, s, run, |tx, _, now| {
+        if tx.execute(
+            "UPDATE installation_google_bootstrap SET sdk_run=?1 WHERE singleton=1 AND sdk_run IS NULL AND sdk_cleaned_run IS NOT ?1 AND NOT EXISTS(SELECT 1 FROM installation_google_bootstrap_sdk_closed WHERE run_id=?1)",
+            [run.to_string()],
+        )? != 1
+        {
+            return Err(StoreError::Conflict);
+        }
+        renew(tx, now)
+    })
+}
+
+/// Private root-broker receipt after proven shutdown (or proven no worker was
+/// started). This API trusts the root registry owner, not member HTTP input.
+/// Atomically close every authenticated run even if claim or begin_sdk has not
+/// committed yet. A late claim must not revive a browser that already ended.
+/// An exact pending run is cleared; a successor is not.
+pub fn close_sdk_run(root: &Path, run: Uuid) -> Result<()> {
+    if run.is_nil() {
+        return Err(StoreError::InvalidInput);
+    }
+    let (_dir, mut c) = open(root, false)?;
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO installation_google_bootstrap_sdk_closed(run_id) VALUES(?1)",
+        [run.to_string()],
+    )?;
+    tx.execute(
+            "UPDATE installation_google_bootstrap SET sdk_run=NULL,sdk_cleaned_run=?1 WHERE singleton=1 AND sdk_run=?1",
+            [run.to_string()],
+        )?;
+    tx.commit()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -754,7 +850,13 @@ mod tests {
         let original = begin(r, &s, old);
         // A live lease refuses correction.
         assert!(matches!(
-            claim(r, &s, Uuid::new_v4(), "fixed@example.test".into(), CALLBACK.into()),
+            claim(
+                r,
+                &s,
+                Uuid::new_v4(),
+                "fixed@example.test".into(),
+                CALLBACK.into()
+            ),
             Err(StoreError::Conflict)
         ));
         // After confirmed teardown, pre-intent correction keeps the project identity.
@@ -765,7 +867,10 @@ mod tests {
         assert_eq!(corrected.project_id(), original.project_id());
         assert_eq!(corrected.client_name(), original.client_name());
         assert_eq!(
-            (corrected.google_email.as_str(), corrected.redirect_uri.as_str()),
+            (
+                corrected.google_email.as_str(),
+                corrected.redirect_uri.as_str()
+            ),
             ("fixed@example.test", other_cb)
         );
         assert_eq!((corrected.step, corrected.intent), (Step::Project, false));
@@ -786,11 +891,8 @@ mod tests {
         {
             let (_dir, c) = open(r, false).unwrap();
             assert!(
-                c.execute(
-                    "UPDATE installation_google_bootstrap SET setup_id='x'",
-                    []
-                )
-                .is_err()
+                c.execute("UPDATE installation_google_bootstrap SET setup_id='x'", [])
+                    .is_err()
             );
         }
         // Once intent is recorded the identity is exact again.
@@ -825,6 +927,185 @@ mod tests {
     }
     fn begin_with(r: &Path, s: &AdminSession, id: Uuid, email: &str, callback: &str) -> Setup {
         claim(r, s, id, email.into(), callback.into()).unwrap()
+    }
+
+    fn sdk_columns(r: &Path) -> (Option<String>, Option<String>) {
+        let (_d, c) = open(r, false).unwrap();
+        c.query_row(
+            "SELECT sdk_run,sdk_cleaned_run FROM installation_google_bootstrap",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pending_sdk_blocks_claim_and_release_even_after_expiry_or_reopen() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        shorten(r);
+        begin_sdk(r, &s, run).unwrap();
+        assert!(lease_renewed(r));
+        assert_eq!(pending_sdk_run(r, &s).unwrap(), Some(run));
+        assert!(matches!(release(r, &s, run), Err(StoreError::Conflict)));
+        // Crash-style: nothing in memory survives; reopening shows the same marker.
+        assert_eq!(sdk_columns(r).0, Some(run.to_string()));
+        expire(r);
+        assert_eq!(sdk_columns(r).0, Some(run.to_string()));
+        assert!(matches!(
+            claim(r, &s, Uuid::new_v4(), EMAIL.into(), CALLBACK.into()),
+            Err(StoreError::Conflict)
+        ));
+        // The schema refuses replacing the marker with another run.
+        let (_dir, c) = open(r, false).unwrap();
+        assert!(
+            c.execute(
+                "UPDATE installation_google_bootstrap SET sdk_run='other'",
+                []
+            )
+            .is_err()
+        );
+        assert!(
+            c.execute("UPDATE installation_google_bootstrap SET sdk_run=NULL", [])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn begin_sdk_is_single_dispatch_and_leased() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        assert!(begin_sdk(r, &s, run).is_err()); // no setup yet
+        let setup = begin(r, &s, run);
+        assert!(begin_sdk(r, &s, Uuid::new_v4()).is_err()); // foreign
+        assert!(matches!(
+            begin_sdk(r, &s, Uuid::nil()),
+            Err(StoreError::InvalidInput)
+        ));
+        assert_eq!(sdk_columns(r), (None, None));
+        begin_sdk(r, &s, run).unwrap();
+        assert!(matches!(begin_sdk(r, &s, run), Err(StoreError::Conflict)));
+        // Even after cleanup the same run cannot dispatch again.
+        close_sdk_run(r, run).unwrap();
+        assert!(matches!(begin_sdk(r, &s, run), Err(StoreError::Conflict)));
+        // An expired lease cannot begin.
+        let old = Uuid::new_v4();
+        expire(r);
+        begin(r, &s, old);
+        expire(r);
+        assert!(begin_sdk(r, &s, old).is_err());
+        assert_eq!(sdk_columns(r).0, None);
+    }
+
+    #[test]
+    fn exact_acknowledge_clears_and_enables_a_new_run() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        let setup = begin(r, &s, run);
+        assert_eq!(sdk_cleanup_for_run(r, run).unwrap(), None);
+        begin_sdk(r, &s, run).unwrap();
+        assert_eq!(sdk_cleanup_for_run(r, run).unwrap(), Some(setup.setup_id));
+        assert_eq!(sdk_cleanup_for_run(r, Uuid::new_v4()).unwrap(), None);
+        assert!(close_sdk_run(r, Uuid::nil()).is_err());
+        close_sdk_run(r, Uuid::new_v4()).unwrap();
+        assert_eq!(sdk_columns(r).0, Some(run.to_string()));
+        expire(r);
+        close_sdk_run(r, run).unwrap();
+        assert_eq!(sdk_columns(r), (None, Some(run.to_string())));
+        assert_eq!(sdk_cleanup_for_run(r, run).unwrap(), None);
+        // Idempotent.
+        close_sdk_run(r, run).unwrap();
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        // Replaying the old acknowledgement cannot clear the successor.
+        begin_sdk(r, &s, next).unwrap();
+        close_sdk_run(r, run).unwrap();
+        assert_eq!(sdk_columns(r).0, Some(next.to_string()));
+        close_sdk_run(r, next).unwrap();
+        release(r, &s, next).unwrap();
+        begin(r, &s, Uuid::new_v4());
+    }
+
+    #[test]
+    fn closed_before_begin_refuses_late_commit_and_stays_closed_after_successor() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        close_sdk_run(r, run).unwrap();
+        assert!(matches!(begin_sdk(r, &s, run), Err(StoreError::Conflict)));
+        assert_eq!(sdk_columns(r).0, None);
+        expire(r);
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        begin_sdk(r, &s, next).unwrap();
+        close_sdk_run(r, run).unwrap();
+        assert_eq!(sdk_columns(r).0, Some(next.to_string()));
+        close_sdk_run(r, next).unwrap();
+        let (_dir, c) = open(r, false).unwrap();
+        let closed: i64 = c
+            .query_row(
+                "SELECT count(*) FROM installation_google_bootstrap_sdk_closed",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(closed, 2);
+        assert!(
+            c.execute("DELETE FROM installation_google_bootstrap_sdk_closed", [])
+                .is_err()
+        );
+        assert!(
+            c.execute(
+                "UPDATE installation_google_bootstrap_sdk_closed SET run_id='replacement'",
+                []
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn teardown_before_claim_permanently_refuses_late_authorization() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        close_sdk_run(r, run).unwrap();
+        assert!(matches!(
+            claim(r, &s, run, EMAIL.into(), CALLBACK.into()),
+            Err(StoreError::Conflict)
+        ));
+        assert!(matches!(begin_sdk(r, &s, run), Err(StoreError::Conflict)));
+        let next = Uuid::new_v4();
+        begin(r, &s, next);
+        begin_sdk(r, &s, next).unwrap();
+        close_sdk_run(r, run).unwrap();
+        assert_eq!(sdk_columns(r).0, Some(next.to_string()));
+    }
+
+    #[test]
+    fn teardown_survives_role_revocation_without_clearing_other_runs() {
+        let (d, s) = fixture();
+        let r = d.path();
+        let run = Uuid::new_v4();
+        begin(r, &s, run);
+        begin_sdk(r, &s, run).unwrap();
+        {
+            let (_dir, c) = open(r, false).unwrap();
+            c.execute(
+                "UPDATE installation_members SET role_revision=role_revision+1",
+                [],
+            )
+            .unwrap();
+        }
+        assert!(heartbeat(r, &s, run).is_err());
+        close_sdk_run(r, Uuid::new_v4()).unwrap();
+        assert_eq!(sdk_columns(r).0, Some(run.to_string()));
+        close_sdk_run(r, run).unwrap();
+        assert_eq!(sdk_columns(r).0, None);
     }
 
     #[test]

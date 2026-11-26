@@ -5,8 +5,8 @@
 //! nothing here retries project creation or deletes a Cloud resource.
 //!
 //! Dropping an `Sdk` only removes the private configuration directory. That
-//! cannot prove remote token revocation: call `revoke_account` and then
-//! `prove_signed_out` as explicit awaited steps. If `finish_login` fails it
+//! cannot prove remote token revocation: await `cleanup_login_credentials`.
+//! If `finish_login` fails it
 //! kills the login child and makes one bounded best-effort
 //! `cleanup_login_credentials`, independent of the caller's cancellation token;
 //! if a larger operation future is dropped instead, the controller must await
@@ -269,6 +269,7 @@ pub(super) struct Sdk {
     dir: tempfile::TempDir,
     gcloud: PathBuf,
     proxy: SocketAddr,
+    cleanup_uncertain: std::sync::atomic::AtomicBool,
 }
 impl std::fmt::Debug for Sdk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -301,7 +302,12 @@ impl Sdk {
                 .create(dir.path().join(name))
                 .map_err(unavailable)?;
         }
-        Ok(Self { dir, gcloud, proxy })
+        Ok(Self {
+            dir,
+            gcloud,
+            proxy,
+            cleanup_uncertain: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     fn env(&self) -> Vec<(&'static str, String)> {
@@ -391,12 +397,22 @@ impl Sdk {
                 }
             }
         };
-        let url = tokio::select! {
+        let request = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(Error::Unavailable),
-            r = tokio::time::timeout(URL_WAIT, read) => r.map_err(unavailable)??,
+            _ = cancel.cancelled() => Err(Error::Unavailable),
+            r = tokio::time::timeout(URL_WAIT, read) => r.map_err(unavailable).and_then(|v| v),
+        }
+        .and_then(|url| validate_login_url(&url, email));
+        let request = match request {
+            Ok(request) => request,
+            Err(error) => {
+                if group.kill_and_reap().await.is_err() {
+                    self.cleanup_uncertain
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                return Err(error);
+            }
         };
-        let request = validate_login_url(&url, email)?;
         Ok(LoginHandle {
             group,
             stderr,
@@ -457,7 +473,11 @@ impl Sdk {
         if result.is_err() {
             // Child first, so it cannot store a token after cleanup; then clean this
             // private config. The original classification is preserved.
-            let _ = group.kill_and_reap().await;
+            if group.kill_and_reap().await.is_err() {
+                self.cleanup_uncertain
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                return Err(Error::Unavailable);
+            }
             let _ = self.cleanup_login_credentials().await;
         }
         result
@@ -470,6 +490,21 @@ impl Sdk {
     /// removing the directory is never treated as revocation. Callers must ensure no
     /// login child is still running.
     pub async fn cleanup_login_credentials(&self) -> Result<(), Error> {
+        use std::sync::atomic::Ordering;
+        // A failed revoke may have deleted its local token. An empty re-list on
+        // a later cleanup must never turn that unknown remote state into proof.
+        // Keep failure sticky, including a dropped cleanup future or unreaped child.
+        if self.cleanup_uncertain.swap(true, Ordering::SeqCst) {
+            return Err(Error::Unavailable);
+        }
+        let result = self.cleanup_once().await;
+        if result.is_ok() {
+            self.cleanup_uncertain.store(false, Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn cleanup_once(&self) -> Result<(), Error> {
         let token = CancellationToken::new();
         let before = self
             .exec(&["auth", "list", "--format=json"], CLEANUP_STEP, &token)
@@ -647,27 +682,6 @@ impl Sdk {
             )
             .await?;
         verify_apis(&out)
-    }
-
-    /// One `gcloud auth revoke <email>` (explicit step; remote revocation is
-    /// only as good as the SDK command succeeding).
-    pub async fn revoke_account(
-        &self,
-        email: &Email,
-        cancel: &CancellationToken,
-    ) -> Result<(), Error> {
-        self.exec(&["auth", "revoke", &email.0, "--quiet"], QUICK, cancel)
-            .await
-            .map(drop)
-    }
-
-    /// `gcloud auth list` must show no credentialed account at all.
-    pub async fn prove_signed_out(&self, cancel: &CancellationToken) -> Result<(), Error> {
-        if self.accounts(cancel).await?.is_empty() {
-            Ok(())
-        } else {
-            Err(Error::Blocked)
-        }
     }
 }
 

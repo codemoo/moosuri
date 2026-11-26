@@ -15,8 +15,22 @@ CREATE TABLE installation_google_bootstrap (
     lease_revision INTEGER NOT NULL,
     lease_epoch INTEGER NOT NULL,
     lease_until INTEGER NOT NULL,
+    -- Non-null from just before the worker is told to Authorize a temporary SDK login until
+    -- the trusted root broker observes proven teardown. Lease expiry never clears it, so an
+    -- unresolved broad-scope grant cannot be silently replaced by another login. Nonsecret.
+    sdk_run TEXT CHECK(sdk_run IS NULL OR length(sdk_run)>0),
+    -- The last run whose cleanup was acknowledged (makes acknowledgement idempotent and
+    -- keeps that run from beginning SDK auth a second time).
+    sdk_cleaned_run TEXT CHECK(sdk_cleaned_run IS NULL OR length(sdk_cleaned_run)>0),
     CHECK(step!='registered' OR intent=0)
 ) STRICT;
+-- sdk_run is set only from NULL, and cleared only to the exact run recorded as cleaned.
+CREATE TRIGGER installation_google_bootstrap_sdk_run_fixed
+BEFORE UPDATE OF sdk_run ON installation_google_bootstrap
+WHEN NEW.sdk_run IS NOT OLD.sdk_run AND NOT (
+    (OLD.sdk_run IS NULL AND NEW.sdk_run IS NOT NULL) OR
+    (OLD.sdk_run IS NOT NULL AND NEW.sdk_run IS NULL AND NEW.sdk_cleaned_run IS OLD.sdk_run))
+BEGIN SELECT RAISE(ABORT,'google bootstrap sdk run cannot be replaced'); END;
 -- The stable resource identity can never be rewritten or discarded: a "reset"
 -- would orphan or duplicate provider resources.
 CREATE TRIGGER installation_google_bootstrap_identity_fixed
@@ -53,4 +67,14 @@ BEGIN SELECT RAISE(ABORT,'used google bootstrap runs are permanent'); END;
 CREATE TRIGGER installation_google_bootstrap_runs_append_only_delete
 BEFORE DELETE ON installation_google_bootstrap_runs
 BEGIN SELECT RAISE(ABORT,'used google bootstrap runs are permanent'); END;
+-- Closing a claimed browser run before an asynchronous begin_sdk commits must
+-- permanently refuse that late start. Keep every closed identity, not just the
+-- most recent cleanup, so a successor cannot erase this protection.
+CREATE TABLE installation_google_bootstrap_sdk_closed (run_id TEXT PRIMARY KEY) STRICT;
+CREATE TRIGGER installation_google_bootstrap_sdk_closed_no_update
+BEFORE UPDATE ON installation_google_bootstrap_sdk_closed
+BEGIN SELECT RAISE(ABORT,'closed sdk runs are permanent'); END;
+CREATE TRIGGER installation_google_bootstrap_sdk_closed_no_delete
+BEFORE DELETE ON installation_google_bootstrap_sdk_closed
+BEGIN SELECT RAISE(ABORT,'closed sdk runs are permanent'); END;
 PRAGMA user_version=8;

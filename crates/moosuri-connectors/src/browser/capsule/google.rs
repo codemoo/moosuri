@@ -1,7 +1,10 @@
 //! Installation-only transport for one sealed Google authentication attempt.
 //! Reuses the capsule's pinned engine, network, limits and cleanup ownership.
 use super::*;
-use crate::browser::google_auth::{Binding, Envelope, PROTOCOL, Recipient};
+use crate::browser::google_auth::{
+    Binding, Envelope, PROTOCOL, Recipient, bootstrap,
+    bootstrap::{BOOTSTRAP_SHUTDOWN_GRACE, Reply as BootstrapReply, Request as BootstrapRequest},
+};
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -29,9 +32,60 @@ struct PhaseReply {
     status: GooglePhase,
 }
 
+/// One worker answer: a phase, or (only for a bootstrap request) its typed reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answer {
+    Phase(GooglePhase),
+    Bootstrap(BootstrapReply),
+}
+
+/// Result of a bootstrap command: its typed reply, or the worker's existing
+/// terminal status (blocked / needs_human / unavailable).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BootstrapOutcome {
+    Reply(BootstrapReply),
+    Terminal(GooglePhase),
+}
+
+/// Bounded, exact-shape parse of one worker line. A bootstrap request accepts its
+/// typed reply or a terminal status only; any other request accepts phases only.
+fn parse_answer(value: Value, bootstrap: bool) -> Result<Answer, BrowserError> {
+    if value
+        .as_object()
+        .is_some_and(|m| m.contains_key("bootstrap"))
+    {
+        if !bootstrap {
+            return Err(BrowserError::Protocol);
+        }
+        return BootstrapReply::from_wire(&value)
+            .map(Answer::Bootstrap)
+            .map_err(|_| BrowserError::Protocol);
+    }
+    let phase = serde_json::from_value::<PhaseReply>(value)
+        .map_err(|_| BrowserError::Protocol)?
+        .status;
+    if bootstrap
+        && !matches!(
+            phase,
+            GooglePhase::Blocked | GooglePhase::NeedsHuman | GooglePhase::Unavailable
+        )
+    {
+        return Err(BrowserError::Protocol);
+    }
+    Ok(Answer::Phase(phase))
+}
+
 struct Request {
     body: Option<Value>,
-    reply: oneshot::Sender<Result<GooglePhase, BrowserError>>,
+    bootstrap: bool,
+    reply: oneshot::Sender<Result<Answer, BrowserError>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bootstrapping {
+    No,
+    Active,
+    Finished,
 }
 
 pub struct GoogleAttempt {
@@ -40,6 +94,7 @@ pub struct GoogleAttempt {
     cancel: CancellationToken,
     done: Option<oneshot::Receiver<Result<(), BrowserError>>>,
     phase: Option<GooglePhase>,
+    bootstrapping: Bootstrapping,
 }
 struct Pending(Option<CancellationToken>);
 impl Drop for Pending {
@@ -117,6 +172,7 @@ impl CapsuleReader {
             cancel,
             done: Some(done),
             phase: None,
+            bootstrapping: Bootstrapping::No,
         })
     }
 
@@ -171,6 +227,9 @@ impl CapsuleReader {
         };
         let mut failed_start = None;
         let mut terminal_reply = None;
+        // Once any bootstrap command has been sent the worker may be inside SDK
+        // credential cleanup, so shutdown gets the long grace instead of the short one.
+        let mut bootstrap_sent = false;
         match setup {
             Err(error) => failed_start = Some((started, error)),
             Ok((recipient, mut reader)) => {
@@ -193,21 +252,26 @@ impl CapsuleReader {
                         if request.reply.is_closed() {
                             break;
                         }
+                        let bootstrap = request.bootstrap;
+                        bootstrap_sent |= bootstrap;
                         let operation = async {
                             if let Some(body) = request.body {
                                 write(&mut child, &body).await?;
                             }
-                            let reply: PhaseReply =
-                                serde_json::from_value(read_line(&mut reader, 256).await?)
-                                    .map_err(|_| BrowserError::Protocol)?;
-                            Ok(reply.status)
+                            parse_answer(read_line(&mut reader, 256).await?, bootstrap)
                         };
+                        // The worker's longest bootstrap action is bounded at 600 s; an
+                        // abandoned wait still ends in the awaited graceful cleanup below.
+                        let limit = Duration::from_secs(if bootstrap { 660 } else { 250 });
                         let result = tokio::select! { biased;
                             _ = cancel.cancelled() => Err(BrowserError::Cancelled),
                             _ = tokio::time::sleep_until(deadline) => Err(BrowserError::Expired),
-                            result = tokio::time::timeout(Duration::from_secs(250), operation) => result.unwrap_or(Err(BrowserError::Timeout)),
+                            result = tokio::time::timeout(limit, operation) => result.unwrap_or(Err(BrowserError::Timeout)),
                         };
-                        if result.as_ref().is_ok_and(|p: &GooglePhase| p.terminal()) {
+                        if result
+                            .as_ref()
+                            .is_ok_and(|a| matches!(a, Answer::Phase(p) if p.terminal()))
+                        {
                             terminal_reply = Some((request.reply, result));
                             break;
                         }
@@ -220,7 +284,14 @@ impl CapsuleReader {
             }
         }
         let cleanup = self
-            .cleanup(&mut child, &name, identity, observed, false)
+            .cleanup_grace(
+                &mut child,
+                &name,
+                identity,
+                observed,
+                false,
+                bootstrap_sent.then_some(BOOTSTRAP_SHUTDOWN_GRACE),
+            )
             .await;
         if let Some((started, error)) = failed_start {
             let _ = started.send(Err(cleanup.err().unwrap_or(error)));
@@ -266,10 +337,16 @@ impl GoogleAttempt {
         let mut pending = Pending(Some(self.cancel.clone()));
         let (reply, response) = oneshot::channel();
         self.requests
-            .send(Request { body, reply })
+            .send(Request {
+                body,
+                bootstrap: false,
+                reply,
+            })
             .await
             .map_err(|_| BrowserError::Expired)?;
-        let result = response.await.map_err(|_| BrowserError::Expired)??;
+        let Answer::Phase(result) = response.await.map_err(|_| BrowserError::Expired)?? else {
+            return Err(BrowserError::Protocol);
+        };
         if !expected.contains(&result)
             && !matches!(
                 result,
@@ -318,7 +395,9 @@ impl GoogleAttempt {
         client_id: &str,
         service: &str,
     ) -> Result<GooglePhase, BrowserError> {
-        if self.phase != Some(GooglePhase::SignedIn) {
+        // Consent is valid before any bootstrap or after its Finish, never between.
+        if self.phase != Some(GooglePhase::SignedIn) || self.bootstrapping == Bootstrapping::Active
+        {
             return Err(BrowserError::Protocol);
         }
         self.exchange(
@@ -327,6 +406,52 @@ impl GoogleAttempt {
         )
         .await
     }
+    /// One fixed bootstrap command after `SignedIn`. The first must be `Authorize`
+    /// (once); the worker enforces the full sequence, and this side mirrors the
+    /// parts it can: nothing after `Finish`, and a failed or terminal exchange ends
+    /// the attempt. The caller (gateway) must already hold durable intent and a fresh
+    /// admin heartbeat; this transport establishes neither.
+    pub async fn bootstrap(
+        &mut self,
+        request: BootstrapRequest,
+    ) -> Result<BootstrapOutcome, BrowserError> {
+        use bootstrap::Action;
+        let binding = &self.recipient.binding;
+        if self.phase != Some(GooglePhase::SignedIn)
+            || self.bootstrapping == Bootstrapping::Finished
+            || (self.bootstrapping == Bootstrapping::No) != (request.action == Action::Authorize)
+            || request.validate(binding).is_err()
+        {
+            return Err(BrowserError::Protocol);
+        }
+        let mut pending = Pending(Some(self.cancel.clone()));
+        let (reply, response) = oneshot::channel();
+        self.requests
+            .send(Request {
+                body: Some(request.to_wire()),
+                bootstrap: true,
+                reply,
+            })
+            .await
+            .map_err(|_| BrowserError::Expired)?;
+        let answer = response.await.map_err(|_| BrowserError::Expired)??;
+        let outcome = match answer {
+            Answer::Bootstrap(reply) => BootstrapOutcome::Reply(reply),
+            Answer::Phase(phase) => {
+                self.phase = Some(phase);
+                BootstrapOutcome::Terminal(phase)
+            }
+        };
+        if matches!(outcome, BootstrapOutcome::Reply(_)) {
+            self.bootstrapping = if request.action == Action::Finish {
+                Bootstrapping::Finished
+            } else {
+                Bootstrapping::Active
+            };
+        }
+        pending.0 = None;
+        Ok(outcome)
+    }
     pub async fn shutdown(mut self) -> Result<(), BrowserError> {
         self.cancel.cancel();
         self.done
@@ -334,5 +459,45 @@ impl GoogleAttempt {
             .ok_or(BrowserError::Expired)?
             .await
             .map_err(|_| BrowserError::CleanupUnconfirmed)?
+    }
+}
+
+#[cfg(test)]
+mod google_bootstrap_tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_answers_are_exact_and_not_passthrough() {
+        let ready = json!({"bootstrap":"ready"});
+        assert_eq!(
+            parse_answer(ready.clone(), true).unwrap(),
+            Answer::Bootstrap(BootstrapReply::Ready)
+        );
+        assert_eq!(
+            parse_answer(json!({"bootstrap":"absent"}), true).unwrap(),
+            Answer::Bootstrap(BootstrapReply::Absent)
+        );
+        // A bootstrap reply to a non-bootstrap request is a protocol error.
+        assert!(parse_answer(ready, false).is_err());
+        for bad in [
+            json!({"bootstrap":"ready","extra":1}),
+            json!({"bootstrap":{"project":"x"}}),
+            json!({"bootstrap":"maybe"}),
+            json!({"bootstrap":null}),
+        ] {
+            assert!(parse_answer(bad, true).is_err());
+        }
+        // Terminal worker statuses are the only phases a bootstrap request accepts.
+        for status in ["blocked", "needs_human", "unavailable"] {
+            assert!(matches!(
+                parse_answer(json!({"status":status}), true),
+                Ok(Answer::Phase(_))
+            ));
+        }
+        for status in ["signed_in", "verified", "returned", "verifying"] {
+            assert!(parse_answer(json!({"status":status}), true).is_err());
+            assert!(parse_answer(json!({"status":status}), false).is_ok());
+        }
+        assert!(parse_answer(json!({"status":"blocked","note":"x"}), true).is_err());
     }
 }

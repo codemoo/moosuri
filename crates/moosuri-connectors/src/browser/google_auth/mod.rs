@@ -1,6 +1,7 @@
 //! Private authentication worker. No raw CDP, page data or credentials leave it.
 //! This API is for the installation launcher, never the model browser protocol.
 mod binding;
+pub mod bootstrap;
 mod chrome;
 mod consent;
 mod crypto;

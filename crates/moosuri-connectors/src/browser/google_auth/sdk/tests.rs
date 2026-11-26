@@ -694,7 +694,20 @@ async fn cleanup_skips_empty_configuration_but_never_accepts_failed_revocation()
     );
     std::fs::write(tools.path().join("revoked"), b"").unwrap();
     std::fs::write(&log, b"").unwrap();
-    assert_eq!(sdk.cleanup_login_credentials().await, Ok(()));
+    // A retry cannot reclassify the failed revoke by observing local absence.
+    assert_eq!(
+        sdk.cleanup_login_credentials().await,
+        Err(Error::Unavailable)
+    );
+    assert!(calls(&log).is_empty());
+    // An unrelated genuinely empty new SDK configuration needs no revocation.
+    let clean = Sdk::open(
+        root.path(),
+        sdk.gcloud.clone(),
+        private_proxy("10.42.17.2").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(clean.cleanup_login_credentials().await, Ok(()));
     assert_eq!(calls(&log), ["auth list --format=json"]);
 }
 

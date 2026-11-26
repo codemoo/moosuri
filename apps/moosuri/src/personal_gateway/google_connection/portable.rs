@@ -54,6 +54,9 @@ pub(super) struct Prepared {
 }
 
 impl Prepared {
+    pub(super) fn binding(&self) -> &Binding {
+        &self.recipient.binding
+    }
     fn alive(&mut self) -> bool {
         // No bytes are expected between the recipient and Deliver. Readiness
         // here means EOF or an unsolicited terminal broker receipt.

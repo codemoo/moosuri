@@ -48,6 +48,18 @@ fn configure_domain_ports() -> Check<()> {
             "--unix-socket",
             "/run/kiri/docker.sock",
         ];
+        if !write {
+            // systemd may report active before the engine socket is accepting.
+            args.extend([
+                "--retry",
+                "20",
+                "--retry-connrefused",
+                "--retry-delay",
+                "1",
+                "--retry-max-time",
+                "30",
+            ]);
+        }
         if write {
             args.extend([
                 "--header",
@@ -119,7 +131,6 @@ pub fn run_host(args: &[String]) -> Check<()> {
             "docker.io",
             "docker-buildx",
             "docker-compose-v2",
-            "nginx",
             "certbot",
             "e2fsprogs",
             "iproute2",
@@ -212,6 +223,11 @@ pub fn run_host(args: &[String]) -> Check<()> {
         &["enable", "--now", "docker.service", "kiri.service"],
     )?;
     configure_domain_ports()?;
+    // apt may start nginx immediately; install it after Kiri has released 80/443.
+    run(
+        "apt-get",
+        &["install", "-y", "--no-install-recommends", "nginx"],
+    )?;
     run(
         "systemctl",
         &[

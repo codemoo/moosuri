@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { PersonalGoogleSetup } from "./PersonalGoogleSetup";
@@ -41,98 +41,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("resumes the selected project and hands all five API activations and the OAuth app to the official console", async () => {
-  const requests = setup();
-  const user = userEvent.setup();
-  const view = mount();
-  const project = await screen.findByRole("textbox", { name: "프로젝트 ID" });
-  const consoleOrigin = "https://console.cloud.google.com";
-  const steps = within(screen.getByRole("list", { name: "Google Workspace 설정 단계" }));
-  expect(steps.getByText("Cloud 프로젝트")).toHaveAttribute("aria-current", "step");
-  await user.click(screen.getByText("Google Cloud 콘솔에서 직접 준비"));
-  expect(screen.getByRole("link", { name: "기존 프로젝트 선택" })).toHaveAttribute("href", consoleOrigin + "/cloud-resource-manager");
-  expect(screen.getByRole("link", { name: "새 프로젝트 만들기" })).toHaveAttribute("href", consoleOrigin + "/projectcreate");
-  await user.clear(project);
-  await user.type(project, "demo-kiri");
-  await user.click(screen.getByRole("button", { name: "프로젝트 사용" }));
-  expect(steps.getByText("API 사용 설정")).toHaveAttribute("aria-current", "step");
-  expect(screen.getByRole("heading", { name: "API 사용 설정" })).toHaveFocus();
-  const enable = screen.getByRole("link", { name: "Google API 5개 사용 설정" });
-  expect(enable).toHaveAttribute("target", "_blank");
-  expect(enable).toHaveAttribute("rel", "noopener noreferrer");
-  const url = new URL(enable.getAttribute("href") ?? "");
-  expect(url.origin + url.pathname).toBe(consoleOrigin + "/apis/enableflow");
-  expect(url.searchParams.get("project")).toBe("demo-kiri");
-  expect(url.searchParams.get("apiid")?.split(",")).toEqual([
-    "gmail.googleapis.com", "drive.googleapis.com", "docs.googleapis.com", "slides.googleapis.com", "sheets.googleapis.com",
-  ]);
-  await user.click(screen.getByRole("button", { name: "사용 설정을 마쳤습니다" }));
-  view.unmount();
-  mount();
-  expect(await screen.findByRole("heading", { name: "OAuth 동의 화면" })).toBeVisible();
-  expect(screen.getByRole("link", { name: "사용 대상 및 테스트 사용자" })).toHaveAttribute("href", consoleOrigin + "/auth/audience?project=demo-kiri");
-  await user.click(screen.getByRole("button", { name: "동의 화면 설정을 마쳤습니다" }));
-  const oauthLink = screen.getByRole("link", { name: "콜백 복사하고 Google OAuth 클라이언트 열기" });
-  expect(oauthLink).toHaveAttribute("href", consoleOrigin + "/auth/clients?project=demo-kiri");
-  const writeText = vi.spyOn(navigator.clipboard, "writeText");
-  await user.click(oauthLink);
-  expect(writeText).toHaveBeenCalledExactlyOnceWith(redirect_uri);
-  expect(requests).toEqual([{ method: "GET", account }, { method: "GET", account }]);
-  expect(JSON.parse(localStorage.getItem(draftKey) ?? "null")).toEqual({ project: "demo-kiri", step: 3, method: "console" });
-});
-
-it("keeps a generated project ID and copies the exact setup command when opening Google Cloud Shell", async () => {
-  const requests = setup();
-  const user = userEvent.setup();
-  const writeText = vi.spyOn(navigator.clipboard, "writeText");
-  const first = mount();
-  const project = (await screen.findByRole("textbox", { name: "프로젝트 ID" }) as HTMLInputElement).value;
-  expect(project).toMatch(/^moosuri-[a-f0-9]{16}$/);
-  first.unmount();
-  const second = mount();
-  expect(await screen.findByRole("textbox", { name: "프로젝트 ID" })).toHaveValue(project);
-  const launcher = screen.getByRole("link", { name: "Cloud Shell 열고 설정 명령 복사" });
-  const url = new URL(launcher.getAttribute("href") ?? "");
-  expect(url.origin + url.pathname).toBe("https://shell.cloud.google.com/cloudshell/editor");
-  expect(url.searchParams.get("show")).toBe("terminal");
-  expect(url.searchParams.get("cloudshell_git_repo")).toBe("https://github.com/codemoo/moosuri");
-  expect(url.searchParams.get("cloudshell_git_branch")).toBe("main");
-  expect(url.searchParams.get("cloudshell_workspace")).toBe(".");
-  expect(url.searchParams.get("cloudshell_tutorial")).toBe("deployment/kiri/google-cloud-setup.md");
-  expect(launcher).toHaveAttribute("rel", "noopener noreferrer");
-
-  await user.click(launcher);
-  const expected = "bash deployment/kiri/prepare-google-project.sh " + project;
-  expect(writeText).toHaveBeenCalledExactlyOnceWith(expected);
-  expect(screen.getByRole("textbox", { name: "Cloud Shell 명령" })).toHaveValue(expected);
-  second.unmount();
-  mount();
-  expect(await screen.findByRole("textbox", { name: "Cloud Shell 명령" })).toHaveValue(expected);
-  await user.click(screen.getByRole("button", { name: "프로젝트와 API 준비를 마쳤습니다" }));
-  expect(screen.getByRole("link", { name: "앱 정보 설정" })).toHaveAttribute("href", "https://console.cloud.google.com/auth/branding?project=" + project);
-  expect(requests.every(request => request.method === "GET")).toBe(true);
-});
-
-it("allows manual copying when clipboard access is denied and blocks invalid command arguments", async () => {
+it("opens the installation registration form directly even with an old Cloud Shell draft", async () => {
   setup();
-  const user = userEvent.setup();
-  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("clipboard denied"));
+  localStorage.setItem(draftKey, JSON.stringify({project:"example",step:1,method:"shell"}));
   mount();
-  const project = await screen.findByRole("textbox", { name: "프로젝트 ID" });
-  await user.clear(project);
-  await user.type(project, "bad;argument");
-  expect(screen.getByRole("button", { name: "Cloud Shell 열고 설정 명령 복사" })).toBeDisabled();
-  expect(writeText).not.toHaveBeenCalled();
-  await user.clear(project);
-  await user.type(project, "existing-demo");
-  await user.click(screen.getByRole("link", { name: "Cloud Shell 열고 설정 명령 복사" }));
-  expect(await screen.findByText("아래 명령을 직접 복사해 주세요.")).toBeVisible();
-  expect(screen.getByRole("textbox", { name: "Cloud Shell 명령" })).toHaveValue("bash deployment/kiri/prepare-google-project.sh existing-demo");
-  await user.click(screen.getByRole("button", { name: "프로젝트와 API 준비를 마쳤습니다" }));
-  await user.click(screen.getByRole("button", { name: "동의 화면 설정을 마쳤습니다" }));
-  await user.click(screen.getByRole("link", { name: "콜백 복사하고 Google OAuth 클라이언트 열기" }));
-  expect(await screen.findByText("선택된 콜백 주소를 직접 복사해 주세요.")).toBeVisible();
-  expect(screen.getByRole("textbox", { name: "이 설치의 콜백 주소" })).toHaveValue(redirect_uri);
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  expect(localStorage.getItem(draftKey)).toBeNull();
 });
 
 it("copies the callback and imports an existing JSON through the account-scoped API only", async () => {
@@ -140,7 +55,7 @@ it("copies the callback and imports an existing JSON through the account-scoped 
   const user = userEvent.setup();
   const writeText = vi.spyOn(navigator.clipboard, "writeText");
   const { props } = mount();
-  await user.click(await screen.findByRole("button", { name: "이미 받은 JSON 가져오기" }));
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
   const callback = screen.getByRole("textbox", { name: "이 설치의 콜백 주소" });
   expect(callback).toHaveAttribute("readonly");
   expect(callback).toHaveValue(redirect_uri);
@@ -162,7 +77,7 @@ it("shows a repair message without rendering provider details when the callback 
   const requests = setup({ failure: "google_redirect_uri_mismatch" });
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: "이미 받은 JSON 가져오기" }));
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
   const file = screen.getByLabelText("Google 웹 클라이언트 JSON");
   await user.upload(file, jsonFile("x".repeat(16385)));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
@@ -184,7 +99,7 @@ it.each([
   const requests = setup();
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: "이미 받은 JSON 가져오기" }));
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), jsonFile(JSON.stringify(invalid)));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(String(message));
@@ -198,14 +113,14 @@ it("does not transmit a pending file read after an account switch", async () => 
   let release: (value: string) => void = () => {};
   const pending = new Promise<string>(resolve => { release = resolve; });
   const view = mount();
-  await user.click(await screen.findByRole("button", { name: "이미 받은 JSON 가져오기" }));
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
   const file = jsonFile(pending);
   const read = vi.spyOn(file, "text");
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), file);
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
   expect(read).toHaveBeenCalledOnce();
   view.rerender(<PersonalGoogleSetup {...view.props} account="other-installer" />);
-  await screen.findByRole("textbox", { name: "프로젝트 ID" });
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
   await act(async () => release(client));
   expect(requests).toEqual([{ method: "GET", account }, { method: "GET", account: "other-installer" }]);
 });
@@ -219,7 +134,7 @@ it("uses the stored status to resolve a conflicting upload", async () => {
   });
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: "이미 받은 JSON 가져오기" }));
+  await screen.findByLabelText("Google 웹 클라이언트 JSON");
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), jsonFile(client));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
   await screen.findByText("Google 앱 설정이 등록되어 있습니다.");

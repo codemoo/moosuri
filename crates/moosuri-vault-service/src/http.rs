@@ -84,6 +84,7 @@ impl Adapter {
 }
 #[derive(Clone)]
 pub struct Config {
+    pub kiri_recipient: Option<serde_json::Value>,
     pub origin: String,
     pub assistant_origin: String,
     pub authority: String,
@@ -122,6 +123,7 @@ impl Config {
             return Err(Error::Invalid);
         }
         Ok(Self {
+            kiri_recipient: None,
             origin: o,
             authority: a,
             secure: s,
@@ -188,6 +190,7 @@ fn routes(state: Service) -> Router {
             post(exchange).layer(DefaultBodyLimit::max(4096)),
         )
         .route("/session/current", get(current))
+        .route("/session/kiri-recipient", get(kiri_recipient))
         .route("/session/logout", post(logout))
         .route("/api/state", get(state_read))
         .route("/api/operations", post(prepare))
@@ -370,6 +373,16 @@ async fn exchange(
         .map_err(|_| Error::Unavailable)?,
     );
     Ok(response)
+}
+async fn kiri_recipient(State(s): State<Service>, h: HeaderMap) -> Result<Json<serde_json::Value>> {
+    let (owner, _) = authorized(&s, &h, false).await?;
+    let recipient = s
+        .config
+        .kiri_recipient
+        .as_ref()
+        .filter(|v| v["account"].as_str() == Some(&owner.account.to_string()))
+        .ok_or(Error::Unavailable)?;
+    Ok(Json(recipient.clone()))
 }
 async fn current(State(s): State<Service>, h: HeaderMap) -> Result<Json<protocol::CurrentSession>> {
     let (owner, _) = authorized(&s, &h, false).await?;

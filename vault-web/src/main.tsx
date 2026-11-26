@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {WorkerClient,VaultFailure} from "./worker-client";
 import type {Draft,EntryDetails,Owner,Preview,Receipt,Summary,Command,CurrentSession} from "./types";
 import {VaultField,VaultIcon,VaultList,itemName} from "./workspace";
-import {GoogleAutofill} from "./GoogleAutofill";
+import {sealGoogleLogin, validJob, type KiriRecipient} from "./kiri-google";
 import {MAX_ITEMS,MAX_TERMS,formatMiB,initialSelection,scopeLabel,selectable,selectionState,selector} from "./import-filter";
 import type {FilterMode} from "./import-filter";
 import {newPasswordIssue} from "./password";
@@ -23,6 +23,10 @@ function App(){
   const client=useRef<WorkerClient|null>(null),generation=useRef(0),ownerRef=useRef<Owner|null>(null),pendingStartup=useRef<Promise<unknown>|null>(null);
   const [assistant,setAssistant]=useState(""),[connected,setConnected]=useState(false),[initialized,setInitialized]=useState(true),[unlocked,setUnlocked]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
   const [googleEmail,setGoogleEmail]=useState("");
+  const [googleJob,setGoogleJob]=useState("");
+  const [googlePassword,setGooglePassword]=useState("");
+  const [googleAttempt,setGoogleAttempt]=useState(0);
+  const sentJob=useRef("");
   const [googleSelection,setGoogleSelection]=useState<{ email: string; items: Summary[] } | null>(null);
   const [password,setPassword]=useState(""),[useRecovery,setUseRecovery]=useState(false),[recovery,setRecovery]=useState<string|null>(null),[verify,setVerify]=useState("");
   const [items,setItems]=useState<Summary[]>([]),[query,setQuery]=useState(""),[selected,setSelected]=useState<string|null>(null),[draft,setDraft]=useState<Draft|null>(null),[editing,setEditing]=useState<string|null>(null);
@@ -42,7 +46,7 @@ function App(){
   function hideReveal(){revealOwner.current++;setRevealed(null)}
   function clearSelection(){setSelected(null);setDetail(null);setOtp(null);setConfirmDelete(false);hideReveal()}
   function lock(reason="vault_locked"){
-    setGoogleEmail("");
+    setGoogleEmail("");setGoogleJob("");setGooglePassword("");sentJob.current="";
     setGoogleSelection(null);
     generation.current++;client.current?.close();client.current=null;pendingStartup.current=null;busyRef.current=false;
     setUnlocked(false);setBusy(false);setScope("");setPassword("");setRecovery(null);setVerify("");setItems([]);setQuery("");clearSelection();setDraft(null);setEditing(null);
@@ -81,7 +85,10 @@ function App(){
           event.data?.kind === "moosuri-vault-google-account" && event.data.account === account &&
           ownerRef.current?.account === account && typeof event.data.email === "string" &&
           event.data.email.length <= 254 && /^[^@\s]+@[^@\s]+$/u.test(event.data.email)) {
-        setGoogleEmail(event.data.email);
+        if (validJob(event.data.job)) {
+          setGoogleEmail(event.data.email);
+          setGoogleJob(event.data.job);
+        }
       }
     };
     window.addEventListener("message", receive);
@@ -100,13 +107,33 @@ function App(){
         setGoogleSelection({ email: googleEmail, items: matches });
       }).catch(() => {
         if (epoch === generation.current && sequence === searchOwner.current) {
-          setGoogleSelection({ email: googleEmail, items: [] });
+          setGoogleSelection(null);
           setNotice("저장된 Google 로그인을 확인하지 못했습니다.");
         }
       });
     },250);
     return()=>{clearTimeout(timer);searchOwner.current++};
-  },[query,unlocked,frozen,googleEmail]);
+  },[query,unlocked,frozen,googleEmail,googleAttempt]);
+  async function sendToKiri(item: Summary) {
+    if (!googleJob || sentJob.current === googleJob || !ownerRef.current || !window.opener) return;
+    const epoch = generation.current, account = ownerRef.current.account;
+    sentJob.current = googleJob;
+    try {
+      const r = await fetch("/session/kiri-recipient", {cache:"no-store",credentials:"same-origin"});
+      if (!r.ok || epoch !== generation.current) throw Error();
+      const recipient: KiriRecipient = await r.json();
+      const envelope = await sealGoogleLogin(recipient, account, googleEmail, googleJob, item, run);
+      if (epoch !== generation.current) return;
+      window.opener.postMessage({kind:"moosuri-vault-kiri-sealed", job:googleJob, account, envelope}, assistant);
+      setNotice("Kiri에서 이 계정으로 로그인하고 있습니다.");
+    } catch {
+      if (epoch === generation.current) setNotice("Kiri에 로그인 항목을 전달하지 못했습니다. 연결 화면에서 다시 시도하세요.");
+    }
+  }
+  useEffect(() => {
+    if (unlocked && !frozen && googleJob && googleSelection?.email === googleEmail && googleSelection.items.length === 1)
+      void sendToKiri(googleSelection.items[0]);
+  }, [googleSelection, googleJob, googleEmail, unlocked, frozen]);
   async function saved(){const epoch=generation.current;await list();if(epoch!==generation.current)return;setInitialized(true);setUnlocked(true);setRecovery(null);setVerify("");setDraft(null);setEditing(null);setConfirmDelete(false);setUncertain(false);setOldPending([]);if(importing){const status=await run<{committed:number}>({op:"csv_status"});setImported(status.committed)}setNotice("저장했습니다.")}
   async function publish(){await run({op:"publish"});await saved()}
   useEffect(()=>{
@@ -322,8 +349,8 @@ function App(){
         <button type="button" onClick={()=>lock()}><VaultIcon name="lock"/>잠그기</button>
       </nav>
       <header className="member-page-heading">
-        <h1>{titles[screen]}</h1>
-        {screen === "list" && <button className="primary" type="button" disabled={frozen}
+        <h1>{googleJob ? "Google 연결" : titles[screen]}</h1>
+        {screen === "list" && !googleJob && <button className="primary" type="button" disabled={frozen}
           onClick={()=>openListAction(()=>{setDraft({...empty});setEditing(null)})}>
           <VaultIcon name="add"/>새 항목
         </button>}
@@ -388,9 +415,29 @@ function App(){
         {screen==="list"&&<section className="vault-list" aria-label="보관한 항목">
           {googleEmail && <div className="notice" role="status">
             <strong>{googleEmail}의 Google 로그인</strong>
-            <p>accounts.google.com에 저장한 이 계정의 항목을 선택하세요.</p>
-            <button type="button" onClick={() => { setGoogleEmail(""); setQuery(""); }}>전체 보관함 보기</button>
+            {googleSelection?.email !== googleEmail ? <p>저장된 계정을 확인하고 있습니다. <button onClick={()=>setGoogleAttempt(n=>n+1)}>다시 확인</button></p>
+              : googleSelection.items.length === 0 ? <form onSubmit={e=>{
+                e.preventDefault();
+                if (!googlePassword) return;
+                void perform(async()=>{
+                  const current=await run<Summary[]>({op:"google_logins",email:googleEmail});
+                  if (!current.length) {
+                    await run({op:"put",item:null,fields:{...empty,title:"Google",username:googleEmail,
+                      url:"https://accounts.google.com",secret:googlePassword}});
+                    setGooglePassword("");await publish();
+                  } else setGooglePassword("");
+                  setGoogleAttempt(n=>n+1);
+                });
+              }}>
+                <p>이 계정이 볼트에 없습니다. 비밀번호를 저장하면 Kiri가 로그인을 이어갑니다.</p>
+                <label>Google 계정 비밀번호<input type="password" autoComplete="off" required disabled={frozen} value={googlePassword}
+                  onChange={e=>setGooglePassword(e.target.value)}/></label>
+                <button className="primary" disabled={frozen||!googlePassword}>볼트에 저장하고 계속</button>
+              </form> : googleSelection.items.length > 1 ? <><p>같은 계정이 여러 개 있습니다. 사용할 항목을 선택하세요.</p>
+                {googleSelection.items.map(item=><button key={item.id} disabled={frozen||sentJob.current===googleJob} onClick={()=>void sendToKiri(item)}>{item.title}</button>)}</>
+                : <p>Kiri에서 저장된 계정으로 로그인을 이어갑니다.</p>}
           </div>}
+          {!googleJob && <>
           <div className="vault-list-tools">
             {!googleEmail && <label className="vault-search">
               <VaultIcon name="search"/><span className="vault-sr">항목 찾기</span>
@@ -401,7 +448,7 @@ function App(){
               <VaultIcon name="settings"/>설정
             </button>
           </div>
-          <VaultList items={visibleItems} query={googleEmail || query} disabled={frozen} onOpen={openItem}/>
+          <VaultList items={visibleItems} query={googleEmail || query} disabled={frozen} onOpen={openItem}/></>}
         </section>}
         {screen==="editor"&&draft&&<section aria-label={titles.editor}>
           <form onSubmit={e=>{e.preventDefault();void perform(async()=>{await run({op:"put",item:editing,fields:draft});await publish()})}} className="editor">
@@ -423,8 +470,6 @@ function App(){
           </form>
         </section>}
         {showingDetail&&selectedItem&&<section className="vault-detail" aria-label="보관 항목 상세">
-          {googleEmail && !frozen && <GoogleAutofill key={selectedItem.id + ":" + selectedItem.revision + ":" + googleEmail}
-            email={googleEmail} item={selectedItem} run={run} />}
           {(fields?.has_url||selectedItem.kind==="login")&&<div className="vault-card">
             <VaultField name="주소" disabled={frozen} onReveal={fields?.has_url?()=>void reveal("url"):undefined} onCopy={fields?.has_url?()=>void copy("url"):undefined}>
               {fields?.has_url?fields.host||"저장된 주소":fields&&!fields.failed?"주소 없음":itemName(selectedItem)}

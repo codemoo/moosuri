@@ -133,7 +133,7 @@ impl Enrollment {
             table: Mutex::new(Table::default()),
         }))
     }
-    fn enrolled(&self, a: &Allocation) -> bool {
+    pub(super) fn enrolled(&self, a: &Allocation) -> bool {
         Uuid::parse_str(&a.account_id).is_ok_and(|id| id == self.account)
     }
     fn table(&self) -> Result<std::sync::MutexGuard<'_, Table>, StatusCode> {

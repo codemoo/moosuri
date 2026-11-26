@@ -1,0 +1,12 @@
+[Unit]
+Description=One Google connection in the enrolled Kiri
+
+[Service]
+User=moosuri-kiri-owner
+ExecStart=/usr/local/libexec/moosuri-owner-vm-ssh "exec python3 -B .local/share/codex-kiri-chrome/google_connection.py"
+StandardInput=socket
+StandardOutput=socket
+StandardError=null
+RuntimeMaxSec=13min
+NoNewPrivileges=yes
+PrivateTmp=yes

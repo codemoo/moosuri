@@ -153,7 +153,7 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
     return () => clearTimeout(timer);
   }, [scope, enabled, returned]);
 
-  async function action(service: WorkspaceService, name: "connect" | "disconnect", matchMember = false) {
+  async function action(service: WorkspaceService, name: "disconnect") {
     if (busy || lock.current || status !== "ready") return;
     const grant = connections[service];
     lock.current = true;
@@ -165,31 +165,10 @@ export function usePersonalGoogleWorkspace({ session, expired, enabled, returned
           connection_id: grant.connection_id, epoch: grant.epoch,
         }, undefined, { timeoutMs: 15000 });
         setConnections((current) => ({ ...current, [service]: undefined }));
-      } else if (name === "connect" && !grant) {
-        const origin = currentConnectorOrigin(session);
-        const started = await scope.request<{ flow_id: string; authorization_url: string }>(`${base}/${service}/start`, "POST",
-          matchMember ? { match_member_account: true } : {}, undefined, { timeoutMs: 15000 });
-        const url = new URL(started.authorization_url);
-        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" ||
-            url.username || url.password || url.hash || !session.chat_draft_scope || !flowPattern.test(started.flow_id)) {
-          throw Error("invalid consent");
-        }
-        if (matchMember) url.searchParams.set("login_hint", session.user.email);
-        const pending: Pending = {
-          origin,
-          account: session.user.id,
-          session: session.chat_draft_scope,
-          service,
-          flow: started.flow_id,
-          expires: Date.now() + 600000,
-          phase: "consent",
-        };
-        sessionStorage.setItem(storageKey, JSON.stringify(pending));
-        location.assign(url.href);
       }
     } catch (error) {
       if (authError(error)) return;
-      setNotice({ service, message: name === "connect" ? "Google 연결을 시작할 수 없습니다." : "Google 연결 해제 결과를 확인하지 못했습니다." });
+      setNotice({ service, message: "Google 연결 해제 결과를 확인하지 못했습니다." });
       await refresh();
     } finally {
       lock.current = false;

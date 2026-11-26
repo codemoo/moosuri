@@ -33,6 +33,7 @@ use zeroize::Zeroizing;
 mod admin;
 mod browser;
 mod google;
+mod google_connection;
 mod google_setup;
 mod memory;
 mod tasks;
@@ -86,6 +87,7 @@ pub struct Options {
 }
 #[derive(Clone)]
 struct Gateway {
+    google_jobs: google_connection::Jobs,
     vault: Option<Arc<vault::Enrollment>>,
     origin: String,
     host: String,
@@ -215,6 +217,7 @@ impl Gateway {
             .transpose()?;
         let vault = vault::Enrollment::new(options, vault_site_origin.as_deref())?.map(Arc::new);
         Ok(Self {
+            google_jobs: Default::default(),
             vault,
             host: origin[8..].into(),
             origin,
@@ -1177,6 +1180,7 @@ fn router(g: Gateway) -> Router {
         .merge(browser::routes())
         .merge(tasks::routes())
         .merge(google::routes())
+        .merge(google_connection::routes())
         .merge(google_setup::routes())
         .merge(admin::routes())
         .with_state(g)

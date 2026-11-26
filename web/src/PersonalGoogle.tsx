@@ -335,7 +335,7 @@ export function usePersonalGoogle({
     );
     return () => clearTimeout(timer);
   }, [scope, session.user.id, session.chat_draft_scope, followReturn]);
-  async function action(name: "connect" | "read" | "disconnect", matchMember = false) {
+  async function action(name: "read" | "disconnect") {
     if (lock.current || busy) return;
     lock.current = true;
     setBusy(true);
@@ -350,25 +350,6 @@ export function usePersonalGoogle({
         setConnection(null);
       } else if (name === "read" && readIntent && connection) {
         await read(connection, readIntent);
-      } else if (name === "connect" || (name === "read" && readIntent)) {
-        const destination = name === "read" ? readIntent ?? undefined : undefined;
-        const origin = currentConnectorOrigin(session);
-        const started = await scope.request<{
-          flow_id: string;
-          authorization_url: string;
-        }>(base + "/start", "POST", { ...(destination ? { read: destination } : {}),
-          ...(matchMember ? { match_member_account: true } : {}) });
-        const url = new URL(started.authorization_url);
-        if (
-          url.origin !== "https://accounts.google.com" ||
-          url.pathname !== "/o/oauth2/v2/auth" ||
-          url.username || url.password || url.hash ||
-          !session.chat_draft_scope
-        )
-          throw Error("invalid consent");
-        if (matchMember) url.searchParams.set("login_hint", session.user.email);
-        save({ ...pending(destination, "consent", started.flow_id), origin });
-        location.assign(url.href);
       }
     } catch (e) {
       fail(e);
@@ -384,5 +365,5 @@ export function usePersonalGoogle({
     setNotice("");
     void update();
   }
-  return { connection, status, busy, notice, action, retry };
+  return { connection, status, busy, notice, action, retry, refreshRead:update };
 }

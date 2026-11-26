@@ -1,3 +1,4 @@
+import { connectInKiri } from "./kiri-google-connection";
 import { postVaultForm, trustedVaultOrigin } from "./VaultLaunch";
 import { setupOpenedFromAdmin, type MemberRoute } from "./member-route";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -38,7 +39,7 @@ function googleInfo(status: ConnectionStatus, mailbox: string | undefined, insta
   if (status === "checking") return { badge: { label: "확인 중" }, message: "연결 상태를 확인하고 있습니다." };
   if (status === "error") return { badge: { label: "확인 실패", tone: "attention" }, message: "연결 상태를 확인할 수 없습니다. 다시 확인해 주세요." };
   if (status === "disabled") {
-    if (installation === "required") return { badge: { label: "설치 설정 필요", tone: "attention" }, message: "Google Workspace에 웹 클라이언트를 등록하면 회원이 연결할 수 있습니다." };
+    if (installation === "required") return { badge: { label: "설치 설정 필요", tone: "attention" }, message: "Kiri에서 Google 로그인을 시작할 수 있습니다. 서비스 권한 연결에는 설치의 Google 앱 등록이 필요합니다." };
     if (installation === "configured") return { badge: { label: "연결 준비 중", tone: "attention" }, message: "이 회원의 Google 연결을 준비 중입니다. 잠시 후 다시 확인해 주세요." };
     return { badge: { label: "연결 불가", tone: "attention" }, message: "이 서버에서 Google 로그인을 아직 사용할 수 없습니다. 설치 관리자에게 문의해 주세요." };
   }
@@ -55,13 +56,6 @@ function getVaultInfo(connection: VaultConnectionState): ConnectionInfo {
     : { badge: { label: "볼트 주소 미설정", tone: "attention" }, message: "이 설치에 등록된 볼트 주소가 없습니다. 설치 관리자에게 문의해 주세요." };
 }
 
-const installationBadges: Record<InstallationStatus, StatusBadge> = {
-  checking: { label: "확인 중" },
-  required: { label: "설치 설정 필요", tone: "attention" },
-  configured: { label: "설치 설정 완료", tone: "connected" },
-  error: { label: "확인 실패", tone: "attention" },
-};
-
 export function PersonalConnections({
   onBack, installationAdmin = false, onAdminUnavailable, navigation, ...props
 }: Parameters<typeof usePersonalGoogle>[0] & { navigation?: { route: MemberRoute; open: (route: MemberRoute, back?: boolean) => void }; onBack: () => void; installationAdmin?: boolean; onAdminUnavailable?: () => void }) {
@@ -71,8 +65,14 @@ export function PersonalConnections({
       : props.readIntent || googleReturn() ? gmail : null,
   );
   const selected = navigation ? connectors.find(item => item.id === navigation.route.service) ?? null : localService;
-  const [vaultService, setVaultService] = useState<string | null>(null);
-  const matchMember = !!selected && selected.id === vaultService;
+  const connectScope=useScope(props.session.user.id, selected?.id);
+  const active=useRef<AbortController|null>(null);
+  const [connecting,setConnecting]=useState(false);
+  const [kiriMessage,setKiriMessage]=useState("");
+  useEffect(()=>{
+    setConnecting(false);setKiriMessage("");
+    return ()=>{active.current?.abort();active.current=null;};
+  },[connectScope]);
   const workspaceEnabled = selected !== gmail;
   const google = usePersonalGoogle(props, !workspaceReturn);
   const workspace = usePersonalGoogleWorkspace({ session: props.session, expired: props.expired, enabled: workspaceEnabled, returned: workspaceReturn });
@@ -187,14 +187,33 @@ export function PersonalConnections({
     </section>;
   }
 
-  const setupAction = installationAdmin && (
-    <button type="button" className={installation === "required" ? "member-page-action connector-primary" : "member-page-action"}
-      onClick={() => show(selected, true)}>Google Workspace 설정</button>
-  );
   const workspaceService = selected && isWorkspaceGoogleService(selected.id) ? selected.id : null;
   const gmailRead = selected?.id === gmail.id && Boolean(props.readIntent);
   const memberFlow = selected?.id === gmail.id ? google : workspace;
-  const googleActionBusy = memberFlow.busy || vaultStatus.busy;
+  async function connect(read=false) {
+    if (active.current || !selected || vaultStatus.status!=="ready") return;
+    const controller=new AbortController();active.current=controller;setConnecting(true);
+    try {
+      const result=await connectInKiri(connectScope.request,props.session.user.id,props.session.user.email,selected.id,vaultStatus.siteOrigin,
+        read ? props.readIntent??undefined : undefined,controller.signal,setKiriMessage);
+      if(controller.signal.aborted)return;
+      const prefix="/personal/google"+(workspaceService?"/"+workspaceService:"");
+      const grant=await connectScope.request<{flow_id:string;mailbox:string;continuation?:{thread_id:string;request_id:string}}>(
+        prefix+"/complete","POST",{handle:result.handle},controller.signal,{timeoutMs:75000});
+      if(grant.flow_id!==result.flow || grant.mailbox.toLowerCase()!==props.session.user.email.toLowerCase()) throw Error("Google 연결 계정을 확인하지 못했습니다.");
+      setKiriMessage("Google 서비스 연결을 확인했습니다.");
+      if(workspaceService) await workspace.retry();
+      else if(read && props.readIntent && props.readIntent.thread_id===grant.continuation?.thread_id && props.readIntent.request_id===grant.continuation.request_id)
+        await google.refreshRead(props.readIntent);
+      else google.retry();
+    } catch(error) {
+      if(!controller.signal.aborted) {
+        if(error instanceof ApiFailure && error.status===401)props.expired();
+        else setKiriMessage(error instanceof ApiFailure && error.status===409?"이 계정에 진행 중인 Kiri 연결이 있습니다.":
+          error instanceof Error && !(error instanceof ApiFailure)?error.message:"Google 연결 상태를 확인하지 못했습니다.");
+      }
+    } finally {if(active.current===controller){active.current=null;setConnecting(false);}}
+  }
   const mailbox = selected ? mailboxFor(selected) : undefined;
   const notice = selected?.id === gmail.id ? google.notice
     : workspaceService && workspace.notice?.service === workspaceService ? workspace.notice.message : undefined;
@@ -227,51 +246,22 @@ export function PersonalConnections({
             )
           ) : (
             <>
-              {memberFlow.status === "ready" && (
-                <>
-                  {gmailRead && (
-                    <button type="button" className="member-page-action connector-primary" disabled={googleActionBusy} onClick={() => void google.action("read", matchMember)}>
-                      {mailbox ? "메일 확인" : "Google로 연결하고 이 대화에서 메일 확인"}
-                    </button>
-                  )}
-                  {mailbox ? (
-                    <button type="button" className="member-page-action" disabled={memberFlow.busy} onClick={() => {
-                      if (workspaceService) void workspace.action(workspaceService, "disconnect");
-                      else void google.action("disconnect");
-                    }}>연결 해제</button>
-                  ) : (
-                    <button type="button" className={gmailRead ? "member-page-action" : "member-page-action connector-primary"}
-                      disabled={googleActionBusy} onClick={() => {
-                        if (workspaceService) void workspace.action(workspaceService, "connect", matchMember);
-                        else void google.action("connect", matchMember);
-                      }}>{matchMember ? props.session.user.email + " 연결" : gmailRead ? "Google 연결만" : "Google 연결"}</button>
-                  )}
-                  {matchMember && !mailbox && <button type="button" className="member-page-action"
-                    disabled={googleActionBusy} onClick={() => setVaultService(null)}>다른 Google 계정 선택</button>}
-                </>
-              )}
-              {(memberFlow.status === "error" || (memberFlow.status === "disabled" && !(installationAdmin && installation === "required"))) && !memberFlow.busy && (
-                <button type="button" className="member-page-action" onClick={() => void memberFlow.retry()}>다시 확인</button>
-              )}
-              {setupAction}
-              {vaultStatus.status === "ready" && !mailbox && (
-                <button type="button" className="member-page-action" disabled={vaultStatus.busy}
-                  onClick={() => void vaultStatus.open(props.session.user.email, () => setVaultService(selected.id))}>볼트에서 내 Google 로그인 찾기</button>
-              )}
+              {mailbox ? <>
+                {gmailRead && <button className="member-page-action connector-primary" disabled={memberFlow.busy} onClick={()=>void google.action("read")}>메일 확인</button>}
+                <button className="member-page-action" disabled={memberFlow.busy} onClick={()=>{
+                  if(workspaceService)void workspace.action(workspaceService,"disconnect");else void google.action("disconnect");
+                }}>연결 해제</button>
+              </> : <button className="member-page-action connector-primary" disabled={connecting || vaultStatus.status!=="ready" || memberFlow.status==="checking"}
+                onClick={()=>void connect(gmailRead)}>{gmailRead?"Google 연결하고 메일 확인":"Google 연결"}</button>}
+              {!mailbox && vaultStatus.status!=="ready" && <p role="status">{getVaultInfo(vaultStatus).message}</p>}
+              {kiriMessage && <p role="status">{kiriMessage}</p>}
+              {connecting && <button className="member-page-action" onClick={()=>{active.current?.abort();setKiriMessage("연결을 취소했습니다.");}}>취소</button>}
               {vaultStatus.failure && <p className="connector-notice" role="status">{vaultStatus.failure}</p>}
             </>
           )}
         </ConnectorDetail>
       ) : (
         <>
-          {installationAdmin && <section className="member-page-list connector-installation" aria-labelledby="connector-installation-title">
-            <div className="connector-installation-copy">
-              <h2 id="connector-installation-title">Google Workspace 설치 설정</h2>
-              <div role="status"><Badge badge={installationBadges[installation]} /></div>
-              <p>{installation === "configured" ? "회원은 아래에서 서비스를 선택해 자기 Google 계정을 연결할 수 있습니다." : "회원이 자기 Google 계정을 연결할 수 있도록 이 설치에 사용할 Google 앱을 등록하세요."}</p>
-            </div>
-            {setupAction}
-          </section>}
           <div className="connector-controls">
             <label className="member-library-filter">
               <WorkspaceIcon name="search" />
@@ -373,7 +363,7 @@ function useVaultConnection(account: string, expired: () => void) {
   }, [scope, expired]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  async function open(googleEmail?: string, onHandoff?: () => void) {
+  async function open() {
     if (connection.status !== "ready" || busy) return;
     const expected = connection.siteOrigin;
     setBusy(true);
@@ -391,8 +381,7 @@ function useVaultConnection(account: string, expired: () => void) {
       if (typeof handoff.token !== "string" || !/^[0-9a-f]{64}$/i.test(handoff.token) || handoff.vault_origin !== expected) {
         throw new Error("vault_unavailable");
       }
-      postVaultForm(popup, target, { token: handoff.token, vault_origin: expected }, account, googleEmail);
-      onHandoff?.();
+      postVaultForm(popup, target, { token: handoff.token, vault_origin: expected }, account);
     } catch (error) {
       popup.close();
       if (isAborted(error)) return;

@@ -180,7 +180,7 @@ fn open(g: &Gateway, state: &str) -> Result<(Route, String, Option<&'static str>
         service,
     ))
 }
-fn consent_url(
+pub(super) fn consent_url(
     g: &Gateway,
     a: &SessionAllocation,
     bytes: &[u8],
@@ -326,6 +326,15 @@ async fn callback(
                 .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
             format!("/#google_handle={handle}&flow={flow}")
         };
+        if google_connection::capture(
+            &g,
+            &a,
+            service,
+            &flow,
+            v["handle"].as_str().filter(|_| input.error.is_none()),
+        ) {
+            return Ok((StatusCode::OK, "Kiri Google 연결 요청을 받았습니다.").into_response());
+        }
         let path = match service {
             Some(name) => format!("{path}&google_service={name}"),
             None => path,

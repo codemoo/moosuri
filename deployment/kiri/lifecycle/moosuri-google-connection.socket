@@ -1,0 +1,12 @@
+[Unit]
+Description=Moosuri private Google connection to enrolled Kiri
+
+[Socket]
+ListenStream=/run/moosuri-google-connection/owner.sock
+DirectoryMode=0700
+SocketMode=0600
+Accept=yes
+MaxConnections=2
+
+[Install]
+WantedBy=sockets.target

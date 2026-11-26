@@ -21,6 +21,9 @@ struct Args {
     origin: Option<String>,
     #[arg(long)]
     assistant_origin: Option<String>,
+    /// Public encryption key and owner of the enrolled Kiri.
+    #[arg(long)]
+    kiri_recipient_file: Option<PathBuf>,
     #[arg(long, default_value = "http://127.0.0.1:3211/internal/v1/vault")]
     adapter_url: String,
     #[arg(long)]
@@ -301,7 +304,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !moosuri_vault_service::http::has_assets() {
         return Err("build_vault_web_before_rust_binary".into());
     }
-    let config = Config::new(&origin, &assistant_origin, args.dev)?;
+    let mut config = Config::new(&origin, &assistant_origin, args.dev)?;
+    if let Some(path) = args.kiri_recipient_file {
+        let data = std::fs::read(path)?;
+        let recipient: serde_json::Value = serde_json::from_slice(&data)?;
+        if data.len() > 2048
+            || ["account", "email", "spki"]
+                .iter()
+                .any(|k| recipient[*k].as_str().is_none())
+        {
+            return Err("invalid_kiri_recipient".into());
+        }
+        config.kiri_recipient = Some(recipient);
+    }
     let adapter = Adapter::new(&args.adapter_url, private_key(&adapter_key_file)?)?;
     let db = Arc::new(Mutex::new(Database::open(data_dir)?));
     let app = router_shared(db.clone(), adapter, config);

@@ -29,3 +29,17 @@ schema103 and unchanged mounts/UID were confirmed, public assets matched the
 build, and an unauthenticated valid connection request returned 401. Kiri's
 Gmail button opened the locked member vault even without an OAuth app; the test
 was cancelled before any credential delivery. [Work log](../../../docs/reviews/2026-11-26-google-account-selection.md)
+
+- [x] Exercise the production vault unlock, encrypted Google-item save and Kiri delivery.
+- [x] Verify and deploy bounded Google-device-verification waiting discovered in the live attempt.
+
+The live attempt reached the additional-verification outcome. It did not prove
+completed Google sign-in or a service grant. No private values are included in
+this record or the test fixtures.
+
+The matched gateway/UI/helper update was deployed. A production retry unlocked
+the vault, reused the single saved Google login without reentry, and displayed
+the pending-verification state while the Kiri job remained active. The user approved
+the device request; the same attempt reached `setup_required`, proving matching
+Google account sign-in. Installation OAuth registration, consent and a Gmail
+read remain incomplete. The one-shot Kiri login helper exited after this result.

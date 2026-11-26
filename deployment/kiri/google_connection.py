@@ -90,22 +90,42 @@ def next_button(controls, labels):
         return buttons[0]['ref']
 
 
-def accounts_page(browser, tab):
+def accounts_page(browser, tab, *, allow_verification=False):
     view = browser.call('controls', tab=tab)
     google.provider_stop(view)
     if view.get('reason') == 'verification':
+        if allow_verification:
+            return view
         raise google.Outcome('needs_human', 'verification')
     if view.get('origin') not in (None, google.ACCOUNTS, google.ACCOUNT_HOME):
         raise google.Outcome('blocked', 'unexpected_origin')
     return view
 
 
-def login(browser, tab, email, secret, *, identified=False, clock=time.monotonic, sleep=time.sleep):
+def login(browser, tab, email, secret, *, identified=False, clock=time.monotonic, sleep=time.sleep, on_verification=None):
     submitted = False
+    awaiting_verification = False
     end = clock() + 90
     while clock() < end:
-        view = accounts_page(browser, tab)
+        view = accounts_page(browser, tab, allow_verification=True)
         controls = view.get('controls', [])
+        challenge = view.get('reason') == 'verification'
+        if (identified and view.get('origin') == google.ACCOUNTS and not google.identifier_controls(controls)
+                and not any(c.get('type') == 'password' for c in controls)):
+            page = browser.call('read', tab=tab)
+            challenge = challenge or any(phrase in page.get('text', '').casefold() for phrase in google.PHONE)
+        if challenge:
+            if not identified:
+                raise google.Outcome('needs_human', 'verification')
+            if not awaiting_verification:
+                awaiting_verification = True
+                end = clock() + 120
+                if on_verification:
+                    on_verification()
+            # The member approves on their own Google device. No challenge
+            # contents, OTPs or cookies cross the gateway; polling is cancellable.
+            sleep(.65)
+            continue
         if view.get('origin') == google.ACCOUNT_HOME:
             if identified and google.account_matches(controls, email):
                 return
@@ -220,7 +240,8 @@ def main():
             time.sleep(.4)
         else:
             raise google.Outcome('needs_human', 'form_changed')
-        login(browser, tab, config['email'], secret, identified=True, clock=connected_clock)
+        login(browser, tab, config['email'], secret, identified=True, clock=connected_clock,
+              on_verification=lambda: google.send({'status':'verifying'}))
         google.send({'status':'signed_in'})
         payload = google.receive(8192, 45)
         consent(browser, payload['url'], config, request['service'], clock=connected_clock)

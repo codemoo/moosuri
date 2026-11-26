@@ -70,6 +70,41 @@ class Connection(unittest.TestCase):
             with self.assertRaises(flow.google.Outcome):
                 self.run_login(b)
             self.assertEqual(b.actions,[])
+    def test_device_approval_continues_same_browser_without_resubmitting_password(self):
+        b=Browser([page(FIELD,NEXT),page(PASS,NEXT,dict(label=EMAIL)),
+                   {'reason':'verification'},{'reason':'verification'},HOME])
+        notices=[]
+        flow.login(b,TAB,EMAIL,bytearray(b'synthetic'),clock=itertools.count().__next__,sleep=lambda _:None,
+                   on_verification=lambda:notices.append('waiting'))
+        self.assertEqual(notices,['waiting'])
+        self.assertEqual([v['text'] for op,v in b.actions if op=='fill'],[EMAIL,'synthetic'])
+    def test_phone_notice_with_controls_waits_for_device_approval(self):
+        class PhoneBrowser(Browser):
+            def call(self,op,**kwargs):
+                if op=='read':return {'text':'Check your phone to continue'}
+                return super().call(op,**kwargs)
+        b=PhoneBrowser([page(dict(role='button',label='Try another way')),HOME])
+        notices=[]
+        flow.login(b,TAB,EMAIL,bytearray(b'synthetic'),identified=True,
+                   clock=itertools.count().__next__,sleep=lambda _:None,on_verification=lambda:notices.append('waiting'))
+        self.assertEqual(notices,['waiting']);self.assertEqual(b.actions,[])
+    def test_verification_timeout_is_bounded_without_automatic_challenge_actions(self):
+        b=Browser([{'reason':'verification'}]*200)
+        notices=[]
+        with self.assertRaises(flow.google.Outcome):
+            flow.login(b,TAB,EMAIL,bytearray(b'synthetic'),identified=True,
+                       clock=itertools.count().__next__,sleep=lambda _:None,
+                       on_verification=lambda:notices.append('waiting'))
+        self.assertEqual(notices,['waiting']);self.assertEqual(b.actions,[])
+    def test_disconnect_while_waiting_for_device_stops_without_password_submission(self):
+        b=Browser([{'reason':'verification'}]*10)
+        ticks=iter([0,1,2])
+        def clock():
+            try:return next(ticks)
+            except StopIteration:raise ValueError('connection closed')
+        with self.assertRaisesRegex(ValueError,'connection closed'):
+            flow.login(b,TAB,EMAIL,bytearray(b'synthetic'),identified=True,clock=clock,sleep=lambda _:None)
+        self.assertEqual(b.actions,[])
     def test_closed_gateway_stops_before_password_submission(self):
         browser=Browser([page(PASS,NEXT,dict(label=EMAIL))])
         with patch.object(flow.select,'select',side_effect=[([],[],[]),([0],[],[])]):

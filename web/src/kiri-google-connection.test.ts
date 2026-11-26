@@ -109,3 +109,12 @@ it.each([401,403,404])("terminates reconciliation on definite Status HTTP %s",as
   await vi.advanceTimersByTimeAsync(1400);await outcome;
   expect(popup.closed).toBe(true);expect(ops).toEqual(["start","deliver","status","cancel"]);
 });
+
+it("keeps polling the same Kiri attempt while Google waits for device verification",async()=>{
+  const {start,ops,popup}=setup(["vault","opening","verifying","verifying","consent","complete"]);
+  const result=start();await vi.advanceTimersByTimeAsync(0);
+  await vi.mocked(postVaultForm).mock.calls[0][5]!.receive({key:"sealed"},"selected@example.test");
+  await vi.advanceTimersByTimeAsync(6600);
+  expect((await result).email).toBe("selected@example.test");
+  expect(ops.filter(op=>op==="start")).toHaveLength(1);expect(ops).not.toContain("cancel");expect(popup.closed).toBe(true);
+});

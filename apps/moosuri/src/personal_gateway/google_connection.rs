@@ -267,6 +267,16 @@ fn record_run_state(j: &mut Job, state: &'static str, now: Instant) {
         j.expires = j.expires.max(now + TERMINAL_RECEIPT_LIFETIME);
     }
 }
+fn finish_run(j: &mut Job, state: &'static str, teardown_confirmed: bool, now: Instant) {
+    record_run_state(j, state, now);
+    j.stop = None;
+    j.guest_active = !teardown_confirmed;
+    j.guest_deadline = (!teardown_confirmed).then_some(now + GUEST_TEARDOWN_GRACE);
+    if let Some(deadline) = j.guest_deadline {
+        // The receipt owns the live-guest fence; it must survive its full grace.
+        j.expires = j.expires.max(deadline);
+    }
+}
 fn expire_active_guests(jobs: &mut [Job], now: Instant) {
     for j in jobs
         .iter_mut()
@@ -312,6 +322,26 @@ fn confirm_opening(
     jobs[winner].state = "opening";
     Ok(())
 }
+fn confirm_verification(
+    jobs: &mut [Job],
+    id: Uuid,
+    challenge: Uuid,
+    a: &SessionAllocation,
+    session: &str,
+    email: &str,
+) -> Result<(), StatusCode> {
+    let job = jobs
+        .iter_mut()
+        .find(|j| {
+            j.id == id
+                && j.challenge == challenge
+                && j.state == "opening"
+                && j.owned_by(a, session, email)
+        })
+        .ok_or(GONE)?;
+    job.state = "verifying";
+    Ok(())
+}
 fn confirm_signed_in(
     jobs: &mut Vec<Job>,
     id: Uuid,
@@ -325,7 +355,7 @@ fn confirm_signed_in(
         .position(|j| {
             j.id == id
                 && j.challenge == challenge
-                && j.state == "opening"
+                && matches!(j.state, "opening" | "verifying")
                 && j.owned_by(a, session, email)
         })
         .ok_or(GONE)?;
@@ -554,12 +584,7 @@ async fn handle(
                         }
                     };
                     let _ = change(&gateway, request_id, challenge, |j| {
-                        let now = Instant::now();
-                        record_run_state(j, state, now);
-                        j.stop = None;
-                        j.guest_active = !teardown_confirmed;
-                        j.guest_deadline =
-                            (!teardown_confirmed).then_some(now + GUEST_TEARDOWN_GRACE);
+                        finish_run(j, state, teardown_confirmed, Instant::now());
                     });
                 });
             }
@@ -640,9 +665,75 @@ mod tests {
     #[test]
     fn only_the_vault_state_accepts_delivery() {
         assert!(deliverable("vault"));
-        for state in ["validating", "opening", "signed_in", "consent", "complete"] {
+        for state in [
+            "validating",
+            "opening",
+            "verifying",
+            "signed_in",
+            "consent",
+            "complete",
+        ] {
             assert!(!deliverable(state));
         }
+    }
+
+    #[test]
+    fn verification_wait_preserves_ownership_and_can_finish_or_cancel() {
+        let a = owner(7);
+        let job = pending(&a, "opening");
+        let id = job.id;
+        let challenge = job.challenge;
+        let mut jobs = vec![job];
+        assert_eq!(
+            confirm_verification(&mut jobs, id, challenge, &a, "other", "member@example.test"),
+            Err(GONE)
+        );
+        confirm_verification(
+            &mut jobs,
+            id,
+            challenge,
+            &a,
+            "session",
+            "member@example.test",
+        )
+        .unwrap();
+        assert!(!terminal(jobs[0].state));
+        assert!(member_has_live_job(&jobs, &a, "member@example.test", None));
+        confirm_signed_in(
+            &mut jobs,
+            id,
+            challenge,
+            &a,
+            "session",
+            "member@example.test",
+        )
+        .unwrap();
+        assert_eq!(jobs[0].state, "signed_in");
+        jobs[0].state = "verifying";
+        jobs[0].guest_active = true;
+        cancel_job(&mut jobs, 0);
+        assert_eq!(
+            confirm_signed_in(
+                &mut jobs,
+                id,
+                challenge,
+                &a,
+                "session",
+                "member@example.test"
+            ),
+            Err(GONE)
+        );
+        assert_eq!(
+            confirm_verification(
+                &mut jobs,
+                id,
+                challenge,
+                &a,
+                "session",
+                "member@example.test"
+            ),
+            Err(GONE)
+        );
     }
 
     #[test]
@@ -1008,6 +1099,23 @@ mod tests {
     }
 
     #[test]
+    fn receipt_retains_the_guest_fence_until_full_teardown_grace() {
+        let a = owner(7);
+        let now = Instant::now();
+        let mut job = pending(&a, "verifying");
+        job.expires = now + Duration::from_secs(1);
+        finish_run(&mut job, "unavailable", false, now);
+        let mut jobs = vec![job];
+        let after_receipt = now + TERMINAL_RECEIPT_LIFETIME + Duration::from_secs(1);
+        expire_active_guests(&mut jobs, after_receipt);
+        jobs.retain(|j| j.expires > after_receipt);
+        assert_eq!(jobs.len(), 1);
+        assert!(member_has_live_job(&jobs, &a, "member@example.test", None));
+        expire_active_guests(&mut jobs, now + GUEST_TEARDOWN_GRACE);
+        assert!(!member_has_live_job(&jobs, &a, "member@example.test", None));
+    }
+
+    #[test]
     fn early_provider_result_does_not_shorten_the_run_window() {
         let a = owner(7);
         let mut job = pending(&a, "consent");
@@ -1214,7 +1322,22 @@ async fn run(
     // reservations remain available until this attempt signs in successfully.
     begin_opening(g, id, challenge, a, session, email)?;
     send(&mut peer, json!({"status":"proceed"})).await?;
-    let state = authorized_phase(g, a, session, email, &mut peer, false).await?;
+    let mut awaiting_verification = false;
+    let state = loop {
+        let state = authorized_phase(g, a, session, email, &mut peer, false).await?;
+        if state != "verifying" {
+            break state;
+        }
+        if awaiting_verification {
+            return Err(UNAVAILABLE);
+        }
+        reauthorize(g, a, session, email).await?;
+        {
+            let mut jobs = g.google_jobs.lock().map_err(|_| UNAVAILABLE)?;
+            confirm_verification(&mut jobs, id, challenge, a, session, email)?;
+        }
+        awaiting_verification = true;
+    };
     if state != "signed_in" {
         return stopped(&state);
     }

@@ -4,15 +4,15 @@
 
 ## 운영 중인 Kiri
 
-11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트는 생성되어 있으나 잠겨 있다. Google Workspace 설치 앱과 회원 권한은 미등록이다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)
+11월 26일 새로 설치한 운영 환경은 관리자 한 명으로 시작했다. 새 볼트는 비밀번호 8자부터 만들 수 있다. 관리자 볼트에 Google 로그인 항목을 암호화 저장했다. Google Workspace 설치 앱과 회원 권한은 미등록이다. 아래 표의 볼트 가져오기와 기기 등록 기록은 재설치 이전의 검증이다. [회원 볼트 개편과 Linux 검증](../openspec/changes/align-member-vault/tasks.md)
 
 | 영역 | 확인한 동작 | 남은 일 |
 | --- | --- | --- |
 | 계정과 개인 데이터 | 로그인·대화·수동 기억·Google 권한은 회원 볼륨에 저장한다. 회원은 기억을 여러 페이지에 걸쳐 검색하고 같은 로그인 세션에서 화면을 오가며 초안을 이어 쓸 수 있다. 설치 관리자는 회원을 초대·정지하고 사용량을 확인한다. [관리 안내](../deployment/kiri/admin.md) | 현재 운영은 새 볼륨으로 시작했다. 기존 데이터와 키를 보존하는 전환 및 독립 복구는 일부 합성 자료로만 검증했다. [전환 작업표](../openspec/changes/isolate-account-runtime/tasks.md) |
 | 모델 | 설치 관리자만 모델과 추론 강도를 지정한다. 11월 21일 운영 회원 소켓에서 Claude Sonnet 5.5 / medium으로 산술 응답, 다음 문서 선택, 시간표의 출발 시각과 승강장 답변을 확인했다. [엔진 설정](../deployment/kiri/admin.md) | 운영 ChatGPT 연결에는 별도 인증이 필요하다. [구독 연결](../deployment/kiri/subscriptions.md) |
 | 작업 브라우저 | 대화에서 공개 페이지를 읽고 같은 탭에서 조건을 바꾼 후 작업을 재개한다. 등록한 회원의 Google 로그인은 전용 Kiri Chrome에서 실행한다. Google이 계정을 확인한 뒤 같은 프로필에 회원 연결 탭을 여는 기능을 운영에 배포했다. [사용 안내](../deployment/kiri/browser.md) | 실계정은 Google 비밀번호 화면까지 도달했다. 볼트 자동 입력·계정 확인과 같은 프로필에서의 실제 동의, 실물 iOS·Android 재진입, 동시 사용 지연 측정이 남았다. [운영 워크로그](reviews/2026-11-25-google-vault-connection.md) |
-| Google Workspace | Google 연결은 먼저 회원 볼트에서 Google 계정을 확인한다. 가입 이메일과 다른 Google 계정도 선택할 수 있고, 선택한 계정과 공급자가 확인한 계정이 일치할 때만 권한을 저장한다. 설치 앱이 없는 관리자도 볼트 확인까지 진행할 수 있다. [연결 절차](../deployment/kiri/google.md) | 운영 Kiri에서 Gmail 연결 버튼과 볼트 열림을 확인했다. 실제 Google 로그인·OAuth 앱 등록·동의·Gmail 조회는 미완료다. [검증과 재개 조건](reviews/2026-11-26-google-account-selection.md) |
-| 볼트 | Google 로그인 항목이 없으면 이메일과 비밀번호를 암호화 저장하고, 하나면 재사용하며, 여러 개면 선택한다. Linux Chromium에서 세 흐름과 선택 이메일의 암호문 바인딩을 확인하고 운영에 배포했다. [검증 기록](reviews/2026-11-26-google-account-selection.md) | 운영 실계정 검증은 볼트 잠금 해제와 Google 항목 확인이 필요하다. 비밀번호를 대화나 로그에 전달하지 않는다. |
+| Google Workspace | Google 연결은 먼저 회원 볼트에서 Google 계정을 확인한다. 가입 이메일과 다른 Google 계정도 선택할 수 있고, 선택한 계정과 공급자가 확인한 계정이 일치할 때만 권한을 저장한다. 설치 앱이 없는 관리자도 볼트 확인까지 진행할 수 있다. [연결 절차](../deployment/kiri/google.md) | 운영 Kiri에서 Gmail 연결 버튼과 볼트 열림을 확인했다. 운영 계정은 볼트 항목 재사용과 기기 승인 후 Google 로그인을 완료했다. OAuth 앱 등록·서비스 동의·Gmail 조회는 미완료다. [검증과 재개 조건](reviews/2026-11-26-google-account-selection.md) |
+| 볼트 | Google 로그인 항목이 없으면 이메일과 비밀번호를 암호화 저장하고, 하나면 재사용하며, 여러 개면 선택한다. Linux Chromium에서 세 흐름과 선택 이메일의 암호문 바인딩을 확인하고 운영에 배포했다. [검증 기록](reviews/2026-11-26-google-account-selection.md) | 운영에서 볼트 잠금 해제·신규 Google 항목 저장·Kiri 인계를 확인했다. 기기 승인 후 Google 로그인을 확인했다. 서비스 OAuth 동의와 조회는 미완료다. |
 
 ## 회원 UI 개편과 검증 범위
 

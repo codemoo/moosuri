@@ -12,6 +12,7 @@ const waiting: Record<string,string> = {
   validating:"볼트에서 선택한 Gmail 계정을 Kiri가 확인하고 있습니다.",
   opening:"볼트에서 선택한 계정으로 Kiri를 여는 중입니다.",
   vault:"볼트에서 Gmail 계정을 먼저 확인하고 있습니다.",
+  verifying:"Google의 추가 본인 확인을 기다리고 있습니다. 휴대전화에 Google 승인 요청이 왔다면 확인해 주세요.",
   signing_in:"Kiri에서 Google에 로그인하고 있습니다.",
   signed_in:"Google 로그인을 확인했습니다. 서비스 연결을 준비하고 있습니다.",
   consent:"Kiri에서 Google 서비스 권한을 연결하고 있습니다.",

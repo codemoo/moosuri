@@ -31,3 +31,12 @@ The selected Google email MAY differ from the Moosuri member email.
 #### Scenario: Handoff response is lost
 - **WHEN** Deliver has no confirmed response
 - **THEN** the vault stays open until canonical status resolves the delivery
+
+#### Scenario: Google requests device verification
+- **WHEN** Google requests additional verification after the selected identifier was submitted
+- **THEN** the same isolated Kiri session waits for up to 120 seconds and the member sees the pending state
+- **AND** no challenge is approved automatically and the password is not submitted again
+
+#### Scenario: Device verification is cancelled or expires
+- **WHEN** the member cancels, authorization is revoked or the verification deadline expires
+- **THEN** the Kiri session is discarded and no successful connection is claimed

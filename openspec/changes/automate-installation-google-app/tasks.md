@@ -557,3 +557,22 @@ identities, so the existing re-probe and exact-byte comparison are retained.
 Pending: an unmodified source installation, real post-probe interruption/resume,
 installed-member/Vault/invitation scenarios and reboot. Production and the default
 public installer remain unchanged; OAuth issuance and real Gmail read remain open.
+
+### Host startup correction — 2026-11-27
+
+Rebooting the empty-data Ubuntu guest exposed a real startup race: Kiri's default
+loopback HTTP/HTTPS routers occupied ports 80/443 before nginx. The host installer
+now uses Kiri 0.2.2's supported `/kiri/domains` API to persist 18780/18743 before
+installing/starting nginx. A changed port plan requires an empty engine; replaying
+an already-matching plan finishes persistence without restarting containers.
+The read waits boundedly for the engine socket. Actual Ubuntu curl testing showed
+that `--retry-connrefused` did not retry an absent Unix socket, so read-only retries
+use `--retry-all-errors`. JSON contract mismatches still fail immediately.
+
+Linux `xtask` compilation passed. Independent Claude Sonnet 5.5 / medium review
+found no definite material defect after startup ordering was repaired; its absent
+socket observation was reproduced and fixed. The unmodified source installation
+at `adc8be7` passed host preparation and is building all artifacts in the disposable
+VM. Later host-only revisions are `0429b1c` and `4c246eb`. Completed installation,
+post-probe crash/resume, installed member/Vault scenarios and reboot are not yet
+claimed. Production and public main remain unchanged.

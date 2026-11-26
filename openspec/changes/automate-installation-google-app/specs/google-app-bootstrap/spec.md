@@ -102,6 +102,14 @@ distribution while keeping each member's vault and service tokens private.
 - **WHEN** a visitor follows the public homepage and policy links without a session
 - **THEN** the information remains readable across mobile layout and reload, no member or model request is made, and existing host, origin, method and API-route restrictions remain enforced
 
+#### Scenario: Publication was interrupted before confirmation
+- **WHEN** an unconfirmed publication setting has a fresh exact readback showing it is absent
+- **THEN** the same saved app can retry that idempotent setting under fresh authority with at most three durable attempts in total; a positive readback settles without another write, and project/client creation is never replayed by this recovery
+
+#### Scenario: A managed app is not published
+- **WHEN** a managed checkpoint exists but Domains and Publish are not both confirmed, or the registry cannot be read
+- **THEN** every member consent-start path refuses to issue a new authorization URL, even if a private client file already survived an interrupted save
+
 #### Scenario: Another member connects
 - **WHEN** an app is registered and another member connects Google
 - **THEN** the member uses that app and independently consents with their own Google account

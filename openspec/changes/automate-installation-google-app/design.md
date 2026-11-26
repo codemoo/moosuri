@@ -173,9 +173,19 @@ production publishing status, while retaining Google's unverified-app warning,
 user cap, enterprise policies and any verification requirement. Personal mode is
 not shareable; Testing is only an intermediate development state and has a
 seven-day test authorization lifetime. A published app is not a verified app.
-Production transition still needs actual Console observation and a journalled
-implementation before release. Do not silently declare the current Testing app
-ready for all members.
+The candidate journals Domains and Publish after saving the client, separately
+from the earlier Console checkpoints. Registered is not proof of publication.
+An old checkpoint is not backfilled; every consent-start route blocks managed
+setup until both publication commands are confirmed. Actual Console publication
+and new-member consent still require live acceptance before release.
+
+A response loss is reconciled against the exact provider state. Only the two
+idempotent publication settings can retry after a fresh positive Absent readback,
+under the current lease and fresh authority, with three durable attempts total.
+Confirmed state that has drifted, incomplete DOM, or unreadable registry never
+permits a write. Resource creation retains its no-blind-replay contract. An
+exhausted publication can still settle from a positive readback. No provider
+verification, scope relaxation or domain suffix inference is performed.
 
 Google's [limited-audience exception](https://support.google.com/cloud/answer/13464323?hl=en)
 and [audience guidance](https://support.google.com/cloud/answer/15549945?hl=en)

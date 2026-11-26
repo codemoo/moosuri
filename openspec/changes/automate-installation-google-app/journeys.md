@@ -13,16 +13,17 @@ Status: **live pass** means observed on the existing Linux installation;
 Prior component evidence remains in the task log and does not upgrade an open
 journey. All model execution and independent review uses Claude Sonnet 5.5 / medium.
 
-## Install and first use — 6 journeys
+## Install and first use — 7 journeys
 
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
-| I01 | Empty server; obtain public source and follow the default installer | HTTPS app and separate Vault work without private helpers, preinstalled Kiri/GWS or developer credentials | Open: final-source clean install |
-| I02 | First admin opens the installation without a model connection | Clear admin setup; no provider calls, guessed model or local fallback | Candidate admin-only API form, empty state and file lifecycle passed on Linux; final install open |
+| I01 | Empty server; obtain public source and follow the default installer | HTTPS app and separate Vault work without private helpers, preinstalled Kiri/GWS or developer credentials | Corrected candidate116a8cd source installation passed after interrupted prerequisite/build recovery; default public release and untouched final-revision baseline remain open |
+| I02 | First admin opens the installation without a model connection | Clear admin setup; no provider calls, guessed model or local fallback | Candidate116a8cd installed service/setup and two-member denial passed, including actual reboot; real configured model is I03/M01 |
 | I03 | Admin attaches an authorized model connection and selects Sonnet 5.5 / medium | First real chat and work interpretation use that selection; credentials stay private | Open: first-provider setup and current interpretation failure |
-| I04 | Invite a second member after all services are already running | Independent UID/volume, browser/Vault/GWS and model sockets appear without manual service editing | Diagnostic install pass; dynamic first/later member model sockets passed on Linux; final install open |
-| I05 | Stop installation after preparation, then run the same installer | Original installation, member allocation and keys retained; conflicting inputs refused | Diagnostic pass; final install open |
-| I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Diagnostic pass; final install open |
+| I04 | Invite a second member after all services are already running | Independent UID/volume, browser/Vault/GWS and model sockets appear without manual service editing | Candidate116a8cd shipped invitation timer and two independent installed members passed; real browser/Vault isolation passed |
+| I05 | Stop installation after preparation, then run the same installer | Original installation, member allocation and keys retained; conflicting inputs refused | Candidate116a8cd recovered prior build interruption; complete same-input replay and conflicting-origin refusal preserved identities/keys |
+| I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Candidate116a8cd two actual reboots passed; identities, handoff, admin boundary and both encrypted Vaults/items retained; Google/model connections still unconfigured |
+| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Open: current production is Ubuntu22.04/kernel5.15/Kiri0.2.1 and has no new-installer receipt; the Ubuntu24.04 source installer is not an updater |
 
 ## Model first use and recovery — 6 journeys
 
@@ -265,3 +266,12 @@ I01 exposed a clean-install packaging failure at the member Docker build:
 the embedded model-service unit was outside the Docker context allowlist. The
 exact file is now included. Final source installation, the second member and
 reboot must still run after this correction; the failed run is retained.
+
+### Existing installation transition
+
+The active matrix now contains **50 journeys**, 6–7 per feature. I07 was added
+after checking the actual production host: Ubuntu22.04/kernel5.15/Kiri0.2.1,
+without a setup-kiri receipt. A successful new Ubuntu24.04 installation does not
+prove that upgrade. Keep its encrypted Vault, member allocations and Google
+grants while validating a matched component transition; the fresh installer
+must not be forced over the existing installation or used to upgrade the host OS.

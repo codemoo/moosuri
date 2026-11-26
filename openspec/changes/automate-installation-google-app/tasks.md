@@ -1,11 +1,11 @@
 # Work log
 
-The current [42 user journeys](journeys.md) cover installation, Vault, Google login,
+The current [50 user journeys](journeys.md) cover installation, Vault, Google login,
 OAuth setup, sharing, conversation reads and recovery. They distinguish live
 provider results, diagnostic installation evidence and open acceptance gates.
 
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
-- [ ] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing.
+- [x] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing; corrected source installation and two-member reboot accepted below.
 - [ ] Observe official Console steps in fresh Kiri and identify provider prerequisites.
 - [ ] Implement resumable administrator setup and direct client registration.
 - [ ] Integrate same-browser member consent and automatic GWS readiness.
@@ -903,3 +903,101 @@ connector runs under Linux process tracing passed. No ETXTBSY/EAGAIN/ENOENT
 spawn failure was observed. This does not establish the original cause; no
 speculative production process retry was added. Retain the intermittent failure
 as a diagnostic limitation and proceed with installation/provider acceptance.
+
+Independent publication review completed on Claude Sonnet5.5/medium. It found no
+definite authorization/storage defect, but identified a practical dead end when
+publication intent committed before dispatch. The candidate now permits only
+Domains/Publish to retry after fresh exact Absent readback, bounded to three
+durable attempts across restarts. Resource creation is unchanged. A separate
+fresh independent review of this delta found no defect. Updated Linux registry
+suite41 and publication/recovery cases passed. Existing manual-client callback
+ownership/resume regression passed with test-fixtures enabled.
+
+Revision `116a8cdce3b9b8ff28e5a26377658292076f94b6` contains the runtime,
+public information and Docker-context corrections. It is committed only in the
+candidate and is being installed in the same marked Ubuntu VM with no product
+state. Public main and production remain unchanged. The original domain
+coverage and unverified-consent questions remain live provider gates; the
+review did not verify Google behavior.
+
+A fresh operator login for follow-up consent inspection expired at device
+verification. The matching Linux/Seoul/current request was located on the Flip5;
+by the time its confirmation was delivered the browser returned
+`needs_human/verification`. No authenticated session was published. The helper
+discarded its temporary profile and the Phone Agent reservation was released.
+No Google project/client/publication or GWS configuration changed. This does
+not validate the candidate's packaged login or consent path.
+
+### I07 current-host transition preflight
+
+Read-only production inventory found Ubuntu22.04.5/kernel5.15.0-179 and Kiri0.2.1,
+with existing versioned product services and no setup-kiri receipt. The new
+Ubuntu24.04 installer intentionally refuses this existing installation. An
+independent Claude Sonnet5.5/medium source review confirmed that setup-kiri and
+kiri-host are fresh-install/resume tools, not existing-installation updaters.
+Do not forge a receipt or relax those guards for rollout. Preserve existing
+member/volume/key identities, encrypted Vault data and Google grants; retain
+production service names while switching a matched bundle. Kiri engine and
+browser confinement compatibility on the current kernel, guarded member image
+replacement and browser capsule preparation need separate transition acceptance.
+This is not evidence that Kiri0.2.2 fails on the current kernel. The approved
+product deployment does not require or authorize an unrelated host OS upgrade.
+
+After the corrected installation finishes, the queued acceptance pipeline runs
+the actual HTTPS/admin/Vault/two-member checks, real Chromium Vault UI journeys,
+and a real guest reboot. The browser harness uses only a CONNECT tunnel to the
+two marked guest origins; it does not mock API responses or call a provider.
+Its results are pending, not yet a pass.
+
+### Corrected installation and real Vault acceptance — 2026-11-27
+
+Revision `116a8cdce3b9b8ff28e5a26377658292076f94b6` completed the source installer
+in the same marked Ubuntu24.04 guest after the failed earlier Docker build.
+The guest had no product state before this successful run, but did retain the
+earlier run's downloaded/build prerequisites. This is successful interrupted
+source-install recovery, not an untouched final-revision baseline or a public
+main deployment.
+
+The shipped HTTPS services, administrator login, single-use Vault handoff,
+same-input installer replay, conflicting-origin refusal, installed invitation
+timer, independent second-member UID/storage/GWS, admin setup boundary, separate
+real Kiri recipients, cross-member denial, cancellation and logout all passed.
+The model service starts with no configured provider and refuses member setup
+writes. Synthetic passwords were absent from process arguments, journals and
+receipts. An actual reboot retained both member identities and service readiness.
+
+The new [real Chromium harness](../../../deployment/kiri/linux-vm-smoke/clean-installed-browser.py)
+uses only actual HTTPS services through a restricted CONNECT tunnel, without
+response mocking. Its first run failed because an exact Playwright textarea
+label also included the recovery key text; matching the stable label fixed the
+harness. Both members then created an eight-character Vault, confirmed recovery,
+saved an encrypted synthetic item, rejected a wrong password and reopened their
+own item only at 1280px/390px. Seven-character setup was rejected. No plaintext
+Vault password, recovery key or item secret appeared in Vault POST/PUT bodies.
+After another actual reboot, both existing Vaults reopened with the same items
+and isolation. Final screenshots were inspected at both widths; no horizontal
+overflow. This does not close Google-account selection or real model journeys.
+
+### Live client creation and secret-recovery observation — 2026-11-27
+
+A fresh operator Kiri login succeeded after the matching Flip5 confirmation.
+The product's fixed client DOM expression filled and submitted a distinct
+disposable test client, captured the creation secret into a private Linux file,
+and verified the persisted exact name, Web type, agentic marker and callback.
+This proves the DOM subflow, not the installed gateway/SDK/registration path.
+The operator used the existing experiment project, not a fresh product setup.
+
+On that disposable client, `Add client secret` immediately added a second secret
+without a confirmation dialog. The older secret stayed enabled. The new one
+had a NEW marker and a rendered copy button containing its full accessible
+label. The ordinary old-client view only showed masked values and explained
+that lost secrets must be replaced. Same-client recovery implementation and
+durable response-loss/two-secret checks remain open.
+
+An operator inspection mistakenly emitted the disposable creation secret through
+that copy button's accessible label. The generic inspection output now redacts
+this secret pattern. The entire disposable client was deleted in Google and
+confirmed absent by the product list expression, invalidating both test secrets;
+its private local capture was removed. The original installation client and
+member grants were not changed. Do not copy the secret or raw observation into
+source, test fixtures or further prompts.

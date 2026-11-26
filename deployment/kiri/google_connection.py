@@ -16,6 +16,11 @@ import secure_google as google
 
 CONFIG = fresh.BASE / 'moosuri-google-connection.json'
 KEY = fresh.BASE / 'moosuri-google-connection.pem'
+PROTOCOL = 'moosuri-google-connection-v2'
+class TeardownFailed(Exception):
+    """Chrome may still be live, so no teardown acknowledgement may be sent."""
+
+
 def connected_clock():
     if select.select([sys.stdin.fileno()], [], [], 0)[0]:
         raise ValueError("connection closed")
@@ -36,18 +41,47 @@ def decode(value, limit):
     return base64.b64decode(value, validate=True)
 
 
+def wipe(value):
+    if isinstance(value, bytearray):
+        value[:] = b'\0' * len(value)
+
+
+def validate_secret(value):
+    try:
+        if not value or len(value) > 4096 or 0 in value:
+            raise ValueError()
+        value.decode()
+        return value
+    except Exception:
+        wipe(value)
+        raise
+
+
 def decrypt(envelope, key, label):
     if not isinstance(envelope, dict) or set(envelope) != {'key', 'iv', 'body'}:
         raise ValueError()
-    symmetric = key.decrypt(decode(envelope['key'], 768), padding.OAEP(
-        mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=label))
-    iv = decode(envelope['iv'], 16)
-    if len(iv) != 12 or len(symmetric) != 32:
-        raise ValueError()
-    value = AESGCM(symmetric).decrypt(iv, decode(envelope['body'], 8200), label).decode()
-    if not value or len(value.encode()) > 4096 or '\0' in value:
-        raise ValueError()
-    return value
+    symmetric = None
+    value = None
+    cipher = None
+    try:
+        symmetric = bytearray(key.decrypt(decode(envelope['key'], 768), padding.OAEP(
+            mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=label)))
+        iv = decode(envelope['iv'], 16)
+        if len(iv) != 12 or len(symmetric) != 32:
+            raise ValueError()
+        cipher = AESGCM(symmetric)
+        value = bytearray(cipher.decrypt(iv, decode(envelope['body'], 8200), label))
+        return validate_secret(value)
+    except Exception:
+        wipe(value)
+        raise
+    finally:
+        # Best-effort process-local cleanup: cryptography owns its internal key
+        # schedule and returns an immutable plaintext bytes object before the
+        # bytearray copy. Wipe the mutable key source and release the cipher;
+        # the isolated one-shot guest process is the hard lifetime boundary.
+        cipher = None
+        wipe(symmetric)
 
 
 def next_button(controls, labels):
@@ -66,7 +100,7 @@ def accounts_page(browser, tab):
     return view
 
 
-def login(browser, tab, email, envelope, key, label, *, identified=False, clock=time.monotonic, sleep=time.sleep):
+def login(browser, tab, email, secret, *, identified=False, clock=time.monotonic, sleep=time.sleep):
     submitted = False
     end = clock() + 90
     while clock() < end:
@@ -92,9 +126,7 @@ def login(browser, tab, email, envelope, key, label, *, identified=False, clock=
                         continue
                     if observed != {email.casefold()}:
                         raise google.Outcome('needs_human', 'account_unconfirmed')
-                    secret = decrypt(envelope, key, label)
-                    acted = browser.call('fill', tab=tab, ref=fields[0]['ref'], origin=google.ACCOUNTS, text=secret)
-                    del secret
+                    acted = browser.call('fill', tab=tab, ref=fields[0]['ref'], origin=google.ACCOUNTS, text=secret.decode())
                     if acted.get('acted') is not True or browser.call('click', tab=tab, ref=button).get('acted') is not True:
                         raise google.Outcome('needs_human', 'form_changed')
                     submitted = True
@@ -144,12 +176,33 @@ def main():
     config = json.loads(fresh._read(CONFIG))
     request = google.receive(2048, 12)
     job = request['job']
-    if (str(UUID(job)) != job or request['account'] != config['account'] or
+    if (set(request) != {'protocol', 'job', 'account', 'email', 'service'} or
+        request['protocol'] != PROTOCOL or str(UUID(job)) != job or request['account'] != config['account'] or
         request['email'] != config['email'] or request['service'] not in SCOPES):
         raise ValueError()
     key = serialization.load_pem_private_key(fresh._read(KEY), password=None)
-    browser = fresh.FreshBrowser.create()
+    # A syntactically valid Deliver request is not enough to open Chrome. Kiri
+    # first proves that the packet was sealed for this exact job/account/email.
+    google.send({'status':'vault', 'protocol':PROTOCOL})
+    packet = google.receive(12500, 600)
+    secret = None
+    browser = None
+    returned = False
     try:
+        # Unwrap once before Chrome exists. The gateway reauthorizes the member
+        # after verification and must explicitly release Kiri before Chrome starts.
+        # AESGCM and the CDP JSON call necessarily create short-lived immutable
+        # Python copies that cannot be zeroized in place. Mutable copies are wiped,
+        # and the isolated one-shot guest process is discarded at the boundary.
+        secret = decrypt(packet, key, binding(job, config['account'], config['email']))
+        google.send({'status':'verified'})
+        release = google.receive(256, 45)
+        if release != {'status':'proceed'}:
+            raise ValueError()
+        browser = fresh.FreshBrowser.create()
+        # Browser creation has its own bounded container startup window. If the
+        # member session was revoked during it, discard without opening a tab.
+        connected_clock()
         tab = browser.call('open', url=google.START).get('tab', '')
         if not google.TAB.fullmatch(tab):
             raise ValueError()
@@ -163,22 +216,37 @@ def main():
             time.sleep(.4)
         else:
             raise google.Outcome('needs_human', 'form_changed')
-        google.send({'status':'vault'})
-        packet = google.receive(12500, 600)
-        login(browser, tab, config['email'], packet, key, binding(job, config['account'], config['email']), identified=True, clock=connected_clock)
+        login(browser, tab, config['email'], secret, identified=True, clock=connected_clock)
         google.send({'status':'signed_in'})
         payload = google.receive(8192, 45)
         consent(browser, payload['url'], config, request['service'], clock=connected_clock)
-        google.send({'status':'returned'})
+        returned = True
     finally:
-        browser.discard()
+        wipe(secret)
+        if browser is not None:
+            try:
+                browser.discard()
+            except Exception as failure:
+                raise TeardownFailed() from failure
+    # A terminal status is also the teardown acknowledgement: the gateway may
+    # release the member-wide live marker only after the browser is discarded.
+    if returned:
+        google.send({'status':'returned'})
 
 
-if __name__ == '__main__':
+def report():
     try:
-        os.umask(0o077)
         main()
+    except TeardownFailed:
+        # Closing the guest stream without a terminal status makes the gateway
+        # hold its live marker for the fail-safe grace period.
+        return
     except google.Outcome as failure:
         google.send({'status': 'blocked' if failure.public['status'] == 'blocked' else 'needs_human'})
     except Exception:
         google.send({'status':'unavailable'})
+
+
+if __name__ == '__main__':
+    os.umask(0o077)
+    report()

@@ -5,6 +5,9 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import PersonalPreview, { PREVIEW_DRAFT_KEY } from "./PersonalPreview";
 import type { ThreadGoogleRead } from "./PersonalGoogle";
 import type { PersonalBrowserWorkspace } from "./personal-browser";
+import { connectInKiri } from "./kiri-google-connection";
+
+vi.mock("./kiri-google-connection", () => ({ connectInKiri: vi.fn() }));
 const aid = "11111111-1111-4111-8111-111111111111",
   bid = "22222222-2222-4222-8222-222222222222",
   tid = "33333333-3333-4333-8333-333333333333";
@@ -27,6 +30,7 @@ let current: (ReturnType<typeof session> & { installation_admin?: boolean }) | n
 let mailReads: ThreadGoogleRead[];
 let connectedMailbox: string | null;
 let vaultUnreachable: boolean;
+let vaultReady: boolean;
 let vaultOrigin: string | undefined;
 let mailFailure: boolean,
   mailHang: boolean,
@@ -81,7 +85,8 @@ beforeEach(() => {
   mailReads = [];
   connectedMailbox = "mailbox@example.test";
   vaultUnreachable = false;
-  vaultOrigin = undefined;
+  vaultReady = true;
+  vaultOrigin = "https://vault.example.test";
   mailFailure = false;
   mailHang = false;
   readHang = false;
@@ -103,6 +108,7 @@ beforeEach(() => {
   browserRoute = undefined;
   deleteThreadResponse = undefined;
   inventoryFailure = false;
+  vi.mocked(connectInKiri).mockResolvedValue({ flow: "a".repeat(64), handle: "b".repeat(64) });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -150,17 +156,26 @@ beforeEach(() => {
       if (path === "/personal/vault") {
         return vaultUnreachable
           ? Response.json({ code: "unavailable" }, { status: 503 })
-          : Response.json({ state: "setup_required", site_origin: vaultOrigin });
+          : Response.json({ state: vaultReady ? "ready" : "setup_required", site_origin: vaultOrigin });
       }
       if (path === "/personal/google/start" || path === "/personal/google/drive/start")
         return Response.json({ flow_id: "a".repeat(64), authorization_url: "https://accounts.google.com/o/oauth2/v2/auth" });
-      if (path === "/personal/google/complete")
+      if (path === "/personal/google/complete") {
+        connectedMailbox = "a@example.test";
         return Response.json({
           connection_id: tid,
           epoch: 1,
           mailbox: "a@example.test",
           flow_id: "a".repeat(64),
           continuation: { thread_id: tid, request_id: bid },
+        });
+      }
+      if (path === "/personal/google/drive/complete")
+        return Response.json({
+          connection_id: tid,
+          epoch: 1,
+          mailbox: "a@example.test",
+          flow_id: "a".repeat(64),
         });
       if (path === "/personal/google/history") {
         if (mailHang) return await new Promise<Response>(() => {});
@@ -1289,6 +1304,8 @@ it("loading older canonical messages does not fetch the private mail list again"
   ).toHaveLength(count);
 });
 it("shows actual service connections and disconnects Gmail without reading mail", async () => {
+  vaultReady = false;
+  vaultOrigin = undefined;
   const user = userEvent.setup();
   mount();
   const nav = await screen.findByRole("button", { name: "연결" });
@@ -1307,7 +1324,8 @@ it("shows actual service connections and disconnects Gmail without reading mail"
   await user.click(screen.getByRole("button", { name: "연결 해제" }));
   expect(await gmail.findByText("연결된 계정이 없습니다.")).toBeInTheDocument();
   expect(gmail.queryByText("mailbox@example.test")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Google 연결" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Google 연결" })).toBeDisabled();
+  expect(gmail.getByText("이 설치에 등록된 볼트 주소가 없습니다. 설치 관리자에게 문의해 주세요.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   expect(screen.getByRole("button", { name: "연결됨" })).toHaveAttribute("aria-pressed", "true");
   await screen.findByText("연결된 서비스가 없습니다.");
@@ -1327,6 +1345,8 @@ it("shows actual service connections and disconnects Gmail without reading mail"
 });
 
 it("distinguishes unavailable vault status from confirmed setup requirements", async () => {
+  vaultReady = false;
+  vaultOrigin = undefined;
   vaultUnreachable = true;
   const user = userEvent.setup();
   mount();
@@ -1342,6 +1362,7 @@ it("distinguishes unavailable vault status from confirmed setup requirements", a
 });
 
 it("opens the configured independent HTTPS vault while keeping member setup status", async () => {
+  vaultReady = false;
   vaultOrigin = "https://vault.example.test";
   const user = userEvent.setup();
   mount();
@@ -1360,6 +1381,7 @@ it.each([
   "https://user:password@vault.example.test", "https://vault.example.test/account",
   "https://vault.example.test?user=test", "https://vault.example.test#signin",
 ])("does not link to an unsafe vault origin (%s)", async (origin) => {
+  vaultReady = false;
   vaultOrigin = origin;
   const user = userEvent.setup();
   mount();
@@ -1413,7 +1435,7 @@ it.each(["separate draft", "Check mail"])("recovers an abandoned Gmail handoff b
   await user.type(await composer(), next);
   await act(async () => completeSend!(Response.json({ code: "personal_inbox_requested" }, { status: 422 })));
   deferRefusal = false;
-  await screen.findByRole("button", { name: "Google로 연결하고 이 대화에서 메일 확인" });
+  await screen.findByRole("button", { name: "Google 연결하고 메일 확인" });
   await user.click(screen.getByRole("button", { name: "뒤로" }));
   const request = chatPosts()[0].body.request_id;
   await screen.findByRole("button", { name: "메일 확인 계속하기" });
@@ -1639,17 +1661,10 @@ it("restores connector detail on reload and returns to the originating memory vi
 });
 
 it.each([
-  ["Gmail", "success", "memory", "app"],
-  ["Gmail", "success", "admin/engine", "app"],
-  ["Gmail", "cancel", "admin/engine", "app"],
-  ["Gmail", "cancel", "memory", "app"],
-  ["Google Drive", "cancel", "memory", "app"],
-  ["Gmail", "rotated session", "chat", "app"],
-  ["Gmail", "fresh tab", "chat", "app"],
-  ["Gmail", "success", "memory", "native"],
-  ["Gmail", "cancel", "admin/engine", "native"],
-  ["Google Drive", "cancel", "memory", "native"],
-])("returns through the catalog after %s consent in a new document (%s) to %s using %s history", async (service, result, destination, navigation) => {
+  ["Gmail", "memory", "gmail"],
+  ["Gmail", "admin/engine", "gmail"],
+  ["Google Drive", "memory", "drive"],
+])("finishes %s inside Kiri and returns through the catalog to %s", async (service, destination, serviceId) => {
   const user = userEvent.setup();
   connectedMailbox = null;
   const fromAdmin = destination === "admin/engine";
@@ -1666,51 +1681,39 @@ it.each([
   const connect = await screen.findByRole("button", { name: "Google 연결" });
   await waitFor(() => expect(connect).toBeEnabled());
   await user.click(connect);
-  const flow = "a".repeat(64);
-  const key = service === "Gmail" ? "moosuri.personal.google-read.v1" : "moosuri.personal.google-workspace.v1";
-  await waitFor(() => expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ flow, origin: fromAdmin ? "admin/engine" : "memory" }));
+  await screen.findByText("Google 서비스 연결을 확인했습니다.");
+  expect(connectInKiri).toHaveBeenCalledWith(expect.any(Function), aid, "a@example.test", serviceId,
+    "https://vault.example.test", undefined, expect.any(AbortSignal), expect.any(Function));
+  expect(calls.filter(call => call.method === "POST" && call.path.endsWith("/complete"))).toEqual([{
+    path: `/personal/google${serviceId === "gmail" ? "" : "/" + serviceId}/complete`, method: "POST",
+    body: { handle: "b".repeat(64) }, account: aid,
+  }]);
+  expect(sessionStorage.getItem("moosuri.personal.google-read.v1")).toBeNull();
+  expect(sessionStorage.getItem("moosuri.personal.google-workspace.v1")).toBeNull();
   first.unmount();
-  if (result === "rotated session") current = { ...session(), chat_draft_scope: "c".repeat(64) };
-  if (result === "fresh tab") sessionStorage.clear();
-  const fragment = result === "cancel" ? "google_denied=" + flow : "google_handle=" + "b".repeat(64) + "&flow=" + flow;
-  // A separate entry with no member parent represents the provider's consent document.
-  history.pushState(null, "", "/synthetic-provider");
-  history.pushState(null, "", "/#" + fragment + (service === "Gmail" ? "" : "&google_service=drive"));
-  const callbackLength = history.length;
-  const returned = mount();
+  mount();
   await screen.findByRole("heading", { name: service });
-  await waitFor(() => expect(location.hash).toBe(service === "Gmail" ? "#connections/gmail" : "#connections/drive"));
-  if (result === "success") await within(screen.getByRole("region", { name: "Gmail" })).findByText("a@example.test");
-  else if (result === "cancel") await screen.findByText(/연결이 취소됐습니다/);
-  else await screen.findByText(/연결을 시작한 계정과 탭/);
-  if (navigation === "native") {
-    expect(history.length).toBe(callbackLength + 2);
-    returned.unmount();
-    mount();
-    await screen.findByRole("heading", { name: service });
-    expect(history.length).toBe(callbackLength + 2);
-  } else if (destination === "chat") {
-    expect(history.length).toBe(callbackLength);
-  }
-  async function back() {
-    if (navigation === "native") history.back();
-    else await user.click(screen.getByRole("button", { name: "뒤로" }));
-  }
-  await back();
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
   await screen.findByRole("heading", { name: "커넥터" });
-  await back();
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
   await waitFor(() => expect(screen.getByRole("button", { name: fromAdmin ? "관리" : destination === "memory" ? "기억" : "대화" }))
     .toHaveAttribute("aria-current", "page"));
   if (fromAdmin) expect(location.hash).toBe("#admin/engine");
-  if (navigation === "native") {
-    history.forward();
-    await screen.findByRole("heading", { name: "커넥터" });
-    history.forward();
-    await screen.findByRole("heading", { name: service });
-    expect(history.length).toBe(callbackLength + 2);
-  }
-  expect(calls.filter(call => call.path === "/personal/google/complete")).toHaveLength(result === "success" ? 1 : 0);
   expect(calls.some(call => call.path === "/personal/google/inbox")).toBe(false);
+});
+
+it("keeps the connector open and creates no grant when the vault-first Kiri flow is cancelled", async () => {
+  connectedMailbox = null;
+  vi.mocked(connectInKiri).mockRejectedValueOnce(new Error("볼트를 닫아 Google 연결을 취소했습니다."));
+  const user = userEvent.setup();
+  mount();
+  await composer();
+  await user.click(screen.getByRole("button", { name: "연결" }));
+  await user.click(await screen.findByRole("button", { name: /^Gmail/ }));
+  await user.click(await screen.findByRole("button", { name: "Google 연결" }));
+  expect(await screen.findByText("볼트를 닫아 Google 연결을 취소했습니다.")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Gmail" })).toBeVisible();
+  expect(calls.some(call => call.method === "POST" && call.path.endsWith("/complete"))).toBe(false);
 });
 
 it("opens an administrator bookmark as chat for an ordinary member", async () => {

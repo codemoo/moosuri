@@ -1,26 +1,32 @@
 import { StrictMode } from "react";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { SessionView } from "../shared/api-types";
 import { PersonalConnections } from "./PersonalConnections";
+import { connectInKiri } from "./kiri-google-connection";
+import { ApiFailure } from "./api";
+
+vi.mock("./kiri-google-connection", () => ({ connectInKiri: vi.fn() }));
 
 const key = "moosuri.personal.google-workspace.v1";
 const gmailKey = "moosuri.personal.google-read.v1";
 const base = "/api/v1/personal/google";
 const flow = "a".repeat(64);
 const handle = "b".repeat(64);
-const session = { user: { id: "member-a" }, chat_draft_scope: "session-a" } as SessionView;
+const vaultOrigin = "https://vault.example.test";
+const session = { user: { id: "member-a", email: "member@example.test" }, chat_draft_scope: "session-a" } as SessionView;
 const docs = { service: "docs", connection_id: "docs-id", epoch: 3, mailbox: "docs@example.test" };
 const sheets = { service: "sheets", connection_id: "sheets-id", epoch: 5, mailbox: "sheets@example.test" };
 const gmail = { connection_id: "gmail-id", epoch: 2, mailbox: "gmail@example.test" };
 
 function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion = false, configured = true } = {}) {
   const calls: { path: string; method: string; body: unknown }[] = [];
+  vi.mocked(connectInKiri).mockResolvedValue({ flow, handle });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit) => {
     const method = init.method ?? "GET";
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    if (path === "/api/v1/personal/vault") return Response.json({ state: "setup_required" });
+    if (path === "/api/v1/personal/vault") return Response.json({ state: "ready", site_origin: vaultOrigin });
     calls.push({ path, method, body });
     expect(new Headers(init.headers).get("X-Moosuri-Account")).toBe(session.user.id);
     if (path === "/api/v1/personal/admin/google-setup") return Response.json({ configured, redirect_uri: "https://example.test/api/v1/mail/oauth/callback" });
@@ -31,6 +37,11 @@ function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion 
       return new Response(null, { status: 204 });
     }
     if (path === base + "/drive/start") return Response.json({ flow_id: flow, authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?state=synthetic" });
+    if (path === base + "/drive/complete") {
+      const grant = { service: "drive", connection_id: "drive-id", epoch: 1, mailbox: session.user.email };
+      grants = [grant, ...grants.filter(({ service }) => service !== "drive")];
+      return Response.json({ ...grant, flow_id: flow });
+    }
     if (path === base + "/docs/complete") {
       grants = [docs, ...grants.filter((grant) => grant.service !== "docs")];
       if (loseCompletion) throw new TypeError("lost reply");
@@ -61,6 +72,7 @@ afterEach(() => {
   cleanup();
   sessionStorage.clear();
   history.replaceState(null, "", "/");
+  vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -99,21 +111,31 @@ it("searches the four branded connectors and lists only their actual connected a
   }]);
 });
 
-it("starts consent only for the selected service and binds its flow to the current account and session", async () => {
+it("uses the vault-backed Kiri flow for only the selected service and confirms the returned account", async () => {
   const calls = setup();
   const user = userEvent.setup();
-  const assign = vi.fn();
-  vi.stubGlobal("location", { hash: "", assign });
   mount();
   await user.click(await screen.findByRole("button", { name: /Google Drive/ }));
   await user.click(await screen.findByRole("button", { name: "Google 연결" }));
-  await waitFor(() => expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toMatchObject({
-    account: session.user.id, session: session.chat_draft_scope, service: "drive", flow, phase: "consent",
-  }));
-  expect(calls.filter(({ method }) => method === "POST")).toEqual([{ path: base + "/drive/start", method: "POST", body: {} }]);
-  expect(assign).toHaveBeenCalledOnce();
-  expect(assign).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?state=synthetic");
+  await within(screen.getByRole("region", { name: "Google Drive" })).findByText(session.user.email);
+  expect(connectInKiri).toHaveBeenCalledWith(expect.any(Function), session.user.id, session.user.email,
+    "drive", vaultOrigin, undefined, expect.any(AbortSignal), expect.any(Function));
+  expect(calls.filter(({ method }) => method === "POST")).toEqual([{
+    path: base + "/drive/complete", method: "POST", body: { handle },
+  }]);
+  expect(sessionStorage.getItem(key)).toBeNull();
   expect(sessionStorage.getItem(gmailKey)).toBeNull();
+});
+
+it("distinguishes the retained-receipt capacity limit from a live Kiri conflict", async () => {
+  setup();
+  vi.mocked(connectInKiri).mockRejectedValueOnce(new ApiFailure(429, "too_many_requests"));
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: /Google Drive/ }));
+  await user.click(await screen.findByRole("button", { name: "Google 연결" }));
+  expect(await screen.findByText("최근 Google 연결 시도가 많습니다. 잠시 후 다시 시도해 주세요.")).toBeVisible();
+  expect(screen.queryByText("이 계정에 진행 중인 Kiri 연결이 있습니다.")).not.toBeInTheDocument();
 });
 
 it.each([false, true])("finishes a Docs callback once and reconciles status when the reply is lost (%s)", async (loseCompletion) => {

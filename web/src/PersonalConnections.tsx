@@ -39,7 +39,7 @@ function googleInfo(status: ConnectionStatus, mailbox: string | undefined, insta
   if (status === "checking") return { badge: { label: "확인 중" }, message: "연결 상태를 확인하고 있습니다." };
   if (status === "error") return { badge: { label: "확인 실패", tone: "attention" }, message: "연결 상태를 확인할 수 없습니다. 다시 확인해 주세요." };
   if (status === "disabled") {
-    if (installation === "required") return { badge: { label: "설치 설정 필요", tone: "attention" }, message: "Kiri에서 Google 로그인을 시작할 수 있습니다. 서비스 권한 연결에는 설치의 Google 앱 등록이 필요합니다." };
+    if (installation === "required") return { badge: { label: "설치 설정 필요", tone: "attention" }, message: "Google 연결을 시작하려면 먼저 이 앱 안에서 Google Workspace 설치 설정을 마쳐 주세요." };
     if (installation === "configured") return { badge: { label: "연결 준비 중", tone: "attention" }, message: "이 회원의 Google 연결을 준비 중입니다. 잠시 후 다시 확인해 주세요." };
     return { badge: { label: "연결 불가", tone: "attention" }, message: "이 서버에서 Google 로그인을 아직 사용할 수 없습니다. 설치 관리자에게 문의해 주세요." };
   }
@@ -210,6 +210,7 @@ export function PersonalConnections({
       if(!controller.signal.aborted) {
         if(error instanceof ApiFailure && error.status===401)props.expired();
         else setKiriMessage(error instanceof ApiFailure && error.status===409?"이 계정에 진행 중인 Kiri 연결이 있습니다.":
+          error instanceof ApiFailure && error.status===429?"최근 Google 연결 시도가 많습니다. 잠시 후 다시 시도해 주세요.":
           error instanceof Error && !(error instanceof ApiFailure)?error.message:"Google 연결 상태를 확인하지 못했습니다.");
       }
     } finally {if(active.current===controller){active.current=null;setConnecting(false);}}
@@ -251,9 +252,13 @@ export function PersonalConnections({
                 <button className="member-page-action" disabled={memberFlow.busy} onClick={()=>{
                   if(workspaceService)void workspace.action(workspaceService,"disconnect");else void google.action("disconnect");
                 }}>연결 해제</button>
-              </> : <button className="member-page-action connector-primary" disabled={connecting || vaultStatus.status!=="ready" || memberFlow.status==="checking"}
-                onClick={()=>void connect(gmailRead)}>{gmailRead?"Google 연결하고 메일 확인":"Google 연결"}</button>}
-              {!mailbox && vaultStatus.status!=="ready" && <p role="status">{getVaultInfo(vaultStatus).message}</p>}
+              </> : memberFlow.status==="ready" ? <button className="member-page-action connector-primary" disabled={connecting || vaultStatus.status!=="ready"}
+                onClick={()=>void connect(gmailRead)}>{gmailRead?"Google 연결하고 메일 확인":"Google 연결"}</button>
+                : installationAdmin && memberFlow.status==="disabled" ? <button className="member-page-action connector-primary"
+                  onClick={()=>show(selected,true)}>Google Workspace 설정</button>
+                : memberFlow.status!=="checking" && <button className="member-page-action"
+                  onClick={()=>{if(workspaceService)void workspace.retry();else google.retry();}}>다시 확인</button>}
+              {!mailbox && memberFlow.status==="ready" && vaultStatus.status!=="ready" && <p role="status">{getVaultInfo(vaultStatus).message}</p>}
               {kiriMessage && <p role="status">{kiriMessage}</p>}
               {connecting && <button className="member-page-action" onClick={()=>{active.current?.abort();setKiriMessage("연결을 취소했습니다.");}}>취소</button>}
               {vaultStatus.failure && <p className="connector-notice" role="status">{vaultStatus.failure}</p>}
@@ -262,6 +267,12 @@ export function PersonalConnections({
         </ConnectorDetail>
       ) : (
         <>
+          {installationAdmin && <section className="member-connector-group" aria-label="Google Workspace 설치 설정">
+            <h2>Google Workspace 설치 설정</h2>
+            <p>{installation==="configured"?"설치 설정 완료":installation==="required"?"설치 설정 필요":installation==="error"?"설치 설정 확인 실패":"설치 설정 확인 중"}</p>
+            <button type="button" className="member-page-action" disabled={installation==="checking"}
+              onClick={()=>show(null,true)}>Google Workspace 설정</button>
+          </section>}
           <div className="connector-controls">
             <label className="member-library-filter">
               <WorkspaceIcon name="search" />

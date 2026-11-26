@@ -414,7 +414,8 @@ function App(){
       <>
         {screen==="list"&&<section className="vault-list" aria-label="보관한 항목">
           {googleEmail && <div className="notice" role="status">
-            <strong>{googleEmail}의 Google 로그인</strong>
+            <strong>Gmail 계정 먼저 확인</strong>
+            <p>{googleEmail}로 저장된 Google 로그인 항목을 확인합니다.</p>
             {googleSelection?.email !== googleEmail ? <p>저장된 계정을 확인하고 있습니다. <button onClick={()=>setGoogleAttempt(n=>n+1)}>다시 확인</button></p>
               : googleSelection.items.length === 0 ? <form onSubmit={e=>{
                 e.preventDefault();
@@ -429,13 +430,15 @@ function App(){
                   setGoogleAttempt(n=>n+1);
                 });
               }}>
-                <p>이 계정이 볼트에 없습니다. 비밀번호를 저장하면 Kiri가 로그인을 이어갑니다.</p>
+                <p>이 Gmail 계정이 볼트에 없습니다. 먼저 비밀번호를 저장하면 그 다음 Kiri가 로그인을 시작합니다.</p>
                 <label>Google 계정 비밀번호<input type="password" autoComplete="off" required disabled={frozen} value={googlePassword}
                   onChange={e=>setGooglePassword(e.target.value)}/></label>
                 <button className="primary" disabled={frozen||!googlePassword}>볼트에 저장하고 계속</button>
-              </form> : googleSelection.items.length > 1 ? <><p>같은 계정이 여러 개 있습니다. 사용할 항목을 선택하세요.</p>
-                {googleSelection.items.map(item=><button key={item.id} disabled={frozen||sentJob.current===googleJob} onClick={()=>void sendToKiri(item)}>{item.title}</button>)}</>
-                : <p>Kiri에서 저장된 계정으로 로그인을 이어갑니다.</p>}
+              </form> : googleSelection.items.length > 1 ? <><p>이 Gmail 계정으로 저장된 항목이 여러 개 있습니다. 사용할 항목을 선택하세요.</p>
+                {googleSelection.items.map(item=><button key={item.id} disabled={frozen||sentJob.current===googleJob} onClick={()=>void sendToKiri(item)}>
+                  {item.title} · 버전 {item.revision} · 항목 {item.id.slice(-6)}
+                </button>)}</>
+                : <p>저장된 Gmail 계정을 확인했습니다. 이제 Kiri에서 로그인을 시작합니다.</p>}
           </div>}
           {!googleJob && <>
           <div className="vault-list-tools">

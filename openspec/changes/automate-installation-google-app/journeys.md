@@ -56,12 +56,12 @@ inspection is not evidence of successful fresh provider login or inference.
 
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
-| L01 | Saved valid account, fresh Kiri profile | Vault fills Google login privately; verified identity before consent | Earlier operator live pass, 2026-11-27; post-transition public-runtime attempt reached opening and was cancelled without verified login |
+| L01 | Saved valid account, fresh Kiri profile | Vault fills Google login privately; verified identity before consent | Earlier operator pass; public runtime identifier stall fixed and deployed. Fresh attempts now submit the identifier but Google rejects login before password/consent; current L01 remains blocked by provider |
 | L02 | Google asks for device confirmation; approve the matching request on the connected Flip5 via Phone Agent | Wait shown in app; same Kiri attempt proceeds into service consent and connects | Live pass, 2026-11-27 |
 | L03 | Decline or leave device confirmation until expiry | No connected badge or API read; bounded browser cleanup; explicit fresh retry | Open actual journey |
 | L04 | Saved password is wrong | One attempt, useful failure; no repeated password submission or silent account replacement | Open actual journey |
 | L05 | Provider identity differs from the selected Vault account | Refuse grant persistence and data read; keep other member's data untouched | Open full journey; prior synthetic mismatch check retained |
-| L06 | Provider rejects browser, requests unsupported verification, or device is securely locked | Specific visible pause/failure; no cookie copy, browser fallback or unlock bypass | Open full journey |
+| L06 | Provider rejects browser, requests unsupported verification, or device is securely locked | Specific visible pause/failure; no cookie copy, browser fallback or unlock bypass | Actual Google rejection shown and auth cleanup verified after identifier fix; unsupported verification/locked-device branches remain open |
 
 The Flip5 is an authorized operator device for this acceptance run, not a product
 prerequisite for a new installer. Other users approve on their own Google device.

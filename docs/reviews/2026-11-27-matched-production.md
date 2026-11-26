@@ -93,3 +93,35 @@ unavailable. Direct GWS success is not a substitute for that chat acceptance.
 
 [Journey matrix](../../openspec/changes/automate-installation-google-app/journeys.md) ·
 [Work log](../../openspec/changes/automate-installation-google-app/tasks.md)
+
+## Live identifier correction and provider rejection
+
+The secret-free private diagnostic reproduced the opening stall: Google renders
+`input#identifierId[type=text]`, while the worker matched only email-type inputs.
+The worker now also recognizes that exact field. Fifteen DOM cases, TypeScript
+checking, seven private protocol/envelope tests and the ten Kiri/official-Chrome
+synthetic authentication scenarios passed on Linux. The synthetic fixture uses the
+observed text-field markup. Independent Claude Sonnet 5.5/medium reviewed the fix.
+
+A confined replacement auth image, `022c3980a991`, retains the pinned Chrome/SDK
+and proxy base and replaces only the Rust browser worker. Its probe verified
+Chrome startup, confinement and cleanup; public HTTPS, private-address refusal
+and proxy restart passed. Config and matching smoke evidence were switched
+atomically with interruption recovery. Gateway/member executables stay on
+c8cf8e8. Member PID/mounts/identity, protected keys and shared client stayed intact.
+This is a narrow worker update, not a new matched full-installation release.
+
+A real Vault-backed attempt now submitted the identifier but ended blocked.
+Bounded read-only observation then distinguished the cause: the exact official
+accounts origin returned the classifier's `rejected`, with no visible password
+field or selected-account labels. It was not `mismatch`. No password submission,
+verified login, current device approval or consent completion was observed.
+Retries stopped. The UI exposes this failure; the socket returned to zero and
+only the owned proxy remains. Phone reservations were released without approving
+a terminated attempt. No raw page, credential, token or mail content is recorded.
+
+Resume this provider gate only when Google permits the same isolated login, or
+an explicitly designed official supported flow is available. Do not copy another
+profile's cookies, borrow developer authentication or weaken browser isolation.
+OAuth setup/publication, final-source empty installation, two actual Google
+members and real natural-language model/Gmail acceptance remain open.

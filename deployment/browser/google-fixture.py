@@ -46,7 +46,8 @@ class Page(http.server.BaseHTTPRequestHandler):
         if url.path == '/evidence':
             return self.reply(json.dumps(COUNTS))
         if url.path == '/ServiceLogin':
-            return self.reply('<form method="POST" action="/identifier"><input type="email" name="email"><button id="identifierNext">Next</button></form>')
+            # Match the current live Google email/phone field, which is text.
+            return self.reply('<form method="POST" action="/identifier"><input type="text" id="identifierId" name="email"><button id="identifierNext">Next</button></form>')
         if self.headers.get('Host') == 'myaccount.google.com' and url.path == '/':
             email = query.get('email', [''])[0]
             if not email.endswith('@example.test'):

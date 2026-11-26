@@ -1152,3 +1152,43 @@ configuration preservation were checked; no second production user was created.
 Next units: diagnose the opening/verification state with secret-free evidence;
 final public installer/fresh-source acceptance; managed OAuth publication/recovery;
 real second-member consent; valid administrator model connection and C01.
+
+### 2026-11-27 live identifier-page correction
+
+The post-transition opening stall was reproduced once with the retained Vault.
+A read-only private observation in the one owned auth capsule returned only fixed
+states/counts: official accounts origin, complete identifier document, visible
+`input#identifierId[type=text]` and Next, no email/password-type field, and the
+old classifier's `unknown`. No email had been submitted; the phone's expired
+message was unrelated evidence and was not approved. App cancellation again
+removed the auth capsule and reduced the socket connection count to zero.
+
+The fixed classifier recognizes that exact Google text identifier in addition to
+email inputs; unrelated text fields remain excluded. The existing TLS fixture now
+uses the observed markup. Fifteen Linux DOM cases cover both variants, unrelated/
+hidden/disabled/read-only/ambiguous fields, unavailable Next, exact origin and
+password account binding. They and TypeScript checking passed. Seven Rust private
+protocol/envelope cases passed. Independent official Claude Sonnet 5.5/medium
+review found no material defect; `Chrome::identifier`/`password` already require
+the `submitted` result before the one-shot state advances. Ten existing Kiri/official Chrome scenarios (GR-01–10) passed with the changed
+text-field fixture: sealed delivery, same-profile consent, device wait, identity
+and browser rejection, wrong allocation, stale release, sibling cancellation,
+EOF/SIGTERM, denied/wrong-state callbacks and exact effects/cleanup. This is
+synthetic-provider evidence, not a real Google login.
+
+The new auth image retains the pinned production Chrome/SDK/proxy base and changes
+only its Rust browser worker; the wire protocol is unchanged. The runtime switch
+will retain existing gateway/member executables. Independent operator review
+prompted durable atomic config/receipt writes, staged-file hashes, old-proxy health,
+interruption handling and bounded draining. Preparation is separately probed before
+any live configuration change. Final matched-source installation remains open.
+
+Preparation and the narrow Google auth image switch completed. The new worker
+image is `022c3980a991024012f3c4857df7fbbe31f0a17eca2d30e7de4c9a2f02b9692b`;
+its installed config and evidence agree. Old owned proxy remains for rollback.
+Actual UI/Vault attempts now leave the identifier page; fixed high-frequency
+read-only observation saw official accounts origin and `rejected`, not mismatch,
+before any password field. No verified login or consent occurred. Stop provider
+retries; do not bypass its rejection with another browser or borrowed session.
+Socket zero/only proxy and released phone reservation confirm cleanup.
+[Installed result and resumption condition](../../../docs/reviews/2026-11-27-matched-production.md#live-identifier-correction-and-provider-rejection).

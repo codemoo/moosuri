@@ -15,7 +15,11 @@ function(operation, email, secret) {
   const exact = emails.length === 1 && emails[0] === email.toLowerCase();
   const different = emails.length > 0 && !exact;
   if (home) return exact ? "ready" : different ? "mismatch" : "unknown";
-  const input = [...document.querySelectorAll("input[type=email]")].filter(e => visible(e) && !e.disabled && !e.readOnly);
+  // Google also renders its email/phone identifier as a text input. Keep that
+  // exception tied to the exact provider field; arbitrary text inputs may be
+  // verification codes, search, or recovery fields.
+  const input = [...document.querySelectorAll("input[type=email], input#identifierId[type=text]")]
+    .filter(e => visible(e) && !e.disabled && !e.readOnly);
   const passwords = [...document.querySelectorAll("input[type=password]")].filter(e => visible(e) && !e.disabled && !e.readOnly);
   const submit = (field, next, value) => {
     if (!visible(next) || next.disabled || !field || typeof value !== "string") return "unknown";

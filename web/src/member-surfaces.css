@@ -1,0 +1,122 @@
+/* Shared surfaces for the member entry. Pages supply their own content layout. */
+.preview-shell {
+  --member-canvas: #181819;
+  --member-sheet: #222223;
+  --member-field: #303031;
+  --member-divider: rgb(255 255 255 / .1);
+  --member-text: #f2efe9;
+  --member-accent: #c4d0df;
+  --member-secondary: #aaaab0;
+}
+.member-signed-in { --accent: var(--member-accent); --accent-ink: #29313a; }
+.member-page {
+  width: min(100%, 776px);
+  margin-inline: auto;
+  padding: 32px 24px max(40px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  color: var(--member-text);
+}
+.member-page-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.member-page-heading h1, h1.member-page-heading {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+  line-height: 40px;
+  color: var(--member-text);
+}
+.member-page-list {
+  border-radius: 18px;
+  background: var(--member-sheet);
+}
+.member-page-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 99px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 550;
+  background: var(--member-field);
+  color: var(--member-text);
+}
+.member-page-action:hover:enabled { background: #414143; }
+.member-auth {
+  min-height: 100dvh;
+  display: grid;
+  align-content: center;
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background: var(--member-canvas);
+  color: var(--member-text);
+}
+.member-auth > main {
+  width: min(100%, 384px);
+  margin-inline: auto;
+  display: grid;
+  gap: 22px;
+}
+.member-auth .preview-brand {
+  justify-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -.045em;
+}
+.preview-brand img { border-radius: 16px; }
+.member-auth .preview-gate { display: grid; gap: 12px; }
+.member-auth .preview-gate h1, .member-auth .preview-gate > p, .member-auth > main > p {
+  margin: 0;
+  text-align: center;
+  color: var(--member-secondary);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 450;
+}
+.member-auth .preview-gate h1 { color: var(--member-text); font-size: 18px; font-weight: 550; }
+.member-auth form { display: grid; gap: 14px; }
+.member-auth label { display: grid; gap: 6px; color: var(--member-secondary); font-size: 13px; }
+.member-auth input {
+  width: 100%;
+  min-height: 50px;
+  padding: 12px 16px;
+  border: 1px solid var(--member-divider);
+  border-radius: 15px;
+  background: var(--member-sheet);
+  color: var(--member-text);
+  font-size: 16px;
+}
+.member-auth button { min-height: 44px; }
+.member-auth form button, .member-auth .preview-gate > button:not(.astryx-button) {
+  min-height: 48px;
+  border-radius: 24px;
+  background: var(--member-text);
+  color: #181819;
+  font-weight: 600;
+}
+.member-auth form button:hover:enabled { background: #dedee0; }
+@media (max-width: 767px) {
+  .member-page { padding: 4px 16px 28px; }
+  .member-page-heading h1, h1.member-page-heading { font-size: 28px; line-height: 36px; }
+}
+@media (min-width: 768px) {
+  .member-auth > main {
+    width: min(100%, 420px);
+    padding: 40px 32px;
+    border: 1px solid var(--member-divider);
+    border-radius: 24px;
+    background: var(--member-sheet);
+  }
+  .member-auth input { background: var(--member-canvas); }
+}

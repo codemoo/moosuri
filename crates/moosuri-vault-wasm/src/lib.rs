@@ -417,9 +417,6 @@ impl VaultEngine {
             }
             Request::Setup { password } => {
                 self.mutable()?;
-                if password.expose().len() < 12 {
-                    return Err(Error::Invalid);
-                }
                 if self.current()?.header.is_some() || self.session.is_some() {
                     return Err(Error::State);
                 }
@@ -593,9 +590,6 @@ impl VaultEngine {
             Request::PreparePassword { password } => {
                 self.mutable()?;
                 self.no_import()?;
-                if password.expose().len() < 12 {
-                    return Err(Error::Invalid);
-                }
                 self.session
                     .as_mut()
                     .ok_or(Error::State)?
@@ -614,9 +608,6 @@ impl VaultEngine {
             Request::PrepareRotation { password } => {
                 self.mutable()?;
                 self.no_import()?;
-                if password.expose().len() < 12 {
-                    return Err(Error::Invalid);
-                }
                 let items = self.current()?.items.clone();
                 let inventory = unhex(&self.current()?.inventory_sha256)?;
                 self.session

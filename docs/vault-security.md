@@ -17,6 +17,8 @@
 
 ## 프로세스와 UI
 
+볼트를 만들거나 비밀번호 또는 보호 키를 바꿀 때 새 비밀번호는 8자 이상, UTF-8 기준 1,024바이트 이하여야 한다. 한글 음절과 이모지 등 유니코드 코드 포인트를 각각 한 글자로 센다. 기존 볼트와 암호화 파일은 만들 당시의 비밀번호나 복구 키로 열 수 있다. [회원 볼트 명세](../openspec/changes/align-member-vault/specs/vault-service-client/spec.md)
+
 Rust vault service는 별도 UID·DB·origin·cookie·journal·backup을 사용한다. agent 도구·LLM·관리자 UI에 decrypt API를 제공하지 않는다. React vault bundle과 전용 crypto Worker가 key를 다룬다. root key는 Worker에만 유지하고 UI는 선택한 항목의 필요 필드만 짧게 받는다. 검색 summary도 암호화하며 서버에서 비밀에 대한 full-text index를 만들지 않는다.
 
 lock/logout/idle/account switch/worker generation 변경 시 root/임시 평문·object URL·clipboard timer를 정리한다. visibility 복귀·TOTP 복사·late response를 다시 검사한다. 브라우저/OS가 만든 모든 사본을 완전 소거한다고 말하지 않는다. service worker/private IndexedDB/localStorage에 키·암호·CSV 원본을 보관하지 않는다. account auth는 내부 검증을 거쳐 독립 vault session을 발급하고 master unlock과 합치지 않는다.

@@ -178,9 +178,11 @@ pub fn router_shared(
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     });
-    Router::new()
-        .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
-        .route("/public/config", get(public_config))
+    routes(state)
+}
+
+fn routes(state: Service) -> Router {
+    let private = Router::new()
         .route(
             "/session",
             post(exchange).layer(DefaultBodyLimit::max(4096)),
@@ -192,6 +194,14 @@ pub fn router_shared(
         .route("/api/operations/{id}", get(receipt))
         .route("/api/operations/{id}/commit", post(commit))
         .route("/api/operations/{id}/cancel", post(cancel))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            limit_private_jobs,
+        ));
+    Router::new()
+        .merge(private)
+        .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
+        .route("/public/config", get(public_config))
         .fallback(asset)
         .layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(state.clone(), boundary))
@@ -218,6 +228,14 @@ pub async fn deliver_lifecycle(
     }
     Ok(())
 }
+async fn limit_private_jobs(State(s): State<Service>, request: Request, next: Next) -> Response {
+    let _permit = match s.jobs.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => return Error::Unavailable.into_response(),
+    };
+    next.run(request).await
+}
+
 async fn boundary(State(s): State<Service>, request: Request, next: Next) -> Response {
     if request
         .headers()
@@ -234,10 +252,6 @@ async fn boundary(State(s): State<Service>, request: Request, next: Next) -> Res
             return e.into_response();
         }
     }
-    let _permit = match s.jobs.clone().try_acquire_owned() {
-        Ok(p) => p,
-        Err(_) => return Error::Unavailable.into_response(),
-    };
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         let o = request
             .headers()
@@ -475,6 +489,9 @@ async fn asset(uri: Uri) -> Response {
         Some("js") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("wasm") => "application/wasm",
+        Some("woff2") => "font/woff2",
+        Some("png") => "image/png",
+        Some("txt") => "text/plain; charset=utf-8",
         Some("zip") if path == "/google-autofill.zip" => "application/zip",
         _ => "application/octet-stream",
     };
@@ -482,4 +499,44 @@ async fn asset(uri: Uri) -> Response {
     r.headers_mut()
         .insert(header::CONTENT_TYPE, mime.parse().unwrap());
     r
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn public_shell_does_not_compete_with_private_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = Service {
+            db: Arc::new(Mutex::new(
+                database::Database::open(&tmp.path().join("vault")).unwrap(),
+            )),
+            adapter: Adapter::new("http://127.0.0.1:1/internal/v1/vault", "0".repeat(64)).unwrap(),
+            config: Config::new(
+                "https://vault.example.test",
+                "https://assistant.example.test",
+                false,
+            )
+            .unwrap(),
+            jobs: Arc::new(tokio::sync::Semaphore::new(2)),
+        };
+        let _in_use = state.jobs.clone().acquire_many_owned(2).await.unwrap();
+        let app = routes(state);
+        for (path, expected) in [
+            ("/session/current", StatusCode::SERVICE_UNAVAILABLE),
+            ("/public/config", StatusCode::OK),
+            ("/health/live", StatusCode::NO_CONTENT),
+        ] {
+            let request = Request::builder()
+                .uri(path)
+                .header(header::HOST, "vault.example.test")
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
 }

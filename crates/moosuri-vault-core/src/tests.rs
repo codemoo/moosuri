@@ -315,6 +315,31 @@ fn hostile_wire_and_kdf_reject_before_work_and_errors_are_fixed() {
     assert!(unb64("YQ", 1, 1).is_err());
 }
 #[test]
+fn new_passwords_count_unicode_scalars_for_setup_change_and_rotation() {
+    let mut rng = Synthetic(0);
+    let (mut vault, _) = ready(1, &mut rng);
+    let inventory = inventory_digest(&[]).unwrap();
+    let too_large = format!("{}a", "🌱".repeat(256));
+    for invalid in ["1234567", "가나다라마바사", "🌱🌱🌱🌱🌱🌱🌱", &too_large]
+    {
+        let password = text(invalid);
+        assert!(matches!(
+            PendingVault::prepare(binding(2), &password, &mut rng),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            vault.prepare_password_change(&password, &mut rng),
+            Err(Error::Invalid)
+        ));
+        assert!(matches!(
+            vault.prepare_root_rotation(&password, &[], inventory, &mut rng),
+            Err(Error::Invalid)
+        ));
+    }
+    assert!(PendingVault::prepare(binding(2), &text(&"🌱".repeat(256)), &mut rng).is_ok());
+}
+
+#[test]
 fn password_rewrap_retains_items_and_recovery_while_pending_drop_keeps_old_epoch() {
     let mut rng = Synthetic(0);
     let (mut a, recovery) = ready(1, &mut rng);

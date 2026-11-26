@@ -199,8 +199,15 @@ fn make_envelope(
     value: Unlock<'_>,
     entropy: &mut impl TrustedEntropy,
 ) -> Result<Envelope> {
+    // Only newly wrapped passwords have a minimum. Existing headers and archives
+    // must still open with the exact UTF-8 bytes used to create them.
     let kind = match value {
-        Unlock::Password(_) => EnvelopeKind::Password,
+        Unlock::Password(password) => {
+            if password.expose().chars().count() < 8 {
+                return Err(Error::Invalid);
+            }
+            EnvelopeKind::Password
+        }
         Unlock::Recovery(_) => EnvelopeKind::Recovery,
     };
     let mut e = Envelope {
@@ -940,6 +947,51 @@ impl ClientVault {
 #[cfg(all(test, feature = "native-entropy"))]
 mod client_state_tests {
     use super::*;
+    #[test]
+    fn existing_short_multibyte_password_opens_current_header_and_exported_archive() {
+        let binding = Binding {
+            owner_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            vault_id: Uuid::from_u128(3),
+        };
+        let short = SecretText::new("가나다라".into()).unwrap();
+        let initial = SecretText::new("synthetic fixture".into()).unwrap();
+        let mut pending = PendingVault::prepare(binding, &initial, &mut crate::OsEntropy).unwrap();
+        // Reproduce a pre-policy password envelope using the original KDF and AAD.
+        let envelope = &mut pending.header.envelopes[0];
+        let key = password_key(
+            &short,
+            &unb64(&envelope.salt, 16, 16).unwrap(),
+            &PasswordKdf::default(),
+        )
+        .unwrap();
+        envelope.ciphertext = encrypt(
+            &key,
+            &unb64(&envelope.nonce, 12, 12).unwrap(),
+            &envelope_aad(binding, envelope).unwrap(),
+            pending.root.0.as_ref(),
+        )
+        .unwrap();
+        authenticate_header(&mut pending.header, &pending.root).unwrap();
+        let recovery = RecoveryKey::parse(&pending.recovery().expose_encoded()).unwrap();
+        pending.verify_recovery(&recovery).unwrap();
+        let (id, digest) = pending.candidate().unwrap();
+        pending
+            .confirm_commit(StorageReceipt::from_verified_storage(id, digest))
+            .unwrap();
+        let header = pending.activate().unwrap().committed_header();
+        let mut active = ActiveVault::unlock_password(header, binding, &short).unwrap();
+        let archive = active
+            .export_archive(&[], inventory_digest(&[]).unwrap(), &crate::Continue)
+            .unwrap();
+        assert!(crate::UnlockedArchive::unlock(&archive, &short).is_ok());
+        assert!(
+            active
+                .prepare_recovery_change(&mut crate::OsEntropy)
+                .is_ok()
+        );
+    }
+
     #[test]
     fn owned_pending_keeps_old_header_blocks_active_work_and_requires_matching_receipt() {
         let b = Binding {

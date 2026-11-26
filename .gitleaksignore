@@ -1,0 +1,3 @@
+# Exact historical incomplete PEM marker (body AAAA; no end marker or private key)
+# in the synthetic installer path-validation test. No path or credential wildcard.
+abdd5af9fda50065c9ab6090d50ea8f78c7d779d:apps/moosuri/src/installation/kiri/tests.rs:private-key:426

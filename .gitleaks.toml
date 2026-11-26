@@ -4,13 +4,6 @@
 useDefault = true
 
 [[allowlists]]
-description = "Exact incomplete PEM marker used to reject unsafe installer paths; AAAA is not a private key"
-condition = "AND"
-paths = ['''(^|/)apps/moosuri/src/installation/kiri/tests\.rs$''']
-regexTarget = "line"
-regexes = ['''^\s*fs::write\(&key, b"-----BEGIN PRIVATE[ ]KEY-----\\nAAAA\\n"\)\.unwrap\(\);\s*$''']
-
-[[allowlists]]
 description = "Four fixed synthetic legacy-v1 wrap/nonce values; not operational credentials"
 condition = "AND"
 paths = ['''(^|/)crates/moosuri-vault-core/tests/fixtures/legacy-v1-webcrypto\.json$''']

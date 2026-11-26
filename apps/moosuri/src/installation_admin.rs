@@ -180,6 +180,46 @@ async fn bootstrap(
     uid: u32,
     password: Zeroizing<String>,
 ) -> Result<admin::Member, String> {
+    bootstrap_inner(registry, request, email, ipc_root, uid, password, false).await
+}
+/// Clean-install completion: the operator's own selected secret was the initial
+/// secret, so it is adopted through the ordinary member password route when the
+/// member is still restricted. Safe to retry; an already changed member only logs in.
+pub(crate) async fn bootstrap_adopting_password(
+    registry: &Path,
+    request: Uuid,
+    email: &str,
+    ipc_root: &Path,
+    uid: u32,
+    password: Zeroizing<String>,
+) -> Result<admin::Member, String> {
+    bootstrap_inner(registry, request, email, ipc_root, uid, password, true).await
+}
+fn session_cookie(headers: &HeaderMap) -> Result<Zeroizing<String>, String> {
+    let cookies: Vec<_> = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|h| h.to_str().ok())
+        .filter_map(|s| s.split(';').next())
+        .filter_map(|s| s.strip_prefix("moosuri_session="))
+        .collect();
+    if cookies.len() != 1
+        || cookies[0].len() != 64
+        || !cookies[0].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err("invalid_member_session".into());
+    }
+    Ok(Zeroizing::new(cookies[0].to_owned()))
+}
+async fn bootstrap_inner(
+    registry: &Path,
+    request: Uuid,
+    email: &str,
+    ipc_root: &Path,
+    uid: u32,
+    password: Zeroizing<String>,
+    adopt: bool,
+) -> Result<admin::Member, String> {
     let a = runtime_registry::lookup_ready(registry, email.to_owned())
         .map_err(|_| "allocation_not_ready")?;
     let path = socket(ipc_root, &a, uid)?;
@@ -228,24 +268,47 @@ async fn bootstrap(
     )
     .await?;
     if status != StatusCode::OK {
+        if adopt && !matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            return Err("member_login_unavailable".into());
+        }
         return Err("member_login_required".into());
     }
-    let cookies: Vec<_> = headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|h| h.to_str().ok())
-        .filter_map(|s| s.split(';').next())
-        .filter_map(|s| s.strip_prefix("moosuri_session="))
-        .collect();
-    if cookies.len() != 1
-        || cookies[0].len() != 64
-        || !cookies[0].bytes().all(|b| b.is_ascii_hexdigit())
+    let mut token = session_cookie(&headers)?;
+    let login_view: Result<SessionView, String> =
+        serde_json::from_slice(&raw).map_err(|_| "invalid_member_response".to_owned());
+    let mut adopted = Ok(());
+    if adopt
+        && login_view
+            .as_ref()
+            .is_ok_and(|v| v.password_change_required || v.user.must_change_password)
     {
-        return Err("invalid_member_session".into());
+        let body = Zeroizing::new(
+            serde_json::to_vec(&serde_json::json!({"password": password.as_str()}))
+                .map_err(|_| "invalid_request")?,
+        );
+        adopted = async {
+            let (status, headers, _) = ipc(
+                &path,
+                uid,
+                &a,
+                Method::POST,
+                "/api/v1/auth/password",
+                body.to_vec(),
+                Some(&token),
+            )
+            .await?;
+            if status != StatusCode::OK {
+                return Err("member_password_adoption_rejected".to_owned());
+            }
+            // The ordinary route revokes every session and issues the replacement.
+            token = session_cookie(&headers)?;
+            Ok(())
+        }
+        .await;
     }
-    let token = Zeroizing::new(cookies[0].to_owned());
     let result = async {
-        let _: SessionView = serde_json::from_slice(&raw).map_err(|_| "invalid_member_response")?;
+        adopted?;
+        login_view?;
         let (status, _, raw) = ipc(
             &path,
             uid,

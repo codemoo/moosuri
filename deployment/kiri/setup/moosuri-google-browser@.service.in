@@ -1,0 +1,17 @@
+[Unit]
+Description=Moosuri fresh member Google browser attempt (clean Kiri installation)
+After=kiri.service
+
+[Service]
+User=root
+UMask=0077
+EnvironmentFile=/etc/moosuri/public-origin.env
+ExecStart=/usr/local/bin/moosuri runtime-google-browser --registry /var/lib/moosuri-control/registry --capsule-config /etc/moosuri/google-browser.json --gateway-uid 0 --public-origin ${MOOSURI_PUBLIC_ORIGIN} --client-file /var/lib/moosuri-control/registry/google-web-client.json
+StandardInput=socket
+StandardOutput=null
+StandardError=null
+RuntimeMaxSec=24min
+TimeoutStopSec=90
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=true

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 mod account_runtime_extract;
 mod account_runtime_inventory;
+mod kiri_bundle;
+mod kiri_host;
 mod notice_supplements;
 mod notices;
 mod release;
@@ -405,21 +407,31 @@ fn main() {
                 "web-notices",
                 "account-runtime-inventory",
                 "account-runtime-extract",
+                "kiri-bundle",
+                "kiri-host",
             ]
             .contains(&s.as_str())
         })
     {
         eprintln!(
-            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|account-runtime-extract --scope manual-knowledge-v1 --snapshot DIRECTORY --output DIRECTORY --account UUID --tenant UUID --volume UUID --generation N|account-runtime-extract --verify DIRECTORY|account-runtime-inventory [--schema 81..103] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
+            "Usage: cargo run --locked -p xtask -- <verify-plan|sbom|kiri-bundle --output NEW_ABSOLUTE_DIRECTORY|account-runtime-extract --scope manual-knowledge-v1 --snapshot DIRECTORY --output DIRECTORY --account UUID --tenant UUID --volume UUID --generation N|account-runtime-extract --verify DIRECTORY|account-runtime-inventory [--schema 81..103] [--snapshot DIRECTORY]|rust-notices --vendor DIRECTORY [--supplement MANIFEST] [--require-complete]|web-notices --web-node-modules DIRECTORY --vault-node-modules DIRECTORY [--supplement MANIFEST] [--require-complete]|release-provenance --bundle DIRECTORY|verify-provenance --bundle DIRECTORY|component-provenance --bundle DIRECTORY|verify-component-provenance --bundle DIRECTORY>"
         );
         std::process::exit(2);
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = if matches!(args[0].as_str(), "kiri-bundle" | "kiri-host") {
+        std::env::current_dir().unwrap_or_default()
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    };
     let result = root
         .canonicalize()
         .map_err(|e| e.to_string())
         .and_then(|root| {
-            if args[0] == "account-runtime-extract" {
+            if args[0] == "kiri-bundle" {
+                kiri_bundle::run(&root, &args[1..])
+            } else if args[0] == "kiri-host" {
+                kiri_host::run_host(&args[1..])
+            } else if args[0] == "account-runtime-extract" {
                 account_runtime_extract::run(&root, &args[1..])
             } else if args[0] == "account-runtime-inventory" {
                 account_runtime_inventory::run(&root, &args[1..])

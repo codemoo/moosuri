@@ -8,7 +8,7 @@ mod display;
 mod worker;
 pub use binding::{Binding, Envelope, PROTOCOL, Recipient};
 pub use crypto::Receiver;
-pub use worker::serve;
+pub use worker::{serve, installation_probe};
 #[cfg(test)]
 mod tests;
 

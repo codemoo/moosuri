@@ -184,6 +184,27 @@ async fn stopped() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+/// Empty-profile local startup only. Never opens Google or accepts credentials.
+pub async fn installation_probe() -> bool {
+    let Some(tenant) = std::env::var("MOOSURI_BROWSER_TENANT").ok()
+        .and_then(|s| s.parse::<Uuid>().ok()).filter(|id| !id.is_nil()) else { return false };
+    let binding = Binding { installation: Uuid::new_v4(), account: Uuid::new_v4(), tenant,
+        volume: Uuid::new_v4(), generation: 1, epoch: 0, challenge: Uuid::new_v4(),
+        email: "probe@example.invalid".into(), origin: "https://probe.example.invalid".into() };
+    let cancel = CancellationToken::new();
+    let Ok(browser) = Chrome::start(&binding, cancel.clone()).await else { return false };
+    let mut output = tokio::io::stdout();
+    let mut input = BufReader::new(tokio::io::stdin());
+    let ready = send(&mut output, json!({"ready":true,"tenant":tenant,
+        "javascript_enabled":true,"chrome":"158.0.8127.88"})).await;
+    if ready.is_ok() {
+        let _: Result<serde_json::Value, _> = receive(&mut input, 10).await;
+    }
+    cancel.cancel();
+    browser.shutdown().await;
+    ready.is_ok()
+}
+
 pub async fn serve() -> bool {
     #[cfg(target_os = "linux")]
     {

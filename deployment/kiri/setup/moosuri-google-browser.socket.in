@@ -1,0 +1,12 @@
+[Unit]
+Description=Moosuri installation Google browser transport (clean Kiri installation)
+
+[Socket]
+ListenStream=/run/moosuri-google-browser/runtime.sock
+DirectoryMode=0700
+SocketMode=0600
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

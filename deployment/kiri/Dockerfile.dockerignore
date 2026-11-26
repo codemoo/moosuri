@@ -8,6 +8,7 @@
 !apps/**/*.rs
 !crates/*/Cargo.toml
 !crates/**/*.rs
+!crates/moosuri-connectors/src/browser/google_auth/*.js
 !tools/*/Cargo.toml
 !tools/**/*.rs
 !tools/legacy/schema23-*.json
@@ -20,3 +21,4 @@
 !community/skills/*/moosuri.toml
 !web/public/moosuri-icon-192.png
 !deployment/kiri/text-preview.json
+!deployment/kiri/setup/**

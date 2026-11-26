@@ -11,8 +11,9 @@ COPY crates ./crates
 COPY tools ./tools
 COPY community ./community
 COPY migrations ./migrations
+COPY deployment ./deployment
 COPY web/public/moosuri-icon-192.png ./web/public/
-ARG CARGO_BUILD_JOBS=4
+ARG CARGO_BUILD_JOBS=2
 RUN RUSTUP_TOOLCHAIN=1.89.0 cargo build --locked --release -p moosuri
 
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS gws

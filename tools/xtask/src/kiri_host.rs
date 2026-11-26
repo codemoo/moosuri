@@ -1,0 +1,66 @@
+//! Host packages only. Product state and administrator enrollment stay in setup-kiri.
+use super::{Check, ensure};
+use sha2::{Digest, Sha256};
+use std::{fs, os::unix::fs::{DirBuilderExt, MetadataExt}, path::Path, process::{Command, Stdio}};
+
+const KIRI_URL: &str = "https://github.com/libracoder/kiri/releases/download/v0.2.2/kiri-lite_0.2.2_amd64.deb";
+const KIRI_SHA256: &str = "24798125ee50bb24db86594a9ee1469b1032d9b2ffd7da616b06e40763c723b9";
+
+fn run(binary: &str, args: &[&str]) -> Check<()> {
+    let result = Command::new(binary).args(args).env("DEBIAN_FRONTEND", "noninteractive")
+        .stdin(Stdio::null()).status().map_err(|_| format!("kiri_host_{binary}_unavailable"))?;
+    ensure(result.success(), format!("kiri_host_{binary}_failed"))
+}
+fn capture(binary: &str, args: &[&str]) -> Check<String> {
+    let result = Command::new(binary).args(args).stdin(Stdio::null()).output()
+        .map_err(|_| format!("kiri_host_{binary}_unavailable"))?;
+    ensure(result.status.success(), format!("kiri_host_{binary}_failed"))?;
+    String::from_utf8(result.stdout).map_err(|_| "kiri_host_output_invalid".into())
+}
+
+pub fn run_host(args: &[String]) -> Check<()> {
+    ensure(args.is_empty(), "usage: kiri-host")?;
+    ensure(cfg!(all(target_os="linux", target_arch="x86_64")) && unsafe { libc::geteuid() } == 0,
+        "kiri_host_root_linux_amd64_required")?;
+    let os = fs::read_to_string("/etc/os-release").map_err(|_| "kiri_host_os_unknown")?;
+    let get = |key: &str| os.lines().find_map(|l| l.strip_prefix(key)).map(|s| s.trim_matches('"'));
+    ensure(get("ID=") == Some("ubuntu") && get("VERSION_ID=") == Some("24.04")
+        && Path::new("/run/systemd/system").is_dir(), "kiri_host_ubuntu_24_04_systemd_required")?;
+    // Refuse to replace a different engine installation. An absent engine is the normal path.
+    if Path::new("/usr/bin/kiri").exists() || Path::new("/usr/local/bin/kiri").exists() {
+        ensure(capture("dpkg-query", &["-W", "-f=${Version}", "kiri-lite"] )?.trim() == "0.2.2",
+            "kiri_host_existing_engine_version_conflict")?;
+    }
+    run("apt-get", &["update"])?;
+    run("apt-get", &["install", "-y", "--no-install-recommends", "ca-certificates", "curl",
+        "docker.io", "docker-buildx", "docker-compose-v2", "nginx", "certbot", "e2fsprogs",
+        "iproute2", "iptables", "apparmor", "apparmor-utils", "util-linux", "openssl"])?;
+    let dir = Path::new("/var/cache/moosuri-kiri-package");
+    if dir.exists() {
+        let m = fs::symlink_metadata(dir).map_err(|_| "kiri_host_package_path_invalid")?;
+        ensure(m.is_dir() && m.uid() == 0 && m.mode() & 0o777 == 0o700, "kiri_host_package_path_invalid")?;
+    } else {
+        fs::DirBuilder::new().mode(0o700).create(dir).map_err(|_| "kiri_host_package_path_invalid")?;
+    }
+    let package = dir.join("kiri-lite_0.2.2_amd64.deb");
+    if !package.try_exists().map_err(|_| "kiri_host_package_path_invalid")? {
+        run("curl", &["--fail", "--location", "--silent", "--show-error", "--retry", "2",
+            "--proto", "=https", "--proto-redir", "=https", "--output", package.to_str().unwrap(), KIRI_URL])?;
+    }
+    let m = fs::symlink_metadata(&package).map_err(|_| "kiri_host_package_missing")?;
+    ensure(m.is_file() && m.uid() == 0 && m.nlink() == 1 && m.mode() & 0o022 == 0 && m.len() <= 256 << 20,
+        "kiri_host_package_invalid")?;
+    let bytes = fs::read(&package).map_err(|_| "kiri_host_package_unreadable")?;
+    ensure(format!("{:x}", Sha256::digest(bytes)) == KIRI_SHA256, "kiri_host_package_checksum_failed")?;
+    run("apt-get", &["install", "-y", package.to_str().unwrap()])?;
+    ensure(capture("dpkg-query", &["-W", "-f=${Version}", "kiri-lite"] )?.trim() == "0.2.2",
+        "kiri_host_engine_version_mismatch")?;
+    // Ubuntu ships the Chrome executable's user-namespace admission profile.
+    // Use it instead of installing a second attachment for the same path.
+    ensure(Path::new("/etc/apparmor.d/chrome").is_file(), "kiri_host_chrome_apparmor_profile_missing")?;
+    run("apparmor_parser", &["-r", "/etc/apparmor.d/chrome"])?;
+    run("systemctl", &["enable", "--now", "docker.service", "kiri.service", "nginx.service"])?;
+    run("systemctl", &["is-active", "--quiet", "docker.service", "kiri.service", "nginx.service"])?;
+    println!("Host dependencies ready: Ubuntu 24.04, Kiri 0.2.2, Docker, nginx and certificate tooling.");
+    Ok(())
+}

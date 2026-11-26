@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare reserved Moosuri member web invitations (clean Kiri installation)
+After=kiri.service
+Wants=kiri.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+StandardInput=null
+ExecStart=/usr/local/bin/moosuri kiri-onboard-worker --experimental --config /etc/moosuri/kiri-members.json --policy /etc/moosuri/kiri-onboard-policy.json --operations-root /var/lib/moosuri-control/invitations

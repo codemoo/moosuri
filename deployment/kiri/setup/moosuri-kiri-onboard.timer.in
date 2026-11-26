@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for reserved Moosuri member web invitations (clean Kiri installation)
+
+[Timer]
+OnActiveSec=1min
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=moosuri-kiri-onboard.service
+
+[Install]
+WantedBy=timers.target

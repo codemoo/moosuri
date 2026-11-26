@@ -1,6 +1,8 @@
-FROM rust:1.89.0-bookworm AS build
+FROM rust:1.89.0-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS build
+ENV RUSTUP_TOOLCHAIN=1.89.0
 RUN apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
+ARG CARGO_BUILD_JOBS=2
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY apps ./apps
@@ -8,7 +10,7 @@ COPY tools ./tools
 COPY community ./community
 RUN cargo build --locked --release -p moosuri-connectors --example browser_worker --example browser_proxy
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-certificates fonts-liberation iptables iproute2 util-linux tini && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 browser && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin browser
 COPY --from=build /source/target/release/examples/browser_worker /usr/local/bin/browser-worker

@@ -2,6 +2,7 @@
 //! No command, mount, environment, action or tenant comes from model arguments.
 use super::{BrowserError, net::public_url, private_proxy};
 mod google;
+mod installation;
 pub(super) mod workspace;
 pub use google::{GoogleAttempt, GooglePhase};
 use serde::{Deserialize, Serialize};

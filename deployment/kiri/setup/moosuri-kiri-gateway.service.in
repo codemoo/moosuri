@@ -1,0 +1,23 @@
+[Unit]
+Description=Moosuri member gateway (clean Kiri installation)
+After=kiri.service moosuri-kiri-lifecycle.service
+Wants=kiri.service
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+RuntimeDirectory=moosuri-member-proxy
+RuntimeDirectoryMode=0710
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/usr/bin/chgrp @PROXY_GID@ /run/moosuri-member-proxy
+ExecStart=/usr/local/bin/moosuri personal-gateway --public-origin @PUBLIC_ORIGIN@ --vault-site-origin @VAULT_ORIGIN@ --registry /var/lib/moosuri-control/registry --ipc-root /srv/moosuri-storage/ipc --socket-dir /var/lib/moosuri-control/gateway --proxy-socket-dir /run/moosuri-member-proxy --proxy-gid @PROXY_GID@ --vault-all-members --vault-adapter-listen @GATEWAY_ADAPTER@ --vault-adapter-key-file /etc/moosuri/vault-adapter.key --google-runtime-socket /run/moosuri-google-browser/runtime.sock --google-runtime-installation @INSTALLATION_ID@
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

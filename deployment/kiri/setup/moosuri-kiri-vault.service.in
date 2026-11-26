@@ -1,0 +1,23 @@
+[Unit]
+Description=Moosuri separate-origin vault (clean Kiri installation)
+After=network.target moosuri-kiri-gateway.service
+Wants=moosuri-kiri-gateway.service
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+StateDirectory=moosuri-vault
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/moosuri-vault-service --data-dir /var/lib/moosuri-vault --bind @VAULT_BIND@ --origin @VAULT_ORIGIN@ --assistant-origin @PUBLIC_ORIGIN@ --adapter-url http://@GATEWAY_ADAPTER@/internal/v1/vault --adapter-key-file /etc/moosuri/vault-adapter.key
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/moosuri-vault
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,7 @@
 //! Signed bundles and stopped forward-schema activation. No service mutation.
 mod component;
 mod download;
+pub mod kiri;
 pub mod setup;
 use clap::{Subcommand, ValueEnum};
 use fs2::FileExt;

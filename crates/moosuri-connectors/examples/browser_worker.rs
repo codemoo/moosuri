@@ -123,6 +123,9 @@ async fn main() {
             1
         });
     }
+    if std::env::args().len() == 2 && std::env::args().nth(1).as_deref() == Some("--google-installation-probe") {
+        std::process::exit(if moosuri_connectors::browser::google_auth::installation_probe().await { 0 } else { 1 });
+    }
     let workspace = std::env::args().nth(1).as_deref() == Some("--workspace");
     if std::env::args().len() > 2 || (std::env::args().nth(1).is_some() && !workspace) {
         eprintln!("unsupported worker argument");

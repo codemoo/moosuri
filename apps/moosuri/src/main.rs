@@ -110,6 +110,8 @@ enum Command {
     GwsInbox(gws_inbox::Options),
     /// Guided installation (English / 한국어), or resume an existing setup.
     Setup(installation::setup::Options),
+    /// Clean Ubuntu 24.04 amd64 installation of member Kiri, gateway, vault and Google transport.
+    SetupKiri(installation::kiri::Options),
     /// Show the desktop menu. Closing it leaves the server running.
     Desktop(installation::setup::Location),
     /// Enable or disable server startup at login without stopping the server.
@@ -421,6 +423,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Autostart(options) => return setup::desktop::autostart(options),
         Command::Desktop(_) => unreachable!(),
         Command::Setup(options) => return setup::run(options, cli.data_dir.as_deref()).await,
+        Command::SetupKiri(options) => return installation::kiri::run(options).await,
         Command::Start(options) => return setup::start(options).await,
         Command::Stop(location) => return setup::stop(location),
         Command::Restart(location) => return setup::restart(location).await,
@@ -632,6 +635,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::Desktop(_)
         | Command::Autostart(_)
         | Command::Setup(_)
+        | Command::SetupKiri(_)
         | Command::Start(_)
         | Command::Stop(_)
         | Command::Restart(_)

@@ -15,8 +15,8 @@ provider results, diagnostic installation evidence and open acceptance gates.
 Implementation order within the public-installation gate (do not treat an
 individual prerequisite as completion of Google setup):
 
-1. Member-aware vault enrollment and lifecycle — published; production keeps
-   single-member routing pending the portable Google transport.
+1. Member-aware vault enrollment and lifecycle — published and deployed with
+   the portable Google transport; final real multi-member acceptance remains open.
 2. Public browser launcher on verified Kiri — implementation and Linux browser
    acceptance and independent review complete; published as the browser prerequisite.
 3. Member provisioning/lifecycle compatibility with Kiri 0.2.2 — implemented
@@ -887,7 +887,7 @@ blocks all seven consent-start routes until publication is confirmed, including
 a saved client whose checkpoint acknowledgement was lost. Unreadable registry
 state fails closed; legacy manually registered installations remain distinct.
 Linux registry40 and gateway38 cases passed, plus the actual HTTP start-route
-and unreadable-registry regression. Independent Claude Sonnet5.5/medium review
+and unreadable-registry regression. Independent Claude Sonnet 5.5/medium review
 of this frozen integration is running; provider publication remains unverified.
 
 The fresh Ubuntu VM's source install at dabc8c9 failed while compiling the member
@@ -904,7 +904,7 @@ spawn failure was observed. This does not establish the original cause; no
 speculative production process retry was added. Retain the intermittent failure
 as a diagnostic limitation and proceed with installation/provider acceptance.
 
-Independent publication review completed on Claude Sonnet5.5/medium. It found no
+Independent publication review completed on Claude Sonnet 5.5/medium. It found no
 definite authorization/storage defect, but identified a practical dead end when
 publication intent committed before dispatch. The candidate now permits only
 Domains/Publish to retry after fresh exact Absent readback, bounded to three
@@ -930,17 +930,17 @@ not validate the candidate's packaged login or consent path.
 
 ### I07 current-host transition preflight
 
-Read-only production inventory found Ubuntu22.04.5/kernel5.15.0-179 and Kiri0.2.1,
+Read-only production inventory found Ubuntu 22.04.5/kernel5.15.0-179 and Kiri0.2.1,
 with existing versioned product services and no setup-kiri receipt. The new
-Ubuntu24.04 installer intentionally refuses this existing installation. An
-independent Claude Sonnet5.5/medium source review confirmed that setup-kiri and
+Ubuntu 24.04 installer intentionally refuses this existing installation. An
+independent Claude Sonnet 5.5/medium source review confirmed that setup-kiri and
 kiri-host are fresh-install/resume tools, not existing-installation updaters.
 Do not forge a receipt or relax those guards for rollout. Preserve existing
 member/volume/key identities, encrypted Vault data and Google grants; retain
 production service names while switching a matched bundle. Kiri engine and
 browser confinement compatibility on the current kernel, guarded member image
 replacement and browser capsule preparation need separate transition acceptance.
-This is not evidence that Kiri0.2.2 fails on the current kernel. The approved
+This is not evidence that Kiri 0.2.2 fails on the current kernel. The approved
 product deployment does not require or authorize an unrelated host OS upgrade.
 
 After the corrected installation finishes, the queued acceptance pipeline runs
@@ -952,7 +952,7 @@ Its results are pending, not yet a pass.
 ### Corrected installation and real Vault acceptance — 2026-11-27
 
 Revision `116a8cdce3b9b8ff28e5a26377658292076f94b6` completed the source installer
-in the same marked Ubuntu24.04 guest after the failed earlier Docker build.
+in the same marked Ubuntu 24.04 guest after the failed earlier Docker build.
 The guest had no product state before this successful run, but did retain the
 earlier run's downloaded/build prerequisites. This is successful interrupted
 source-install recovery, not an untouched final-revision baseline or a public
@@ -1008,10 +1008,10 @@ source, test fixtures or further prompts.
 | --- | --- | --- | --- |
 | Lost first OAuth secret | Fresh admin/lease + absent-file reservation, permanent same-client binding and three-attempt bound; one Add per worker; private capture and exact reload | Linux registry43/gateway38, added competing-save preservation, DOM17; actual disposable-client creation and recovery DOM subflow passed | Candidate, installed full path open |
 | Existing-member runtime replacement | `kiri-rollout` reuses provisioner validation/locks; exact old container ID, same member/data/UID, no volume deletion, target replay/readiness | Linux provisioner20 and six actual same-kernel profile-rollout checks passed | Candidate, matched image/production switch open |
-| Production-kernel browser admission | Kiri0.2.2 on actual 5.15.0-179 Ubuntu22.04 kernel | Real Chromium + Google Chrome installer probes and invitation/member/daemon recovery passed | No production engine/service change |
+| Production-kernel browser admission | Kiri 0.2.2 on actual 5.15.0-179 Ubuntu 22.04 kernel | Real Chromium + Google Chrome installer probes and invitation/member/daemon recovery passed | No production engine/service change |
 
 Recovery implementation and independent review used official Linux Claude
-Sonnet5.5/medium. Review found a missing competing-save acceptance case: it now
+Sonnet 5.5/medium. Review found a missing competing-save acceptance case: it now
 writes a different valid shared registration after recovery reservation, verifies
 that recovery refuses it, and compares the file byte-for-byte. The existing
 atomic writer already refuses replacement. Three pre-dispatch failures may still
@@ -1038,7 +1038,7 @@ managed setup/publishing; real two-member consent and conversational Gmail with
 an administrator-provided model connection; final-source fresh installation and
 coherent public release. Keep the 50-journey matrix open until those pass.
 
-A fresh bounded Claude Sonnet5.5/medium closure review read the actual private
+A fresh bounded Claude Sonnet 5.5/medium closure review read the actual private
 writer/registry locks and the refined stop/remove paths and found no material
 defect. The competing-save test passed, as did the final provisioner20 cases.
 Linux OpenSpec strict validation and plan/link verification passed (1,754 links).
@@ -1055,7 +1055,7 @@ member image. The first transition failed safely with the original container
 retained stopped: a new registry lookup migrated schema10→11 while old connection
 services still ran. The corrected order stops all registry consumers, installs
 matching host code/configs, starts matching brokers, then replaces members and
-resumes lifecycle/admission. Independent Claude Sonnet5.5/medium reviewed this
+resumes lifecycle/admission. Independent Claude Sonnet 5.5/medium reviewed this
 ordering. The next run caught a harness seccomp path under `/root`, hidden by the
 installed services' `ProtectHome`; runtime policy now lives under `/etc/moosuri`.
 Neither failure changed the original member logical data snapshots or Vault.
@@ -1104,7 +1104,51 @@ that path for managed Claude subscription connections too. It names the switch
 to the administrator's separately billed API connection before any submission.
 The displayed subscription revision must match the managed file; missing or
 mismatched setup refuses the form. No connection or credential is changed by
-opening the screen. Independent Claude Sonnet5.5/medium review prompted the
+opening the screen. Independent Claude Sonnet 5.5/medium review prompted the
 billing copy and revision check. Linux current-source engine cases20 and typecheck
 passed. The actual replacement and inference still require an authorized API
 credential and remain open; no developer subscription authentication is reused.
+
+### 2026-11-27 production transition and actual fresh-connection defect
+
+Public c8cf8e8 was deployed as one matched bundle on the existing Ubuntu 22.04 host
+with Kiri 0.2.2. Member identity, allocation, mounts, logical data, encrypted Vault,
+protected keys, installation roles/model bindings and existing Google grants were
+preserved. Same-target member replay kept its container. Six services ran matching
+binaries and certificate-verified app/about/Vault HTTPS passed. An immediate
+Type=simple PID before exec caused one readiness failure; only matching executable
+samples now count toward the stable interval. The transition resumed after brokers
+without repeating backup, engine upgrade or member allocation. No installer receipt
+was fabricated and the host OS/kernel were unchanged.
+
+Post-transition Kiri UI opened the managed API recovery form without submission.
+Existing Gmail read returned 200/completed/five metadata rows, which survived reload
+in the original conversation. Wrong Vault password was refused; the correct password
+opened the retained Vault. No mail text, token or secret entered this record.
+
+The new portable Drive flow reached its fresh Vault recipient, then failed. Actual
+proxy inspection showed DNS working but no external default route; Google CONNECT
+returned 502. Kiri selects the default route from the primary network: creating
+the proxy on public first, attaching internal with the exact private IP, then
+starting fixes this. The installer now refuses old internal-primary or extra-network
+proxies and checks the kernel default route. Interrupted create/attach/start and
+actual command ordering are covered. The matched rollout harness uses the same order.
+[Six real Linux egress checks](../../../deployment/kiri/linux-vm-smoke/guest-proxy-egress.py)
+passed public Google HTTPS, private-address refusal, private-worker isolation, restart
+and exact owned cleanup. [Production result and remaining gates](../../../docs/reviews/2026-11-27-matched-production.md).
+
+The production egress repair prepared two new isolated proxy projects, verified
+actual Google 302/private 403 and restart, and switched config plus matching smoke
+evidence. Member identity/PID/mounts, keys and client were unchanged; matching
+services stayed stable and real HTTPS passed. Original proxies remain for explicit
+rollback. A subsequent real Vault-backed attempt reached opening but did not finish
+authentication. The phone's Linux confirmation was expired, not a successful approval.
+Explicit app cancellation cleared the socket, authentication service and browser
+capsule. This live failure remains open for bounded page-state diagnosis.
+
+Production invitation timer now runs the published worker with the existing profile,
+a private three-UID policy and ten-GiB new-member capacity. Empty queue passes and
+configuration preservation were checked; no second production user was created.
+Next units: diagnose the opening/verification state with secret-free evidence;
+final public installer/fresh-source acceptance; managed OAuth publication/recovery;
+real second-member consent; valid administrator model connection and C01.

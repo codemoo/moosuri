@@ -44,6 +44,10 @@ product state. It refuses foreign files or a conflicting existing installation.
 It uses the existing registry, capped member storage, invitation and lifecycle
 paths. Browser configurations are admitted only after actual empty-profile
 Chromium/Chrome startup, kernel confinement and owned-container cleanup pass.
+The proxy is created on its public network first, then attached at its exact
+internal address before start; the installer checks its actual default route.
+An older internal-primary proxy is refused rather than adopted. The browser
+worker itself remains internal-only, and the proxy refuses private destinations.
 The separate-origin Vault and Google recipient transport enroll members through
 their authenticated gateway sessions; no fixed owner's recipient or private
 developer helper is required.

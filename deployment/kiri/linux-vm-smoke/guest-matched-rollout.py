@@ -105,11 +105,11 @@ def capsule(role, image, previous, seccomp, probe, evidence_dir, used):
     proxy = docker('container', 'create', '--name', project + '-proxy-1',
                    '--entrypoint', '/usr/bin/tini', '--user', '10001:10001',
                    '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
-                   '--network', internal, '--ip', proxy_ip, '--pids-limit', '64',
+                   '--network', public, '--pids-limit', '64',
                    '--memory', '128m', '--cpus', '1', '--restart', 'unless-stopped',
                    *labels, '--label', 'com.docker.compose.service=proxy', image,
                    '--', '/usr/local/bin/browser-proxy')
-    docker('network', 'connect', public, proxy)
+    docker('network', 'connect', '--ip', proxy_ip, internal, proxy)
     docker('container', 'start', proxy)
     config = dict(engine='kiri', image_id=image, network_id=internal,
                   proxy_container_id=proxy, proxy_ip=proxy_ip, owner=owner,
@@ -146,7 +146,15 @@ def service_health(manifest, brokers_only=False):
                 current = []
                 break
             binary = 'moosuri-vault-service' if unit == 'moosuri-kiri-vault.service' else 'moosuri'
-            assert digest(Path('/proc') / state['MainPID'] / 'exe') == manifest['files'][binary], 'running_binary_mismatch'
+            # Type=simple can report a PID before exec completes. Only the
+            # matching executable counts toward the stable interval.
+            try:
+                matching = digest(Path('/proc') / state['MainPID'] / 'exe') == manifest['files'][binary]
+            except OSError:
+                matching = False
+            if not matching:
+                current = []
+                break
             current.append(state)
         if current and current == previous:
             if stable_since is not None and time.monotonic() - stable_since >= 10:

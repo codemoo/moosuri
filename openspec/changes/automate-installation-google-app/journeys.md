@@ -20,10 +20,10 @@ journey. All model execution and independent review uses Claude Sonnet 5.5 / med
 | I01 | Empty server; obtain public source and follow the default installer | HTTPS app and separate Vault work without private helpers, preinstalled Kiri/GWS or developer credentials | Corrected candidate116a8cd source installation passed after interrupted prerequisite/build recovery; default public release and untouched final-revision baseline remain open |
 | I02 | First admin opens the installation without a model connection | Clear admin setup; no provider calls, guessed model or local fallback | Candidate116a8cd installed service/setup and two-member denial passed, including actual reboot; real configured model is I03/M01 |
 | I03 | Admin attaches an authorized model connection and selects Sonnet 5.5 / medium | First real chat and work interpretation use that selection; credentials stay private | Open: first-provider setup and current interpretation failure |
-| I04 | Invite a second member after all services are already running | Independent UID/volume, browser/Vault/GWS and model sockets appear without manual service editing | Candidate116a8cd shipped invitation timer and two independent installed members passed; real browser/Vault isolation passed |
+| I04 | Invite a second member after all services are already running | Independent UID/volume, browser/Vault/GWS and model sockets appear without manual service editing | Candidate116a8cd shipped invitation timer and two independent installed members passed; real browser/Vault isolation passed; production timer now enabled and empty queue verified, new real production member still open |
 | I05 | Stop installation after preparation, then run the same installer | Original installation, member allocation and keys retained; conflicting inputs refused | Candidate116a8cd recovered prior build interruption; complete same-input replay and conflicting-origin refusal preserved identities/keys |
 | I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Candidate116a8cd reboots and upgraded0b5e8fa actual reboot passed; identities, independent Kiri recipients, handoff, admin boundary and both encrypted Vaults/items retained; Google/model connections still unconfigured |
-| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Same-kernel Ubuntu22.04/5.15.0-179/Kiri0.2.2 member recovery, both confined browsers and six owned profile-rollout checks passed; different-image candidate0b5e8fa transition and real reboot passed after correcting shared-service order and the confined seccomp path; production transition remains open; no new-installer receipt is fabricated |
+| I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Same-kernel Ubuntu 22.04/5.15.0-179/Kiri 0.2.2 member recovery, both confined browsers and six owned profile-rollout checks passed; different-image candidate0b5e8fa transition and real reboot passed after correcting shared-service order and the confined seccomp path; production c8cf8e8 transition retained the real account/Vault/keys/grants and existing Gmail read passed; fresh login exposed missing proxy egress, repaired with real public/private and restart checks; post-repair authentication remains open; no new-installer receipt is fabricated |
 
 ## Model first use and recovery — 6 journeys
 
@@ -48,7 +48,7 @@ inspection is not evidence of successful fresh provider login or inference.
 | V01 | Google connection with an empty Vault | Request Google email/password first; encrypt and save, then create fresh Kiri | Open in final portable install |
 | V02 | One saved Google account; unlock the Vault | Reuse it without requesting Google password again; selected identity bound to recipient | Live pass, 2026-11-27 |
 | V03 | Two saved Google accounts; choose the second | Explicit chooser; only chosen account reaches Google; no first-account fallback | Open in final portable install |
-| V04 | Enter a wrong Vault password, then the correct one | Remain locked after the failure; same connection continues after correct unlock | Live pass, 2026-11-27 |
+| V04 | Enter a wrong Vault password, then the correct one | Remain locked after the failure; same connection continues after correct unlock | Live pass again after production c8cf8e8 transition, 2026-11-27 |
 | V05 | Use a Google email different from the Moosuri login email | Preserve member ownership while consent and read match selected Google identity | Open with real second account |
 | V06 | Cancel, log out, or switch member before/during sealed delivery | No browser release for revoked identity; stale ciphertext cannot reopen a run | Open full journey; prior synthetic boundary tests retained |
 
@@ -56,7 +56,7 @@ inspection is not evidence of successful fresh provider login or inference.
 
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
-| L01 | Saved valid account, fresh Kiri profile | Vault fills Google login privately; verified identity before consent | Live pass, 2026-11-27 |
+| L01 | Saved valid account, fresh Kiri profile | Vault fills Google login privately; verified identity before consent | Earlier operator live pass, 2026-11-27; post-transition public-runtime attempt reached opening and was cancelled without verified login |
 | L02 | Google asks for device confirmation; approve the matching request on the connected Flip5 via Phone Agent | Wait shown in app; same Kiri attempt proceeds into service consent and connects | Live pass, 2026-11-27 |
 | L03 | Decline or leave device confirmation until expiry | No connected badge or API read; bounded browser cleanup; explicit fresh retry | Open actual journey |
 | L04 | Saved password is wrong | One attempt, useful failure; no repeated password submission or silent account replacement | Open actual journey |
@@ -104,7 +104,7 @@ readback. User consent still grants only the selected service's minimum scope.
 | --- | --- | --- | --- |
 | C01 | Connected member says “최근 받은 메일 5개 확인해줘” | Existing typed workflow reads one inbox metadata page and displays result in original conversation | **Failed live**: HTTP 422 `personal_text_model_unavailable`; configured Claude worker socket is absent. Typed inbox intent and UI continuation now pass synthetic Linux journeys; production worker restoration and real chat remain open |
 | C02 | Same request with no Google connection | Existing Vault-first flow; consent returns to same thread/request and reads once | Typed flow tested with absent connection and reload; final-source real journey open |
-| C03 | Completed read; reload and reopen the conversation | Persisted receipt and five rows visible; no additional provider read | Live pass after supported API read, 2026-11-27 |
+| C03 | Completed read; reload and reopen the conversation | Persisted receipt and five rows visible; no additional provider read | Live pass again after production c8cf8e8 supported API read: five saved rows remained after reload, 2026-11-27 |
 | C04 | Read completes but response is lost; resume same request | Existing receipt returned, same thread/request; no duplicate read | Existing completed request replay passed live (HTTP 200, same thread/request); actual response-loss injection remains open |
 | C05 | “메일은 읽지 마”, a quoted instruction, or a how-to question | No Google read; ordinary response or clarification; no invented result | Positive grammar tested; six real Sonnet 5.5/medium classifier calls matched on Linux; full member-route journey open |
 | C06 | Permission revoked/account switched while read is pending | No stale result exposed; connection error explained; old-account history withdrawn as defined | Synthetic stale-thread and new-account UI cases pass; actual revoked provider journey open |
@@ -270,8 +270,8 @@ reboot must still run after this correction; the failed run is retained.
 ### Existing installation transition
 
 The active matrix now contains **50 journeys**, 6–7 per feature. I07 was added
-after checking the actual production host: Ubuntu22.04/kernel5.15/Kiri0.2.1,
-without a setup-kiri receipt. A successful new Ubuntu24.04 installation does not
+after checking the actual production host: Ubuntu 22.04/kernel5.15/Kiri0.2.1,
+without a setup-kiri receipt. A successful new Ubuntu 24.04 installation does not
 prove that upgrade. Keep its encrypted Vault, member allocations and Google
 grants while validating a matched component transition; the fresh installer
 must not be forced over the existing installation or used to upgrade the host OS.
@@ -294,8 +294,8 @@ confirmed absent; private captures were removed. The original app/grants were
 unchanged. This proves the DOM subflow, not an installed controller completion.
 Two preexisting secrets or an unrecoverable response still pause without deletion.
 
-I07: a separate Ubuntu22.04 guest booted the actual production kernel
-5.15.0-179 with Kiri0.2.2. Public invitation/member/daemon recovery checks passed;
+I07: a separate Ubuntu 22.04 guest booted the actual production kernel
+5.15.0-179 with Kiri 0.2.2. Public invitation/member/daemon recovery checks passed;
 Chromium and Google Chrome both passed the actual installer startup/confinement/
 owned-cleanup probe. The new [owned rollout harness](../../../deployment/kiri/linux-vm-smoke/guest-owned-rollout.py)
 then passed six actual checks: lifecycle-lock refusal, wrong-container-ID refusal,
@@ -303,3 +303,15 @@ owned profile replacement with unchanged UID/volume/keys/database/reservation,
 unaffected sibling PIDs, same-target retry, and matched lifecycle resumption.
 The image content stayed at116a8cd; a different final image and production are
 still unverified. No host OS upgrade or installation-receipt adoption was done.
+
+### Post-transition production checkpoint
+
+The matched c8cf8e8 transition preserved the existing real member and Google grants.
+Post-transition API inbox read returned five metadata items; the original thread
+retained five rows after reload. Wrong/correct Vault password and visible managed
+model-recovery form were checked. None of this closes C01: the provider connection
+is still unavailable. A fresh Drive connection reached the Vault but then failed;
+a public-proxy default-route defect was reproduced and corrected in the installer.
+Six real Linux egress/isolation/restart checks passed. Production proxies were repaired and real HTTPS/private refusal rechecked. The new
+login did not complete; explicit cancellation cleaned its browser/socket. Full
+login results are recorded in [the production log](../../../docs/reviews/2026-11-27-matched-production.md).

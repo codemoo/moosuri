@@ -185,7 +185,6 @@ impl Docker<'_> {
             name.as_str(),
         ];
         if self.json(&inspect)?.is_none() {
-            let ip = format!("--ip={}", plan.proxy_ip);
             let owner_label = format!("{OWNER}={owner}");
             let project_label = format!("{PROJECT}={}", plan.project);
             self.run(
@@ -204,8 +203,7 @@ impl Docker<'_> {
                     "--security-opt",
                     "no-new-privileges:true",
                     "--network",
-                    &internal,
-                    &ip,
+                    &public,
                     "--pids-limit",
                     "64",
                     "--memory",
@@ -232,6 +230,12 @@ impl Docker<'_> {
         let mut v = self
             .json(&inspect)?
             .ok_or("kiri_install_proxy_unavailable")?;
+        // Kiri chooses the default route from the primary network at first start.
+        // Starting on an internal network and attaching public later leaves no
+        // external route, despite both endpoints appearing healthy in inspect.
+        if v["HostConfig"]["NetworkMode"] != public {
+            return Err("kiri_install_proxy_public_primary_required".into());
+        }
         let nets = v["NetworkSettings"]["Networks"].clone();
         let id = v["Id"].as_str().unwrap_or("").to_owned();
         let running = v["State"]["Running"] == true;
@@ -245,23 +249,36 @@ impl Docker<'_> {
             || v["Image"] != image
             || v["Config"]["Labels"][OWNER] != owner
             || v["Config"]["Labels"][PROJECT] != plan.project
-            || nets[&internal].is_null()
-            || !id_ok(&nets[&internal], &network)
-            || (!nets[&public].is_null() && !id_ok(&nets[&public], &public_network))
+            || nets.as_object().is_none_or(|n| n.keys().any(|key| key != &public && key != &internal))
+            || nets[&public].is_null()
+            || !id_ok(&nets[&public], &public_network)
+            || (running && nets[&internal].is_null())
+            || (!nets[&internal].is_null() && !id_ok(&nets[&internal], &network))
             // A stopped newly-created proxy must already request the exact address.
             || if running {
                 nets[&internal]["IPAddress"] != plan.proxy_ip
-            } else {
+            } else if !nets[&internal].is_null() {
                 nets[&internal]["IPAMConfig"]["IPv4Address"] != plan.proxy_ip
                     || !matches!(nets[&internal]["IPAddress"].as_str(), Some("") | None)
                         && nets[&internal]["IPAddress"] != plan.proxy_ip
-            }
+            } else { false }
         {
             return Err("kiri_install_proxy_conflict".into());
         }
-        if nets[&public].is_null() {
-            self.run(&["network", "connect", &public, &name], Input::None, QUICK)?
-                .ok("kiri_install_proxy_network_failed")?;
+        if nets[&internal].is_null() {
+            self.run(
+                &[
+                    "network",
+                    "connect",
+                    "--ip",
+                    &plan.proxy_ip,
+                    &internal,
+                    &name,
+                ],
+                Input::None,
+                QUICK,
+            )?
+            .ok("kiri_install_proxy_network_failed")?;
         }
         if v["State"]["Running"] != true {
             self.run(&["container", "start", &name], Input::None, QUICK)?
@@ -276,11 +293,29 @@ impl Docker<'_> {
             || n[&internal]["NetworkID"] != network
             || n[&public]["NetworkID"] != public_network
             || v["Id"] != id
+            || v["HostConfig"]["NetworkMode"] != public
         {
             return Err("kiri_install_proxy_not_ready".into());
         }
+        let routes = self
+            .run(&["exec", &id, "cat", "/proc/net/route"], Input::None, QUICK)?
+            .ok("kiri_install_proxy_route_unavailable")?;
+        if !has_default_route(std::str::from_utf8(&routes).unwrap_or("")) {
+            return Err("kiri_install_proxy_egress_route_missing".into());
+        }
         Ok((network, id))
     }
+}
+
+fn has_default_route(routes: &str) -> bool {
+    routes.lines().skip(1).any(|line| {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        fields.len() >= 8
+            && fields[1] == "00000000"
+            && fields[2] != "00000000"
+            && fields[7] == "00000000"
+            && u32::from_str_radix(fields[3], 16).is_ok_and(|flags| flags & 3 == 3)
+    })
 }
 
 pub fn cidr(text: &str) -> Option<(u32, u8)> {
@@ -372,6 +407,7 @@ mod tests {
             nets["p_public"] = p;
         }
         json!({"Id": "c".repeat(64), "Image": image, "State": {"Running": running},
+            "HostConfig": {"NetworkMode": "p_public"},
             "Config": {"Labels": {(OWNER): "own", (PROJECT): "p"}},
             "NetworkSettings": {"Networks": nets}})
         .to_string()
@@ -404,9 +440,15 @@ mod tests {
             fake.reply(0, &prestart);
             fake.reply(0, &prestart);
             if let Some(post) = poststart {
-                fake.reply(0, ""); // network connect (public not attached yet)
+                if serde_json::from_str::<Value>(&prestart).unwrap()["NetworkSettings"]["Networks"]
+                    ["p_browser"]
+                    .is_null()
+                {
+                    fake.reply(0, ""); // exact internal endpoint is attached before first start
+                }
                 fake.reply(0, ""); // container start
                 fake.reply(0, &post);
+                fake.reply(0, "Iface Destination Gateway Flags RefCnt Use Metric Mask\neth0 00000000 0100590A 0003 0 0 0 00000000\n");
             }
             Docker { exec: &fake }.capsule(&image, &plan, "own")
         };
@@ -419,10 +461,31 @@ mod tests {
             )
         };
         // Empty IDs before first start, then exact IDs after.
-        let stopped =
-            |internal_id: &str| proxy(false, endpoint(internal_id, "", true), None, &image);
+        let stopped = |internal_id: &str| {
+            proxy(
+                false,
+                endpoint(internal_id, "", true),
+                Some(endpoint("", "", false)),
+                &image,
+            )
+        };
         assert!(run(stopped(""), Some(running(&n2, "10.102.17.2"))).is_ok());
         assert!(run(stopped(&n1), Some(running(&n2, "10.102.17.2"))).is_ok());
+        // First creation has only the public endpoint; replay after attachment
+        // already has both. Both must keep the public primary network.
+        assert!(
+            run(
+                proxy(false, Value::Null, Some(endpoint("", "", false)), &image),
+                Some(running(&n2, "10.102.17.2"))
+            )
+            .is_ok()
+        );
+        let mut old: Value = serde_json::from_str(&running(&n2, "10.102.17.2")).unwrap();
+        old["HostConfig"]["NetworkMode"] = json!("p_browser");
+        assert_eq!(
+            run(old.to_string(), None).unwrap_err(),
+            "kiri_install_proxy_public_primary_required"
+        );
         // Wrong non-empty pre-start ID, wrong post-start public ID or IP are refused.
         assert_eq!(
             run(stopped(&"d".repeat(64)), None).unwrap_err(),
@@ -451,9 +514,76 @@ mod tests {
         let mut wrong_ip = endpoint("", "", true);
         wrong_ip["IPAMConfig"]["IPv4Address"] = json!("10.102.17.3");
         assert_eq!(
-            run(proxy(false, wrong_ip, None, &image), None).unwrap_err(),
+            run(
+                proxy(false, wrong_ip, Some(endpoint("", "", false)), &image),
+                None
+            )
+            .unwrap_err(),
             "kiri_install_proxy_conflict"
         );
+    }
+
+    #[test]
+    fn fresh_proxy_attaches_private_ip_after_public_creation_before_start() {
+        let fake = Fake::default();
+        let (n1, n2) = ("a".repeat(64), "b".repeat(64));
+        let image = format!("sha256:{}", "1".repeat(64));
+        fake.reply(0, &net(&n1, true, true));
+        fake.reply(0, &net(&n2, false, false));
+        fake.reply(1, ""); // no existing proxy
+        fake.reply(0, ""); // create
+        fake.reply(
+            0,
+            &proxy(false, Value::Null, Some(endpoint("", "", false)), &image),
+        );
+        fake.reply(0, ""); // attach exact internal address
+        fake.reply(0, ""); // start
+        fake.reply(
+            0,
+            &proxy(
+                true,
+                endpoint(&n1, "10.102.17.2", true),
+                Some(endpoint(&n2, "10.89.0.2", false)),
+                &image,
+            ),
+        );
+        fake.reply(0, "Iface Destination Gateway Flags RefCnt Use Metric Mask\neth0 00000000 0100590A 0003 0 0 0 00000000\n");
+        Docker { exec: &fake }
+            .capsule(&image, &plan_p(), "own")
+            .unwrap();
+        let calls = fake.calls.borrow();
+        let create = calls
+            .iter()
+            .position(|c| c.contains("container create"))
+            .unwrap();
+        let connect = calls
+            .iter()
+            .position(|c| c.contains("network connect"))
+            .unwrap();
+        let start = calls
+            .iter()
+            .position(|c| c.contains("container start"))
+            .unwrap();
+        assert!(calls[create].contains("--network p_public"));
+        assert!(!calls[create].contains("--ip"));
+        assert!(calls[connect].contains("network connect --ip 10.102.17.2 p_browser p-proxy-1"));
+        assert!(create < connect && connect < start);
+        assert!(fake.replies.borrow().is_empty());
+    }
+
+    #[test]
+    fn attached_endpoints_do_not_prove_a_working_default_route() {
+        let header = "Iface Destination Gateway Flags RefCnt Use Metric Mask\n";
+        for row in [
+            "eth0 0047B20A 00000000 0001 0 0 0 00FFFFFF",
+            "eth0 00000000 00000000 0001 0 0 0 00000000",
+            "eth0 00000000 0100590A 0002 0 0 0 00000000",
+        ] {
+            assert!(!has_default_route(&format!("{header}{row}\n")));
+        }
+        assert!(has_default_route(&format!(
+            "{header}eth1 00000000 0100590A 0003 0 0 0 00000000\n"
+        )));
     }
 
     #[test]

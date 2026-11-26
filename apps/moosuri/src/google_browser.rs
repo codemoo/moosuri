@@ -6,12 +6,13 @@ use fs2::FileExt;
 use moosuri_connectors::{
     browser::{
         BrowserError,
-        capsule::{CapsuleConfig, CapsuleReader, GoogleAttempt, GooglePhase},
-        google_auth::{Binding, Envelope, PROTOCOL},
+        capsule::{BootstrapOutcome, CapsuleConfig, CapsuleReader, GoogleAttempt, GooglePhase},
+        google_auth::{Binding, Envelope, PROTOCOL, bootstrap},
     },
     gmail::OAuthClient,
     model::CancellationToken,
 };
+use moosuri_store::runtime_registry::admin::google_bootstrap as registry;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::{
@@ -93,6 +94,18 @@ struct Consent {
     url: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapCommand {
+    bootstrap: bootstrap::Request,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Command {
+    Bootstrap(BootstrapCommand),
+    Consent(Consent),
+}
+
 type Peer = BufReader<UnixStream>;
 type Result<T> = std::result::Result<T, &'static str>;
 
@@ -147,6 +160,23 @@ async fn current(options: &Options, binding: &Binding) -> Result<()> {
         return Err("fenced");
     }
     Ok(())
+}
+
+async fn record_teardown(options: &Options, binding: &Binding) -> Result<()> {
+    for attempt in 0..3 {
+        let root = options.registry.clone();
+        let run = binding.challenge;
+        if matches!(
+            tokio::task::spawn_blocking(move || registry::close_sdk_run(&root, run)).await,
+            Ok(Ok(()))
+        ) {
+            return Ok(());
+        }
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    Err("google_browser_cleanup_unconfirmed")
 }
 async fn startup_lock(options: &Options, cancel: &CancellationToken) -> Result<std::fs::File> {
     let parent = options.startup_lock.parent().ok_or("unavailable")?;
@@ -247,20 +277,59 @@ async fn flow(
             return Ok(());
         }
     }
-    let consent: Consent = receive(peer, 45).await?;
-    current(options, &init.binding).await?;
-    // The web request supplies no client identity. Load the installation's
-    // authoritative file here; the worker verifies URL, callback and scope.
-    let client = client_id(options)?;
-    let status = connected(peer, async {
-        attempt
-            .consent(&consent.url, &client, init.service.name())
-            .await
-            .map_err(|_| "unavailable")
-    })
-    .await?;
-    phase(peer, status).await?;
-    Ok(())
+    loop {
+        // The trusted gateway owns the fresh administrator proof and durable
+        // checkpoint. Only typed commands pass through; no member CLI/CDP input.
+        let command: Command = receive(peer, 45).await?;
+        current(options, &init.binding).await?;
+        match command {
+            Command::Bootstrap(command) => {
+                command
+                    .bootstrap
+                    .validate(&init.binding)
+                    .map_err(|_| "invalid")?;
+                let root = options.registry.clone();
+                let run = init.binding.challenge;
+                let expected = command.bootstrap.setup_id;
+                let pending =
+                    tokio::task::spawn_blocking(move || registry::sdk_cleanup_for_run(&root, run))
+                        .await
+                        .map_err(|_| "unavailable")?
+                        .map_err(|_| "unavailable")?;
+                if pending != Some(expected) {
+                    return Err("fenced");
+                }
+                let reply = connected(peer, async {
+                    attempt
+                        .bootstrap(command.bootstrap)
+                        .await
+                        .map_err(|_| "unavailable")
+                })
+                .await?;
+                match reply {
+                    BootstrapOutcome::Reply(reply) => send(peer, reply.to_wire()).await?,
+                    BootstrapOutcome::Terminal(status) => {
+                        phase(peer, status).await?;
+                        return Ok(());
+                    }
+                }
+            }
+            Command::Consent(consent) => {
+                // Re-read after bootstrap committed the installation's client.
+                // The web request supplies no client identity or secret.
+                let client = client_id(options)?;
+                let status = connected(peer, async {
+                    attempt
+                        .consent(&consent.url, &client, init.service.name())
+                        .await
+                        .map_err(|_| "unavailable")
+                })
+                .await?;
+                phase(peer, status).await?;
+                return Ok(());
+            }
+        }
+    }
 }
 
 pub async fn serve(options: &Options) -> std::result::Result<(), String> {
@@ -358,6 +427,7 @@ pub async fn serve(options: &Options) -> std::result::Result<(), String> {
                 }
                 Ok(Err(_)) => {}
             }
+            record_teardown(options, &init.binding).await?;
             return Err(reason.into());
         }
     };
@@ -381,12 +451,64 @@ pub async fn serve(options: &Options) -> std::result::Result<(), String> {
     }
     .await;
     // Even EOF, revocation and a provider error wait for confirmed removal.
-    attempt
-        .shutdown()
-        .await
-        .map_err(|_| "google_browser_cleanup_unconfirmed")?;
+    if attempt.shutdown().await.is_err() {
+        let _ = send(&mut peer, json!({"status":"cleanup_unconfirmed"})).await;
+        return Err("google_browser_cleanup_unconfirmed".into());
+    }
+    // Root owns the receipt even after gateway cancellation/logout. A late
+    // acknowledgement can clear only this authenticated challenge, never a
+    // successor. Failed or killed SDK cleanup leaves the durable fence intact.
+    if record_teardown(options, &init.binding).await.is_err() {
+        let _ = send(&mut peer, json!({"status":"cleanup_unconfirmed"})).await;
+        return Err("google_browser_cleanup_unconfirmed".into());
+    }
     if result.is_err() {
         let _ = send(&mut peer, json!({"status":"unavailable"})).await;
     }
     result.map_err(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn both_service_templates_allow_sdk_teardown_to_finish() {
+        for unit in [
+            include_str!("../../../deployment/kiri/lifecycle/moosuri-google-browser@.service"),
+            include_str!("../../../deployment/kiri/setup/moosuri-google-browser@.service.in"),
+        ] {
+            let seconds: u64 = unit
+                .lines()
+                .find_map(|line| line.strip_prefix("TimeoutStopSec="))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(seconds >= bootstrap::BOOTSTRAP_SHUTDOWN_GRACE.as_secs() + 20);
+        }
+    }
+    #[test]
+    fn signed_in_commands_have_one_exact_shape() {
+        let bootstrap = json!({"bootstrap":{"setup_id":Uuid::new_v4(),
+            "redirect_uri":"https://assistant.example.com/api/v1/mail/oauth/callback", "action":"authorize"}});
+        assert!(matches!(
+            serde_json::from_value::<Command>(bootstrap.clone()),
+            Ok(Command::Bootstrap(_))
+        ));
+        assert!(matches!(
+            serde_json::from_value::<Command>(json!({"url":"https://accounts.google.com/"})),
+            Ok(Command::Consent(_))
+        ));
+        let mut mixed = bootstrap.clone();
+        mixed["url"] = "https://accounts.google.com/".into();
+        assert!(serde_json::from_value::<Command>(mixed).is_err());
+        let mut flags = bootstrap;
+        flags["bootstrap"]["args"] = json!(["--account=other"]);
+        assert!(serde_json::from_value::<Command>(flags).is_err());
+        assert!(
+            serde_json::from_value::<Command>(
+                json!({"url":"https://accounts.google.com/", "client_id":"override"})
+            )
+            .is_err()
+        );
+    }
 }

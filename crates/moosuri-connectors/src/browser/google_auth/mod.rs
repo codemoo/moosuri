@@ -1,14 +1,16 @@
 //! Private authentication worker. No raw CDP, page data or credentials leave it.
 //! This API is for the installation launcher, never the model browser protocol.
 mod binding;
+pub mod bootstrap;
 mod chrome;
 mod consent;
 mod crypto;
 mod display;
+mod sdk;
 mod worker;
 pub use binding::{Binding, Envelope, PROTOCOL, Recipient};
 pub use crypto::Receiver;
-pub use worker::{serve, installation_probe};
+pub use worker::{installation_probe, serve};
 #[cfg(test)]
 mod tests;
 

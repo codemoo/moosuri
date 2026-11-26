@@ -511,7 +511,7 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
     let a = allocate(r, "a@example.test");
     {
         let (_lock, c) = open(r, false).unwrap();
-        c.execute_batch("DROP TABLE engine_quota_requests; DROP TABLE engine_connections; DROP TABLE engine_bindings; DROP TABLE engine_settings; ALTER TABLE allocations DROP COLUMN session_epoch;DROP TABLE installation_members;DROP TABLE installation_admin_bootstrap;DROP TABLE installation_admin_operations;PRAGMA user_version=1;").unwrap();
+        c.execute_batch("DROP TABLE installation_google_bootstrap_runs; DROP TABLE installation_google_bootstrap; DROP TABLE engine_quota_requests; DROP TABLE engine_connections; DROP TABLE engine_bindings; DROP TABLE engine_settings; ALTER TABLE allocations DROP COLUMN session_epoch;DROP TABLE installation_members;DROP TABLE installation_admin_bootstrap;DROP TABLE installation_admin_operations;PRAGMA user_version=1;").unwrap();
     }
     assert_eq!(lookup_ready(r, "a@example.test".into()).unwrap(), a);
     {
@@ -519,9 +519,9 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            7
+            8
         );
-        c.execute_batch("PRAGMA user_version=8").unwrap();
+        c.execute_batch("PRAGMA user_version=9").unwrap();
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }
@@ -698,7 +698,7 @@ fn legacy_registry_keeps_selected_engine_settings_when_broker_first_publishes_it
         let (_lock, c) = open(r, false).unwrap();
         c.execute_batch(
             "DROP TABLE engine_quota_requests; ALTER TABLE engine_settings DROP COLUMN connection_mode;
-            ALTER TABLE installation_members DROP COLUMN display_name; PRAGMA user_version=4;",
+            ALTER TABLE installation_members DROP COLUMN display_name; DROP TABLE installation_google_bootstrap_runs; DROP TABLE installation_google_bootstrap; PRAGMA user_version=4;",
         )
         .unwrap();
     }
@@ -808,7 +808,7 @@ fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_
     };
     {
         let (_lock, c) = open(r, false).unwrap();
-        c.execute_batch("DROP TABLE engine_quota_requests; PRAGMA user_version=5;")
+        c.execute_batch("DROP TABLE engine_quota_requests; DROP TABLE installation_google_bootstrap_runs; DROP TABLE installation_google_bootstrap; PRAGMA user_version=5;")
             .unwrap();
     }
     let expired = request(&admin, None).unwrap().probe_id;
@@ -835,7 +835,7 @@ fn quota_requests_expire_and_demoted_admin_cannot_trigger_or_receive_shared_key_
             .unwrap();
         assert_eq!(count, 0);
         // Open a populated v6 registry, as an upgrade from either binary would.
-        c.execute_batch("DROP TABLE engine_quota_requests").unwrap();
+        c.execute_batch("DROP TABLE installation_google_bootstrap_runs; DROP TABLE installation_google_bootstrap; DROP TABLE engine_quota_requests;").unwrap();
         c.execute_batch(include_str!(
             "../../../../../migrations/installation_registry/0006_engine_quota.sql"
         ))

@@ -427,3 +427,37 @@ fn selected_engine_pins_control_and_worker_commands_without_ambient_configuratio
         }
     }
 }
+
+#[tokio::test]
+async fn bootstrap_cleanup_requires_graceful_zero_exit_and_still_reaps_failures() {
+    let reader = fixture(String::new());
+    for (script, clean) in [
+        ("exit 0", true),
+        ("exit 1", false),
+        ("exec sleep 30", false),
+    ] {
+        let mut child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let result = reader
+            .cleanup_grace(
+                &mut child,
+                "fixture",
+                Uuid::new_v4(),
+                true,
+                false,
+                Some(Duration::from_millis(100)),
+            )
+            .await;
+        if clean {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result, Err(BrowserError::CleanupUnconfirmed));
+        }
+        assert!(child.try_wait().unwrap().is_some());
+    }
+}

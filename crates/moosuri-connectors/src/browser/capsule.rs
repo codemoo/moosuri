@@ -4,7 +4,7 @@ use super::{BrowserError, net::public_url, private_proxy};
 mod google;
 mod installation;
 pub(super) mod workspace;
-pub use google::{GoogleAttempt, GooglePhase};
+pub use google::{BootstrapOutcome, GoogleAttempt, GooglePhase};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -471,6 +471,21 @@ impl CapsuleReader {
         creation_observed: bool,
         profile: bool,
     ) -> Result<(), BrowserError> {
+        self.cleanup_grace(child, name, read, creation_observed, profile, None)
+            .await
+    }
+    /// Same as `cleanup`, with an explicit worker-exit grace in place of the short
+    /// default (only the bootstrap Google worker passes one; it must be allowed to
+    /// finish SDK credential cleanup before the kill).
+    async fn cleanup_grace(
+        &self,
+        child: &mut Child,
+        name: &str,
+        read: Uuid,
+        creation_observed: bool,
+        profile: bool,
+        worker_grace: Option<Duration>,
+    ) -> Result<(), BrowserError> {
         if let Some(mut input) = child.stdin.take() {
             let _ = tokio::time::timeout(
                 Duration::from_millis(100),
@@ -481,28 +496,26 @@ impl CapsuleReader {
         }
         // A ready Chromium worker can take more than 250 ms to shut down.
         // A stalled, never-ready CLI still gets the short cancellation bound.
-        let grace = Duration::from_millis(if creation_observed || profile {
-            2500
-        } else {
-            250
+        let grace = worker_grace.unwrap_or_else(|| {
+            Duration::from_millis(if creation_observed || profile {
+                2500
+            } else {
+                250
+            })
         });
-        let reaped = match tokio::time::timeout(grace, child.wait()).await {
-            Ok(Ok(_)) => true,
-            _ => {
-                let _ = child.start_kill();
-                matches!(
-                    tokio::time::timeout(Duration::from_millis(500), child.wait()).await,
-                    Ok(Ok(_))
-                )
-            }
+        let (reaped, clean_exit) = wait_for_worker(child, grace).await;
+        let completion = if !reaped {
+            Err(BrowserError::Setup)
+        } else if worker_grace.is_some() && !clean_exit {
+            // Bootstrap exit zero is an explicit SDK-cleanup receipt. A killed
+            // process or failed revoke is never proof, even after container removal.
+            Err(BrowserError::CleanupUnconfirmed)
+        } else {
+            Ok(())
         };
         #[cfg(test)]
         if self.fixture.is_some() {
-            return if reaped {
-                Ok(())
-            } else {
-                Err(BrowserError::Setup)
-            };
+            return completion;
         }
         let cancel = CancellationToken::new();
         // A killed CLI does not establish that the daemon finished its create.
@@ -534,11 +547,7 @@ impl CapsuleReader {
                 attempt == 2,
             )? {
                 CleanupDecision::Clean => {
-                    return if reaped {
-                        Ok(())
-                    } else {
-                        Err(BrowserError::Setup)
-                    };
+                    return completion;
                 }
                 CleanupDecision::Remove(id) => {
                     let removed = self
@@ -583,11 +592,7 @@ impl CapsuleReader {
                         }
                     })
                     .await?;
-                    return if reaped {
-                        Ok(())
-                    } else {
-                        Err(BrowserError::Setup)
-                    };
+                    return completion;
                 }
                 CleanupDecision::Retry => tokio::time::sleep(Duration::from_millis(100)).await,
                 CleanupDecision::Unconfirmed => return Err(BrowserError::CleanupUnconfirmed),
@@ -596,6 +601,22 @@ impl CapsuleReader {
         Err(BrowserError::CleanupUnconfirmed)
     }
 }
+/// Separate observed exit from a graceful success. Force killing never grants
+/// the latter, even if the process raced to exit zero while the kill was sent.
+async fn wait_for_worker(child: &mut Child, grace: Duration) -> (bool, bool) {
+    match tokio::time::timeout(grace, child.wait()).await {
+        Ok(Ok(status)) => (true, status.success()),
+        _ => {
+            let _ = child.start_kill();
+            let reaped = matches!(
+                tokio::time::timeout(Duration::from_millis(500), child.wait()).await,
+                Ok(Ok(_))
+            );
+            (reaped, false)
+        }
+    }
+}
+
 async fn confirm_removal<F, Fut>(
     removed: Result<Vec<u8>, BrowserError>,
     mut absent: F,

@@ -1,14 +1,35 @@
-use super::{Binding, Error, display::Display};
+use super::{
+    Binding, Error,
+    display::Display,
+    sdk::{Callback, Email, LoginRequest},
+};
 use crate::browser::{BrowserConfig, BrowserSession, private_proxy};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+const CDP_STEP: Duration = Duration::from_secs(5);
+/// Fixed, nonsecret document served for the intercepted callback navigation.
+const BLANK_PAGE: &str =
+    "<!doctype html><meta charset=utf-8><title>Done</title><p>You can close this window.</p>";
+
 pub(super) struct Chrome {
     browser: BrowserSession,
     display: Display,
+    target: String,
     session: String,
+    gate: Gate,
+}
+
+/// Sticky use state. Only `authorize` leaves `Clean`; only a confirmed target replacement
+/// success returns to it. A dropped authorize future stays `InUse`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gate {
+    Clean,
+    InUse,
+    Tainted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -43,7 +64,7 @@ impl Chrome {
         crate::browser::capsule_health_mode(&config, true).map_err(|_| Error::Unavailable)?;
         let display = Display::start().await?;
         let mut browser =
-            BrowserSession::launch_mode(config, cancel, Duration::from_secs(15 * 60), true)
+            BrowserSession::launch_mode(config, cancel, Duration::from_secs(22 * 60), true)
                 .await
                 .map_err(|_| Error::Unavailable)?;
         let version = browser
@@ -59,7 +80,10 @@ impl Chrome {
             .command("Target.createTarget", json!({"url":"about:blank"}), None)
             .await
             .map_err(|_| Error::Unavailable)?;
-        let target = target["targetId"].as_str().ok_or(Error::Unavailable)?;
+        let target = target["targetId"]
+            .as_str()
+            .ok_or(Error::Unavailable)?
+            .to_owned();
         let attached = browser
             .cdp
             .command(
@@ -81,7 +105,9 @@ impl Chrome {
         Ok(Self {
             browser,
             display,
+            target,
             session,
+            gate: Gate::Clean,
         })
     }
 
@@ -90,6 +116,13 @@ impl Chrome {
     }
 
     async fn navigate(&mut self, url: &str) -> Result<(), Error> {
+        if self.gate != Gate::Clean {
+            return Err(Error::Unavailable);
+        }
+        self.navigate_unchecked(url).await
+    }
+
+    async fn navigate_unchecked(&mut self, url: &str) -> Result<(), Error> {
         let result = self
             .browser
             .cdp
@@ -110,6 +143,9 @@ impl Chrome {
         email: &str,
         secret: Option<&str>,
     ) -> Result<String, Error> {
+        if self.gate != Gate::Clean {
+            return Err(Error::Unavailable);
+        }
         let args = Zeroizing::new(
             serde_json::to_string(&(operation, email, secret)).map_err(|_| Error::Invalid)?,
         );
@@ -193,6 +229,291 @@ impl Chrome {
         }
         Err(Error::NeedsHuman)
     }
+    /// SDK login in this same logged-in Chrome. Only the exact loopback callback of
+    /// `request` is intercepted (never reaching the proxy or the network): a
+    /// top-level GET `Document` request in this session's top frame whose URL passes
+    /// `LoginRequest::accept_callback`. It is fulfilled with a fixed blank page and
+    /// returned as an opaque `Callback` for `Sdk::deliver_callback`. Everything else
+    /// paused is aborted. On success the intercepted tab is closed while Fetch
+    /// remains enabled, and a new tab in the same browser/profile is opened. Fetch
+    /// is never disabled, so no paused request can be resumed by cleanup. On error,
+    /// timeout or cancellation Chrome is tainted (best-effort `Browser.close`). A
+    /// dropped future leaves the sticky `InUse` gate. In both cases later calls fail
+    /// and the caller must `shutdown()` it. Success of the login is
+    /// proven only by the SDK, not here.
+    /// Errors: `NeedsHuman` (device confirmation/unknown page/timeout), `Blocked`
+    /// (access blocked, bad or error callback, wrong account), `Unavailable`.
+    pub async fn authorize(
+        &mut self,
+        request: &LoginRequest,
+        email: &Email,
+        cancel: &CancellationToken,
+        limit: Duration,
+    ) -> Result<Callback, Error> {
+        // Sticky gate: a dropped future leaves `InUse`, so tainted Chrome is never reused.
+        if self.gate != Gate::Clean {
+            return Err(Error::Unavailable);
+        }
+        let pattern = request.fetch_pattern()?; // Fetch is not enabled yet: still clean.
+        self.gate = Gate::InUse;
+        // Nothing can be paused while Fetch is disabled; discard any stale queue.
+        drop(self.browser.cdp.take_paused());
+        let outcome = {
+            let inner = self.authorize_inner(request, email, &pattern);
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(Error::Unavailable),
+                r = tokio::time::timeout(limit, inner) => r.unwrap_or(Err(Error::NeedsHuman)),
+            }
+        };
+        match outcome {
+            Ok(callback) => match self.release_clean().await {
+                Ok(()) => {
+                    self.gate = Gate::Clean;
+                    Ok(callback)
+                }
+                Err(error) => {
+                    self.taint().await;
+                    Err(error)
+                }
+            },
+            Err(error) => {
+                // Never disable Fetch with possibly unaccounted paused requests:
+                // destroy the browser instead. The caller must call `shutdown`.
+                self.taint().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// True while this Chrome may be used (not tainted, no authorize in flight).
+    pub(super) fn is_clean(&self) -> bool {
+        self.gate == Gate::Clean
+    }
+
+    /// Marks Chrome unusable and asks it to exit (best effort). Interception stays
+    /// enabled so nothing paused can ever be released to the proxy.
+    async fn taint(&mut self) {
+        self.gate = Gate::Tainted;
+        let _ = self
+            .browser
+            .cdp
+            .command_timeout("Browser.close", json!({}), None, CDP_STEP)
+            .await;
+    }
+
+    async fn authorize_inner(
+        &mut self,
+        request: &LoginRequest,
+        email: &Email,
+        pattern: &str,
+    ) -> Result<Callback, Error> {
+        let session = self.session.clone();
+        let tree = self
+            .browser
+            .cdp
+            .command_timeout("Page.getFrameTree", json!({}), Some(&session), CDP_STEP)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let frame = tree
+            .pointer("/frameTree/frame/id")
+            .and_then(|v| v.as_str())
+            .ok_or(Error::Unavailable)?
+            .to_owned();
+        self.browser
+            .cdp
+            .command_timeout(
+                "Fetch.enable",
+                json!({"patterns":[{"urlPattern":pattern,"resourceType":"Document","requestStage":"Request"}]}),
+                Some(&session),
+                CDP_STEP,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        self.navigate_unchecked(request.url()).await?;
+        let args = Zeroizing::new(
+            serde_json::to_string(&(email.as_str(), request.callback(), request.state()))
+                .map_err(|_| Error::Invalid)?,
+        );
+        let expression = Zeroizing::new(format!("({})(...{})", include_str!("consent.js"), *args));
+        loop {
+            self.browser
+                .cdp
+                .pump(Duration::from_millis(600))
+                .await
+                .map_err(|_| Error::Unavailable)?;
+            if let Some(callback) = self.drain_paused(request, &frame).await? {
+                return Ok(callback);
+            }
+            let result = self
+                .browser
+                .cdp
+                .command_timeout(
+                    "Runtime.evaluate",
+                    json!({"expression":expression.as_str(),"returnByValue":true,"timeout":2000}),
+                    Some(&session),
+                    CDP_STEP,
+                )
+                .await
+                .map_err(|_| Error::Unavailable)?;
+            // The event for the callback may have arrived while evaluating.
+            if let Some(callback) = self.drain_paused(request, &frame).await? {
+                return Ok(callback);
+            }
+            if result.get("exceptionDetails").is_some() {
+                return Err(Error::Unavailable);
+            }
+            match result.pointer("/result/value").and_then(|v| v.as_str()) {
+                Some("waiting") => {}
+                Some("needs_human") => return Err(Error::NeedsHuman),
+                // "returned" without our own captured callback is not proof of anything.
+                Some("returned" | "blocked") => return Err(Error::Blocked),
+                _ => return Err(Error::Unavailable),
+            }
+        }
+    }
+
+    async fn abort(&mut self, request_id: &str, session: &str) -> Result<(), Error> {
+        self.browser
+            .cdp
+            .command_timeout(
+                "Fetch.failRequest",
+                json!({"requestId":request_id,"errorReason":"BlockedByClient"}),
+                Some(session),
+                CDP_STEP,
+            )
+            .await
+            .map(drop)
+            .map_err(|_| Error::Unavailable)
+    }
+
+    /// Consumes queued paused requests: one exact callback is fulfilled and
+    /// returned; every other request is aborted.
+    async fn drain_paused(
+        &mut self,
+        request: &LoginRequest,
+        frame: &str,
+    ) -> Result<Option<Callback>, Error> {
+        let (events, overflow) = self.browser.cdp.take_paused();
+        let (mut captured, mut rejected, mut failed) = (None, false, overflow);
+        for event in events {
+            let text = |p: &str| event.pointer(p).and_then(|v| v.as_str());
+            let (Some(id), Some(sid)) = (text("/params/requestId"), text("/sessionId")) else {
+                failed = true;
+                continue;
+            };
+            let own = sid == self.session
+                && text("/params/resourceType") == Some("Document")
+                && text("/params/frameId") == Some(frame)
+                && text("/params/request/method") == Some("GET")
+                && event.pointer("/params/responseStatusCode").is_none()
+                && event.pointer("/params/responseErrorReason").is_none();
+            let accepted = if own && captured.is_none() {
+                text("/params/request/url").and_then(|url| request.accept_callback(url).ok())
+            } else {
+                None
+            };
+            if let Some(callback) = accepted {
+                let fulfilled = self
+                    .browser
+                    .cdp
+                    .command_timeout(
+                        "Fetch.fulfillRequest",
+                        json!({
+                            "requestId": id,
+                            "responseCode": 200,
+                            "responseHeaders": [
+                                {"name":"Content-Type","value":"text/html; charset=utf-8"},
+                                {"name":"Cache-Control","value":"no-store"},
+                                {"name":"Referrer-Policy","value":"no-referrer"},
+                            ],
+                            "body": STANDARD.encode(BLANK_PAGE),
+                        }),
+                        Some(sid),
+                        CDP_STEP,
+                    )
+                    .await;
+                if fulfilled.is_err() {
+                    let _ = self.abort(id, sid).await;
+                    failed = true;
+                } else {
+                    captured = Some(callback);
+                }
+            } else {
+                rejected |= own;
+                failed |= self.abort(id, sid).await.is_err();
+            }
+        }
+        if failed {
+            Err(Error::Unavailable)
+        } else if captured.is_none() && rejected {
+            Err(Error::Blocked)
+        } else {
+            Ok(captured)
+        }
+    }
+
+    /// Close the intercepted target without disabling Fetch. Closing the target
+    /// cancels its pending requests; the new target shares only the same profile,
+    /// preserving the authenticated account without carrying interception state.
+    async fn release_clean(&mut self) -> Result<(), Error> {
+        let closed = self
+            .browser
+            .cdp
+            .command_timeout(
+                "Target.closeTarget",
+                json!({"targetId":self.target}),
+                None,
+                CDP_STEP,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if closed["success"] != true {
+            return Err(Error::Unavailable);
+        }
+        drop(self.browser.cdp.take_paused());
+        let target = self
+            .browser
+            .cdp
+            .command_timeout(
+                "Target.createTarget",
+                json!({"url":"about:blank"}),
+                None,
+                CDP_STEP,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let target = target["targetId"]
+            .as_str()
+            .ok_or(Error::Unavailable)?
+            .to_owned();
+        let attached = self
+            .browser
+            .cdp
+            .command_timeout(
+                "Target.attachToTarget",
+                json!({"targetId":target,"flatten":true}),
+                None,
+                CDP_STEP,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let session = attached["sessionId"]
+            .as_str()
+            .ok_or(Error::Unavailable)?
+            .to_owned();
+        self.browser
+            .cdp
+            .command_timeout("Page.enable", json!({}), Some(&session), CDP_STEP)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        // Any late events belong to the already-closed target, never this tab.
+        drop(self.browser.cdp.take_paused());
+        self.target = target;
+        self.session = session;
+        Ok(())
+    }
+
     pub async fn shutdown(mut self) {
         self.browser.shutdown().await;
         self.display.stop().await;

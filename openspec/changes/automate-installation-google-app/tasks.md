@@ -637,6 +637,48 @@ second-member automatic attachment, disable/change, restart, generation fencing
 and provider failure with Claude Sonnet 5.5 / medium. Public-installer convergence
 and a clean-source rerun remain required after integration.
 
+### Private SDK and same-profile callback — 2026-11-27
+
+The pinned SDK uses an empty private configuration inside the Google-auth capsule.
+Its loopback callback is intercepted in the same Chrome profile that signed into
+Google, validated by session/top frame/method/state, then delivered over a fixed
+local TCP connection. Successful capture closes the intercepted tab and opens a
+new tab in that same profile; it never disables Fetch, which could resume an
+unaccounted paused request. Failed/cancelled attempts taint the browser and cannot
+be retried in place. The normal proxy still refuses private destinations.
+
+Linux component checks: 23 authentication tests and 4 CDP tests passed. Actual
+pinned Chrome in the confined, network-disabled image passed valid capture,
+second capture in the same profile, wrong state, iframe, popup, subresource,
+burst and retry-after-error cases. The public `sdk-browser-smoke.py` harness
+runs failing cases in separate capsules. An initial fixture incorrectly tried
+to restart a one-use X display in the same capsule; that fixture was corrected.
+
+The real SDK returns exit 1 when asked to revoke an empty account list. Cleanup
+now first proves the private configuration is empty, or requires successful
+revocation followed by a fresh empty list. A failed revoke remains a failure
+even if it removed local credentials. The actual SDK's empty-config cleanup
+was run twice successfully through the Rust runner. No grant or provider write
+was made in this test. Independent Claude Sonnet 5.5 / medium closure review
+found no supported high/medium defect in this component.
+
+Still open: parent controller/worker integration with cooperative cancellation,
+at least 65 seconds for SDK cleanup before container removal, fresh administrator
+heartbeats, provider project reconciliation, Console branding/audience/client,
+private atomic client registration, member consent/GWS, and a real Gmail read.
+These component results do not establish an automatic Google setup or deployment.
+
+The SDK now probes the exact stable project ID with a fixed `projects list`
+filter: only a successful empty list means absent; transport errors, malformed
+results and foreign identities never permit a create. A login handle can also
+be explicitly killed and reaped before credential cleanup. Linux SDK checks:
+20 passed in a serial run. The initial stop fixture spawned a shell child rather
+than execing the login process and counted killed zombies as running; it now
+matches the SDK wrapper's exec behavior. One parallel run reported a transient
+spawn failure with no captured OS cause; the focused stop check and full serial
+suite passed. Actual provider creation/reconciliation remains untested in this
+new product path. Worker and capsule integration is the next implementation gate.
+
 ### Same-browser SDK preparation foundation — 2026-11-27
 
 The private worker/controller now carries fixed typed SDK actions after the Vault

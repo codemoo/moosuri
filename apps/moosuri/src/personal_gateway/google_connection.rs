@@ -2,6 +2,7 @@
 //! The gateway transports only vault-sealed credentials. The private key stays in Kiri.
 use super::*;
 pub(super) mod portable;
+pub(super) mod bootstrap;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},

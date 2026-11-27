@@ -1512,3 +1512,18 @@ unknown-challenge and explicit final cleanup controls and passed. Independent
 official Claude Sonnet5.5/medium review completed. Earlier checks' evidence limits
 and failures remain in the [unit report](../../../docs/reviews/2026-11-27-google-vault-preflight.md).
 No actual Google login/consent/inference or production change occurred.
+
+### Pending Google connection reentry — candidate verified
+
+R01 exposed a real installed UI defect: reload forgets the prepared job, and the
+next Connect conflicts with its own remaining key. The six RE01–RE06 supporting
+journeys, correction contract and actual/synthetic evidence distinction are in
+[the reentry worklog](../../../docs/reviews/2026-11-27-google-reentry.md).
+Use the existing server-owned job and same-login metadata; do not start another
+authentication or store credentials to recover.
+
+Reentry implemented in the existing UI/status protocol. Linux focused64 checks,
+web/typecheck/native build, actual installed RE01–RE05 and explicit cleanup passed.
+Official Claude13/5-turn reviews resolved completion-loss and cancel-message
+findings; real provider paths stay open. A distinct first-thread mailbox race was
+reproduced on unchangedpublicabc37d1c and remains the next bounded unit.

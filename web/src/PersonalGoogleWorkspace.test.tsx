@@ -22,7 +22,7 @@ const gmail = { connection_id: "gmail-id", epoch: 2, mailbox: "gmail@example.tes
 
 function setup({ grants = [docs, sheets], workspaceStatus = 200, loseCompletion = false, configured = true } = {}) {
   const calls: { path: string; method: string; body: unknown }[] = [];
-  vi.mocked(connectInKiri).mockResolvedValue({ flow, handle, email: session.user.email });
+  vi.mocked(connectInKiri).mockResolvedValue({ job:"11111111-1111-4111-8111-111111111111", flow, handle, email: session.user.email });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit) => {
     const method = init.method ?? "GET";
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
@@ -119,7 +119,7 @@ it("uses the vault-backed Kiri flow for only the selected service and confirms t
   await user.click(await screen.findByRole("button", { name: "Google 연결" }));
   await within(screen.getByRole("region", { name: "Google Drive" })).findByText(session.user.email);
   expect(connectInKiri).toHaveBeenCalledWith(expect.any(Function), session.user.id, session.user.email,
-    "drive", vaultOrigin, undefined, expect.any(AbortSignal), expect.any(Function));
+    "drive", vaultOrigin, undefined, expect.any(AbortSignal), expect.any(Function), expect.objectContaining({persisted:expect.any(Function)}));
   expect(calls.filter(({ method }) => method === "POST")).toEqual([{
     path: base + "/drive/complete", method: "POST", body: { handle },
   }]);

@@ -1,7 +1,8 @@
-import { connectInKiri } from "./kiri-google-connection";
+import { cancelGooglePending, connectInKiri } from "./kiri-google-connection";
+import { clearGooglePending, readGooglePending, type GoogleKiriPending } from "./kiri-google-pending";
 import { postVaultForm, trustedVaultOrigin } from "./VaultLaunch";
 import { setupOpenedFromAdmin, type MemberRoute } from "./member-route";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 import { googleReturn, usePersonalGoogle } from "./PersonalGoogle";
@@ -59,6 +60,8 @@ function getVaultInfo(connection: VaultConnectionState): ConnectionInfo {
 export function PersonalConnections({
   onBack, installationAdmin = false, onAdminUnavailable, navigation, ...props
 }: Parameters<typeof usePersonalGoogle>[0] & { navigation?: { route: MemberRoute; open: (route: MemberRoute, back?: boolean) => void }; onBack: () => void; installationAdmin?: boolean; onAdminUnavailable?: () => void }) {
+  const latestRead = useRef(props.readIntent);
+  latestRead.current = props.readIntent;
   const [workspaceReturn] = useState(() => workspaceGoogleReturn(props.session));
   const [localService, setLocalService] = useState<Connector | null>(
     () => workspaceReturn ? workspaceConnectors.find(({ id }) => id === workspaceReturn.service) ?? null
@@ -68,11 +71,19 @@ export function PersonalConnections({
   const connectScope=useScope(props.session.user.id, selected?.id);
   const active=useRef<AbortController|null>(null);
   const [connecting,setConnecting]=useState(false);
+  const [completing,setCompleting]=useState(false);
   const [kiriMessage,setKiriMessage]=useState("");
+  const [unsaved,setUnsaved]=useState(false);
+  const [savedRev,setSavedRev]=useState(0);
+  const loginScope=props.session.chat_draft_scope;
+  // Saved work for exactly this member + login + service (never another login's).
+  const savedService=selected && selected.id!=="vault" ? selected.id : undefined;
+  const saved=useMemo(()=>savedService?readGooglePending(props.session.user.id,loginScope,savedService):null,
+    [props.session.user.id,loginScope,savedService,savedRev]);
   useEffect(()=>{
-    setConnecting(false);setKiriMessage("");
+    setConnecting(false);setCompleting(false);setKiriMessage("");setUnsaved(false);
     return ()=>{active.current?.abort();active.current=null;};
-  },[connectScope]);
+  },[connectScope,loginScope]);
   const workspaceEnabled = selected !== gmail;
   const google = usePersonalGoogle(props, !workspaceReturn);
   const workspace = usePersonalGoogleWorkspace({ session: props.session, expired: props.expired, enabled: workspaceEnabled, returned: workspaceReturn });
@@ -190,30 +201,85 @@ export function PersonalConnections({
   const workspaceService = selected && isWorkspaceGoogleService(selected.id) ? selected.id : null;
   const gmailRead = selected?.id === gmail.id && Boolean(props.readIntent);
   const memberFlow = selected?.id === gmail.id ? google : workspace;
-  async function connect(read=false) {
-    if (active.current || !selected || vaultStatus.status!=="ready") return;
-    const controller=new AbortController();active.current=controller;setConnecting(true);
+  async function connect(read=false, resume?: GoogleKiriPending) {
+    if (active.current || !selected || vaultStatus.status!=="ready" || (!resume && saved)) return;
+    const service=selected.id, account=props.session.user.id;
+    // Resumed work keeps its original conversation; never the page's current one.
+    const readIntent=resume ? resume.read : read ? props.readIntent??undefined : undefined;
+    const controller=new AbortController();active.current=controller;setConnecting(true);setUnsaved(false);
     try {
-      const result=await connectInKiri(connectScope.request,props.session.user.id,props.session.user.email,selected.id,vaultStatus.siteOrigin,
-        read ? props.readIntent??undefined : undefined,controller.signal,setKiriMessage);
+      const result=await connectInKiri(connectScope.request,account,props.session.user.email,service,vaultStatus.siteOrigin,
+        readIntent,controller.signal,setKiriMessage,{scope:loginScope,resume,persisted:durable=>setUnsaved(!durable),
+          cancelled:confirmed=>{if(controller.signal.aborted && active.current===controller)setKiriMessage(confirmed
+            ?"연결을 취소했습니다.":"연결 취소 결과를 확인하지 못했습니다. 저장된 연결에서 다시 취소해 주세요.");}});
       if(controller.signal.aborted)return;
       const prefix="/personal/google"+(workspaceService?"/"+workspaceService:"");
-      const grant=await connectScope.request<{flow_id:string;mailbox:string;continuation?:{thread_id:string;request_id:string}}>(
-        prefix+"/complete","POST",{handle:result.handle},controller.signal,{timeoutMs:75000});
+      setCompleting(true);setKiriMessage("Google 서비스 연결 결과를 확인하고 있습니다.");
+      type Completed={flow_id:string;mailbox:string;continuation?:{thread_id:string;request_id:string}};
+      let grant:Completed;
+      try {
+        grant=await connectScope.request<Completed>(prefix+"/complete","POST",{handle:result.handle},controller.signal,{timeoutMs:75000});
+      } catch(error) {
+        if(controller.signal.aborted || active.current!==controller)throw error;
+        // The handle is one-use. A lost reply may already have committed the
+        // grant; reconcile current member status, never exchange a new code.
+        try {
+          const current=workspaceService
+            ? (await connectScope.request<{connections:{service:string;mailbox:string}[]}>("/personal/google/workspace","GET",undefined,controller.signal))
+                .connections.find(item=>item.service===workspaceService)
+            : (await connectScope.request<{connection:{mailbox:string}|null}>("/personal/google","GET",undefined,controller.signal)).connection;
+          if(controller.signal.aborted || active.current!==controller)throw error;
+          if(current && typeof current.mailbox==="string" && current.mailbox.toLowerCase()===result.email.toLowerCase()) {
+            if(loginScope)clearGooglePending({account,scope:loginScope,service,job:result.job});
+            setKiriMessage("현재 Google 계정이 연결된 것을 확인했습니다."+(readIntent?" 메일 확인은 처음 요청한 대화에서 이어서 진행해 주세요.":""));
+            if(workspaceService)await workspace.retry();else google.retry();
+            return; // Status alone cannot prove the original continuation; no mail read.
+          }
+        } catch { /* Keep pending metadata when status cannot reconcile the grant. */ }
+        if(!controller.signal.aborted && active.current===controller) {
+          if(workspaceService)await workspace.retry();else google.retry();
+        }
+        throw error;
+      }
+      if(controller.signal.aborted || active.current!==controller)return;
       if(grant.flow_id!==result.flow || grant.mailbox.toLowerCase()!==result.email.toLowerCase()) throw Error("Google 연결 계정을 확인하지 못했습니다.");
+      // Acknowledged by the server: only now forget exactly this job.
+      if(loginScope)clearGooglePending({account,scope:loginScope,service,job:result.job});
       setKiriMessage("Google 서비스 연결을 확인했습니다.");
       if(workspaceService) await workspace.retry();
-      else if(read && props.readIntent && props.readIntent.thread_id===grant.continuation?.thread_id && props.readIntent.request_id===grant.continuation.request_id)
-        await google.refreshRead(props.readIntent);
-      else google.retry();
+      else if(readIntent && latestRead.current && latestRead.current.thread_id===readIntent.thread_id && latestRead.current.request_id===readIntent.request_id
+        && readIntent.thread_id===grant.continuation?.thread_id && readIntent.request_id===grant.continuation.request_id)
+        await google.refreshRead(readIntent);
+      else {
+        if(readIntent) setKiriMessage("Google 서비스 연결을 확인했습니다. 메일 확인은 처음 요청한 대화에서 이어서 진행해 주세요.");
+        google.retry();
+      }
     } catch(error) {
+      if(loginScope && error instanceof ApiFailure && (error.status===404||error.status===410) && resume)
+        clearGooglePending({account,scope:loginScope,service,job:resume.job});
       if(!controller.signal.aborted) {
         if(error instanceof ApiFailure && error.status===401)props.expired();
-        else setKiriMessage(error instanceof ApiFailure && error.status===409?"이 계정에 진행 중인 Kiri 연결이 있습니다.":
+        else setKiriMessage(error instanceof ApiFailure && error.status===409?"이 계정에 진행 중인 Kiri 연결이 있습니다. 저장된 연결이 있으면 이어서 진행하거나 취소해 주세요.":
           error instanceof ApiFailure && error.status===429?"최근 Google 연결 시도가 많습니다. 잠시 후 다시 시도해 주세요.":
           error instanceof Error && !(error instanceof ApiFailure)?error.message:"Google 연결 상태를 확인하지 못했습니다.");
       }
-    } finally {if(active.current===controller){active.current=null;setConnecting(false);}}
+    } finally {
+      if(active.current===controller){active.current=null;setConnecting(false);setCompleting(false);}
+      setSavedRev(value=>value+1);
+    }
+  }
+  async function cancelSaved() {
+    if (active.current || !saved) return;
+    const controller=new AbortController();active.current=controller;setConnecting(true);
+    try {
+      const outcome=await cancelGooglePending(connectScope.request,saved);
+      if(controller.signal.aborted)return;
+      if(outcome==="expired")props.expired();
+      else setKiriMessage(outcome==="cleared"?"저장된 Google 연결을 취소했습니다. 새로 연결할 수 있습니다.":"저장된 연결 취소를 확인하지 못했습니다. 다시 시도해 주세요.");
+    } finally {
+      if(active.current===controller){active.current=null;setConnecting(false);setCompleting(false);}
+      setSavedRev(value=>value+1);
+    }
   }
   const mailbox = selected ? mailboxFor(selected) : undefined;
   const notice = selected?.id === gmail.id ? google.notice
@@ -247,7 +313,12 @@ export function PersonalConnections({
             )
           ) : (
             <>
-              {mailbox ? <>
+              {saved ? (!connecting && <>
+                <p role="status">이전에 시작한 Google 연결이 있습니다. 이어서 진행하거나 취소할 수 있습니다.{saved.read?" 처음 요청한 대화에서 메일을 확인합니다.":""}</p>
+                <button className="member-page-action connector-primary" disabled={vaultStatus.status!=="ready"}
+                  onClick={()=>void connect(false,saved)}>이어서 진행</button>
+                <button className="member-page-action" onClick={()=>void cancelSaved()}>저장된 연결 취소</button>
+              </>) : mailbox ? <>
                 {gmailRead && <button className="member-page-action connector-primary" disabled={memberFlow.busy} onClick={()=>void google.action("read")}>메일 확인</button>}
                 <button className="member-page-action" disabled={memberFlow.busy} onClick={()=>{
                   if(workspaceService)void workspace.action(workspaceService,"disconnect");else void google.action("disconnect");
@@ -260,7 +331,8 @@ export function PersonalConnections({
                 onClick={()=>show(selected,true)}>Google Workspace 설정</button>}
               {!mailbox && memberFlow.status==="ready" && vaultStatus.status!=="ready" && <p role="status">{getVaultInfo(vaultStatus).message}</p>}
               {kiriMessage && <p role="status">{kiriMessage}</p>}
-              {connecting && <button className="member-page-action" onClick={()=>{active.current?.abort();setKiriMessage("연결을 취소했습니다.");}}>취소</button>}
+              {connecting && unsaved && <p role="status">이 브라우저에서는 진행 상태를 저장할 수 없어 페이지를 새로고침하면 이어서 진행할 수 없습니다.</p>}
+              {connecting && !completing && <button className="member-page-action" onClick={()=>{active.current?.abort();setKiriMessage("연결 취소를 확인하고 있습니다.");}}>취소</button>}
               {vaultStatus.failure && <p className="connector-notice" role="status">{vaultStatus.failure}</p>}
             </>
           )}

@@ -36,6 +36,29 @@ that allocation SHALL retrieve the key; key preparation SHALL NOT start Chrome.
 - **WHEN** one member has a preparing or prepared key or exceeds the per-minute start budget
 - **THEN** another new preparation is refused while exact request replay and a different member's valid attempt remain isolated
 
+### Requirement: A member can recover the same pending Google connection
+The member UI SHALL retain only bounded non-secret pending identifiers scoped
+to the account, initiating login and service. Reentry SHALL first query the same
+server-owned job and SHALL NOT issue another Start, retain credentials or infer
+success from local state. Completed receipt metadata SHALL be read from the
+server and pending state cleared only after confirmed completion or cancellation.
+
+#### Scenario: The member reloads during Vault selection
+- **WHEN** the same initiating login reloads before sealed delivery
+- **THEN** the UI offers resume or cancellation of the existing job and uses its current challenge without reserving another key
+
+#### Scenario: Start, delivery or completion has an uncertain response
+- **WHEN** the client loses a response and reopens the connection
+- **THEN** it reconciles the same job before another action, never silently restarts authentication, and preserves recoverable state until confirmation
+
+#### Scenario: Another login or a late callback sees saved metadata
+- **WHEN** the initiating login/account/service differs or an old callback arrives after a new pending job
+- **THEN** it cannot adopt that work or clear the newer pending state, and the server continues enforcing current ownership
+
+#### Scenario: A connection originated from a conversation
+- **WHEN** recovery finishes outside the original thread/request
+- **THEN** it does not read mail or insert the result into another conversation
+
 ### Requirement: Billing is not an assumed setup dependency
 The system SHALL inspect actual provider prerequisites and prefer a project
 without billing. Billing SHALL NOT be selected implicitly, and zero billing

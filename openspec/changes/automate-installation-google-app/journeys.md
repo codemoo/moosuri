@@ -172,12 +172,15 @@ Google consent acceptance.
 
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
-| R01 | Close/reopen the member page during login or consent | Truthful saved progress; do not initiate another browser or grant implicitly | Open full journey |
+| R01 | Close/reopen the member page during login or consent | Truthful saved progress; do not initiate another browser or grant implicitly | Installed same-login preflight reload, lost Start/status, saved cancel and foreign-login checks passed; accepted-provider and full close/reopen journey remain open |
 | R02 | Cancel setup while SDK grant is active | Await remote revoke plus local-empty proof; teardown receipt clears only matching run | Open confined failure/cancellation acceptance |
 | R03 | Revoke fails, or kill worker mid-revoke | Durable cleanup-unconfirmed fence remains beyond lease expiry; no force-unlock or duplicate SDK grant | Open actual confined injection |
 | R04 | Late claim/begin arrives after browser teardown | Closed run ID cannot become active; successor remains untouched | Existing registry tests passed; full process journey open |
 | R05 | GWS distribution is delayed or member runtime restarts | Pending shown until exact app readiness; recover without replacing member consent | Candidate wait is bounded from actual worker idle start; ambiguous start POST is never retried; full journey open |
 | R06 | Completed connection survives gateway/member restart | Same selected account and grant work on next explicit read; no copied session cookie needed | Open actual journey |
+
+[RE01–RE06 reentry evidence](../../../docs/reviews/2026-11-27-google-reentry.md)
+separates actual preflight recovery from synthetic completion and open provider paths.
 
 ## Completion and work order
 

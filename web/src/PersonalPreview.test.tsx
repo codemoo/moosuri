@@ -108,7 +108,7 @@ beforeEach(() => {
   browserRoute = undefined;
   deleteThreadResponse = undefined;
   inventoryFailure = false;
-  vi.mocked(connectInKiri).mockResolvedValue({ flow: "a".repeat(64), handle: "b".repeat(64), email: "a@example.test" });
+  vi.mocked(connectInKiri).mockResolvedValue({ job:"11111111-1111-4111-8111-111111111111", flow: "a".repeat(64), handle: "b".repeat(64), email: "a@example.test" });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -1683,7 +1683,7 @@ it.each([
   await user.click(connect);
   await screen.findByText("Google 서비스 연결을 확인했습니다.");
   expect(connectInKiri).toHaveBeenCalledWith(expect.any(Function), aid, "a@example.test", serviceId,
-    "https://vault.example.test", undefined, expect.any(AbortSignal), expect.any(Function));
+    "https://vault.example.test", undefined, expect.any(AbortSignal), expect.any(Function), expect.objectContaining({persisted:expect.any(Function)}));
   expect(calls.filter(call => call.method === "POST" && call.path.endsWith("/complete"))).toEqual([{
     path: `/personal/google${serviceId === "gmail" ? "" : "/" + serviceId}/complete`, method: "POST",
     body: { handle: "b".repeat(64) }, account: aid,

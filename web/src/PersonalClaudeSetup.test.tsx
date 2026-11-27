@@ -294,3 +294,99 @@ it("keeps API as the default choice and replaces a saved connection only by its 
   expect(calls.find(c => c.body?.op === "start")!.body).toMatchObject({ replace_revision: current, hosting_terms_accepted: true });
   expect(onSaved).not.toHaveBeenCalled();
 });
+
+
+it("replaces an external subscription without disconnecting and keeps cancellation despite stale polls", async () => {
+  let id = "";
+  const calls = serve(call => {
+    if (call.method === "GET") return Response.json({ ...idle, replacement_revision: current });
+    if (call.body?.op === "start") { id = String(call.body.request_id); return Response.json(op(id, "preparing")); }
+    if (call.body?.op === "cancel") return Response.json(op(id, "cancelled"));
+    return Response.json(op(id, "preparing"));
+  });
+  const onDisconnected = vi.fn();
+  const props = view({ disconnectRevision: current, onDisconnected });
+  const user = await begin();
+  expect(calls.find(c => c.body?.op === "start")?.body?.replace_revision).toBe(current);
+  await user.click(await screen.findByRole("button", { name: "취소" }));
+  await waitFor(() => expect(calls.filter(c => c.body?.op === "cancel")).toHaveLength(1));
+  expect(await screen.findByText(/설정이 취소되었습니다. 기존 연결은 그대로입니다/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "다시 시도" }));
+  expect(await screen.findByLabelText("Claude 계정 이메일")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "구독 연결 해제" })).not.toBeInTheDocument();
+  expect(calls.some(c => c.body?.op === "disconnect")).toBe(false);
+  expect(onDisconnected).not.toHaveBeenCalled();
+  expect(props.onSaved).not.toHaveBeenCalled();
+});
+
+it("propagates a verified legacy replacement through the existing subscription parent", async () => {
+  const calls = serve(call => {
+    if (call.method === "GET") return Response.json({ ...idle, replacement_revision: current });
+    const id = String(call.body?.request_id);
+    return Response.json(op(id, "ready", { connection_revision: id }));
+  }, () => Response.json({ supported: true, saved: true, connection_revision: current }));
+  const onSaved = vi.fn();
+  render(<PersonalEngineSetup account="synthetic-admin" subscriptionRevision={current} onSaved={onSaved} expired={vi.fn()} unavailable={vi.fn()} />);
+  await begin();
+  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  expect(calls.filter(c => c.body?.op === "start")).toHaveLength(1);
+  expect(calls.some(c => c.body?.op === "disconnect")).toBe(false);
+});
+
+it("keeps connection actions unavailable after a failed check and permits explicit recovery", async () => {
+  let available = false;
+  const calls = serve(() => available ? Response.json({ ...idle, replacement_revision: current }) : new Response(null, { status: 503 }));
+  view({ disconnectRevision: current });
+  const retry = await screen.findByRole("button", { name: "연결 상태 다시 확인" });
+  expect(screen.queryByRole("button", { name: "구독 연결 해제" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Claude 계정 이메일")).not.toBeInTheDocument();
+  available = true;
+  await userEvent.setup().click(retry);
+  expect(await screen.findByLabelText("Claude 계정 이메일")).toBeInTheDocument();
+  expect(calls.every(c => c.method === "GET")).toBe(true);
+});
+
+it("refuses a replacement hint for a different displayed connection", async () => {
+  const calls = serve(() => Response.json({ ...idle, replacement_revision: "99999999-9999-4999-8999-999999999999" }));
+  view({ disconnectRevision: current });
+  expect(await screen.findByRole("alert")).toHaveTextContent("먼저 변경되었습니다");
+  expect(screen.queryByLabelText("Claude 계정 이메일")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "구독 연결 해제" })).not.toBeInTheDocument();
+  expect(calls.every(c => c.method === "GET")).toBe(true);
+});
+
+it("rechecks a changed displayed revision and refreshes the parent on a mismatch", async () => {
+  const next = "99999999-9999-4999-8999-999999999999";
+  const calls = serve(() => Response.json({ ...idle, connection_revision: current }));
+  const onRefresh = vi.fn();
+  const props = { account: "synthetic-admin", onSaved: vi.fn(), expired: vi.fn(), unavailable: vi.fn(), onRefresh };
+  const mounted = render(<PersonalClaudeSetup {...props} disconnectRevision={current}/>);
+  expect(await screen.findByRole("button", { name: "구독 연결 해제" })).toBeInTheDocument();
+  mounted.rerender(<PersonalClaudeSetup {...props} disconnectRevision={next}/>);
+  expect(screen.queryByRole("button", { name: "구독 연결 해제" })).not.toBeInTheDocument();
+  await userEvent.setup().click(await screen.findByRole("button", { name: "연결 상태 다시 확인" }));
+  expect(onRefresh).toHaveBeenCalledOnce();
+  expect(calls.every(c => c.method === "GET")).toBe(true);
+});
+
+it("explains a missing managed record without claiming another setup is running", async () => {
+  const calls = serve(call => call.method === "GET" ? Response.json(idle) : new Response(null, { status: 412 }));
+  view({ disconnectRevision: current });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("관리 기록을 확인하지 못해 해제하지 않았습니다");
+  expect(calls.filter(c => c.body?.op === "disconnect")).toHaveLength(1);
+  expect(screen.queryByText(/다른 설정이 진행 중/)).not.toBeInTheDocument();
+});
+
+it("shows an unstarted disconnect failure as preserved credentials and permits a fresh request", async () => {
+  const calls = serve(call => call.method === "GET" ? Response.json(idle)
+    : Response.json(gone(String(call.body?.request_id), "failed")));
+  view({ disconnectRevision: current });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("연결과 로그인은 삭제하지 않았습니다");
+  await user.click(screen.getByRole("button", { name: "다시 시도" }));
+  await user.click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  const ids = calls.filter(c => c.body?.op === "disconnect").map(c => c.body?.request_id);
+  expect(ids).toHaveLength(2); expect(ids[0]).not.toBe(ids[1]);
+});

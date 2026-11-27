@@ -397,7 +397,7 @@ SHALL remain read-only; old public catalog revisions SHALL NOT be republished.
 - **THEN** a current authorized session of the exact owner can resume the original target, and no new setup starts while cleanup remains unconfirmed
 
 #### Scenario: The configuration cannot be trusted during recovery
-- **WHEN** the config is unreadable or differs from the exact intended target
+- **WHEN** a disconnect intent was durably recorded and the config is unreadable or differs from the exact intended target
 - **THEN** the operation remains recoverable without removing that target's credentials or claiming completion
 
 #### Scenario: The owner reconnects after completed disconnect
@@ -432,3 +432,28 @@ owner and initiating session. Uncertain input SHALL NOT be replayed.
 - **WHEN** cancellation, authorization loss or gateway restart interrupts authentication
 - **THEN** the browser and official child are cleaned before the setup slot is released
 - **AND** unconfirmed cleanup remains recoverable rather than being reported as completed
+
+
+### Requirement: Existing subscription replacement and preflight recovery
+An externally managed subscription SHALL remain published until a verified new
+connection replaces its exact revision. Managed disconnect SHALL verify the
+full owner, request and worker identity under a retirement lease before saving
+its intent or removing configuration. A definite refusal before any durable
+intent SHALL terminate without removing credentials or blocking a later setup.
+A saved intent SHALL survive lost acknowledgements and delayed fallback writes.
+
+#### Scenario: A legacy external connection has no managed host record
+- **WHEN** its owner opens Claude setup
+- **THEN** the screen offers verified replacement and does not force managed disconnect or delete external credentials
+
+#### Scenario: A managed record changes before the disconnect starts
+- **WHEN** the preflight definitively fails before an intent exists
+- **THEN** configuration and credentials remain unchanged and the failed operation does not indefinitely reserve the setup slot
+
+#### Scenario: Intent acknowledgement is lost
+- **WHEN** the intent reached disk but the live job or finalizer has an older snapshot
+- **THEN** recovery merges the durable intent and cannot end as an unstarted failure
+
+#### Scenario: A page displays an older connection revision
+- **WHEN** another administrator changes the connection before the page submits or rechecks it
+- **THEN** stale mutations are refused and rechecking refreshes the parent connection view

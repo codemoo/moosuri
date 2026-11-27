@@ -204,7 +204,9 @@ impl Receipt {
                     .is_some_and(|t| !t.is_nil() && t != self.request_id)
                     && self.replace_revision.is_none()
                     && !self.browser_pending
-                    && (lifecycle || self.state == Stage::CleanupPending)
+                    && (lifecycle
+                        || self.state == Stage::CleanupPending
+                        || (self.state == Stage::Failed && self.config_sha256.is_none()))
             }
             _ => false,
         }

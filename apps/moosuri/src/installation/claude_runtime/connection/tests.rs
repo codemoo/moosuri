@@ -689,3 +689,47 @@ fn unseen_or_already_retired_request_cleanup_is_non_destructive() {
     assert!(retire_in(&layout, &Never, active.owner, id).is_err());
     assert_eq!(store.load(&active.owner).unwrap().unwrap(), active);
 }
+
+#[test]
+fn retirement_preflight_holds_the_owner_lease_without_changing_the_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let layout = Layout::under(temp.path());
+    fs::create_dir_all(layout.at("/var/lib")).unwrap();
+    let store = Store::new(&layout);
+    store.ensure().unwrap();
+    let rec = record(Phase::Active);
+    assert!(prepare_retirement_in(&layout, rec.owner, rec.attempt.request_id).is_err());
+    store.save(&rec).unwrap();
+    let lease = prepare_retirement_in(&layout, rec.owner, rec.attempt.request_id).unwrap();
+    assert_eq!(store.load(&rec.owner).unwrap().unwrap(), rec);
+    assert!(store.lock(&rec.owner).is_err());
+    drop(lease);
+    assert_eq!(store.load(&rec.owner).unwrap().unwrap(), rec);
+    assert!(store.lock(&rec.owner).is_ok());
+    assert!(prepare_retirement_in(&layout, rec.owner, Uuid::new_v4()).is_err());
+    assert_eq!(store.load(&rec.owner).unwrap().unwrap(), rec);
+}
+
+#[test]
+fn retirement_requires_the_exact_published_worker_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let layout = Layout::under(temp.path());
+    fs::create_dir_all(layout.at("/var/lib")).unwrap();
+    let store = Store::new(&layout);
+    store.ensure().unwrap();
+    let rec = record(Phase::Active);
+    store.save(&rec).unwrap();
+    let lease = prepare_retirement_in(&layout, rec.owner, rec.attempt.request_id).unwrap();
+    let uid = rec.evidence.as_ref().unwrap().runtime.service.uid;
+    assert!(lease.verify_worker(uid).is_ok());
+    assert_eq!(
+        lease.verify_worker(uid + 1).unwrap_err(),
+        "claude_connection_worker_conflict"
+    );
+    assert_eq!(
+        managed_socket(uid),
+        PathBuf::from(format!("{}/engine.sock", unit::socket_dir(uid)))
+    );
+    drop(lease);
+    assert_eq!(store.load(&rec.owner).unwrap().unwrap(), rec);
+}

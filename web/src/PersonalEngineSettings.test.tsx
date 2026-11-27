@@ -5,7 +5,7 @@ import { PersonalEngineSettings } from "./PersonalEngineSettings";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(["api", "claude_code"])("keeps explicit API replacement available for a managed %s connection", async connection_mode => {
+it.each(["api", "claude_code"])("offers replacement or explicit retirement for the managed %s connection", async connection_mode => {
   const model = { model: "claude-synthetic", effort: "medium" };
   const revision = "00000000-0000-4000-8000-000000000001";
   const fetcher = vi.fn(async (url: string) => Response.json(url.endsWith("/setup")
@@ -15,10 +15,15 @@ it.each(["api", "claude_code"])("keeps explicit API replacement available for a 
         default_choice: null, default_stale: false }));
   vi.stubGlobal("fetch", fetcher);
   render(<PersonalEngineSettings account="actor" expired={vi.fn()} unavailable={vi.fn()} />);
+  if (connection_mode === "claude_code") {
+    expect(await screen.findByRole("button", { name: "구독 연결 해제" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Anthropic API 키")).not.toBeInTheDocument();
+    expect(fetcher.mock.calls).toHaveLength(3);
+    return;
+  }
   await userEvent.setup().click(await screen.findByRole("button", { name: "키·모델 교체" }));
   expect(screen.getByLabelText("Anthropic API 키")).toHaveValue("");
   expect(screen.getByRole("button", { name: "연결 확인 후 저장" })).toBeInTheDocument();
-  if (connection_mode === "claude_code") expect(screen.getByText(/API 계정에 별도로 청구됩니다/)).toBeInTheDocument();
   // Opening recovery does not send a provider request or replace the connection.
   expect(fetcher.mock.calls).toHaveLength(2);
 });
@@ -56,7 +61,7 @@ it("offers server setup guidance until an engine is configured, then shows the s
     .mockImplementationOnce(async () => Response.json(unconfigured));
   vi.stubGlobal("fetch", fetcher);
   render(<PersonalEngineSettings account="actor" expired={vi.fn()} unavailable={vi.fn()} />);
-  expect(await screen.findByRole("link", { name: "설치 서버에서 엔진 연결 설정하기" })).toBeInTheDocument();
+  expect(await screen.findByText("설치 서버에서 엔진 연결을 설정하면 회원이 어시스턴트에 요청할 수 있습니다.")).toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "설치 모델 설정" })).not.toBeInTheDocument();
 
   await userEvent.setup().click(screen.getByRole("button", { name: "새로고침" }));

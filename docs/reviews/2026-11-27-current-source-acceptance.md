@@ -90,3 +90,24 @@ failed. Reusing this guest requires an explicit original-baseline-to-final-revis
 recovery record and fresh proof that product/provider state is absent. It must
 not be described as a newer revision's untouched initial baseline. Production
 remains `dee84754`; the old revision's staging drafts are not release approval.
+
+## Public2608 recovered source installation completed
+
+The preserved pre-product `75c1b533` build baseline was explicitly recovered to
+public `2608a12e`. The original failed coordinator and interruption remain in
+place. The new coordinator completed source/terminal installation, second-member
+public invitation credential completion, two actual encrypted Vault/browser
+journeys, actual reboot, proxy confinement, Claude U01–U03 and FM01–FM03.
+Its terminal result explicitly records `baseline_kind=pre_product_build_recovery`,
+`original_revision=75c1b533`, `real_google_and_model=not_run` and
+`real_acme=not_run`. The first-mail responses remain synthetic; U02 exercises an
+unauthenticated provider screen and cancellation. No real account login occurred.
+
+The accepted bundle's running gateway SHA-256 was
+`d47ceb6972228525eb27fb2d7a516d6ba1591501498cbe2d34cc05818987623c`.
+The acceptance result and separate original failure are retained in the Linux
+fixture's `recovered2608-acceptance-progress.json` and `acceptance-progress.json`.
+This closes the corrected-source installation run, not the provider or production
+transition gates. A later gateway-only diagnostic checks
+[existing-subscription recovery](2026-11-27-claude-legacy-recovery.md);
+that overlay is not the original accepted bundle.

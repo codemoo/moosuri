@@ -393,3 +393,10 @@ a public-proxy default-route defect was reproduced and corrected in the installe
 Six real Linux egress/isolation/restart checks passed. Production proxies were repaired and real HTTPS/private refusal rechecked. The new
 login did not complete; explicit cancellation cleaned its browser/socket. Full
 login results are recorded in [the production log](../../../docs/reviews/2026-11-27-matched-production.md).
+
+### M05/M06 기존 연결 교체·해제 복구 — 6 supporting journeys
+
+[LR01–LR06](../../../docs/reviews/2026-11-27-claude-legacy-recovery.md)는
+수동 등록 연결, 모바일·다른 회원, 오래된 화면, 관리 기록 누락, 해제 전후
+중단을 나눈다. 실제 설치된 게이트웨이와 Linux 브라우저에서 합성 설정으로
+검증하며, 실제 계정 인증·추론 완료를 대신하지 않는다.

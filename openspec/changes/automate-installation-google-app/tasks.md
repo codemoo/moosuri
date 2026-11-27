@@ -1606,3 +1606,22 @@ R02/R03 remote-grant cancellation stays open. The public75 source build was
 deliberately stopped before product creation; its baseline, failed coordinator
 and interruption proof remain preserved for explicit final-revision recovery.
 [Evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
+
+
+### Existing subscription replacement and disconnect recovery — 2026-11-27
+
+The recorded public2608 source-installation recovery passed two-member web
+admission, actual Vault/browser use, real reboot, confinement, Claude UI cancel
+and first-mail UI. Its baseline remains the preserved interrupted75 installation.
+Production is still dee84754; no provider acceptance is inferred.
+
+Legacy external subscriptions now offer verified replacement while retaining the
+old connection. Managed disconnect acquires its exact owner/worker retirement
+lease before unpublishing; a definite refusal before an intent ends without
+blocking the next setup. A durable intent survives failed acknowledgements and
+fallback writes. Linux gateway56/host18/UI45 and builds passed. Official Claude
+Sonnet5.5/medium independent reviews closed the material findings. Six installed
+LR01–LR06 journeys passed across preserved initial and bounded recovery runs;
+synthetic fixture settings were restored. [Details, failures and limits](../../../docs/reviews/2026-11-27-claude-legacy-recovery.md).
+Final matching bundle/production transition and real model/Google authentication,
+OAuth automation and two real member consents stay open.

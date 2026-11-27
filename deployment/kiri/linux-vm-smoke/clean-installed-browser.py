@@ -60,6 +60,10 @@ def main():
                         help='Admin UI private Kiri Claude screen/cancel; no account authentication or inference')
     parser.add_argument('--claude-structure-only', action='store_true',
                         help='Only U01/U03; do not initiate provider login preparation')
+    parser.add_argument('--claude-legacy-resume', type=Path,
+                        help='Resume LR05/LR06 from preserved LR01-LR04 fixture readiness failure')
+    parser.add_argument('--claude-legacy-journeys', action='store_true',
+                        help='Existing external/managed recovery with synthetic configs; no provider calls')
     parser.add_argument('--claude-lifecycle', action='store_true',
                         help='Disconnect a staged synthetic Active binding and reopen login; no authentication')
     parser.add_argument('--google-vault-journeys', action='store_true',
@@ -169,6 +173,11 @@ print('matched_running_revision_verified')
                 if args.google_vault_journeys:
                     import runpy
                     module = runpy.run_path(str(Path(__file__).with_name('installed-google-vault.py')))
+                    module['run'](browser, args, ssh, target, members)
+                    return
+                if args.claude_legacy_journeys:
+                    import runpy
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-claude-legacy.py')))
                     module['run'](browser, args, ssh, target, members)
                     return
                 if args.claude_lifecycle:

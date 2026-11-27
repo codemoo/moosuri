@@ -21,7 +21,7 @@ fn alloc(epoch: i64) -> SessionAllocation {
 }
 fn endpoint(uid: u32) -> Endpoint {
     Endpoint {
-        socket: "/run/moosuri/worker/engine.sock".into(),
+        socket: format!("/run/moosuri-claude-worker-{uid}/engine.sock").into(),
         worker_uid: uid,
     }
 }
@@ -1185,6 +1185,31 @@ fn disconnect_input(id: Uuid, target: Uuid) -> Input {
 }
 
 #[tokio::test]
+async fn external_worker_connection_does_not_reserve_a_managed_disconnect() {
+    let (_keep, g, dir, d) = gateway();
+    let a = alloc(1);
+    let target = Uuid::new_v4();
+    // A legacy/manual endpoint has no product-owned worker retirement record.
+    // Reserving managed cleanup would unpublish it and then wait forever for
+    // a record that was never created. Keep it usable until verified replacement.
+    let mut value: Value = serde_json::from_slice(&config_for(&a.allocation, target)).unwrap();
+    value["bindings"][0]["worker"]["socket"] = json!("/run/external-example/engine.sock");
+    let config = serde_json::to_vec(&value).unwrap();
+    receipt::commit(&d, &config, None).unwrap();
+    let result = lifecycle::reserve(
+        &g,
+        &a,
+        "synthetic-owner-session",
+        disconnect_input(Uuid::new_v4(), target),
+    )
+    .await;
+    assert!(matches!(result, Err(StatusCode::CONFLICT)));
+    assert_eq!(fs::read(dir.join(CONFIG_FILE)).unwrap(), config);
+    assert!(receipt::read_receipt(&d).unwrap().is_none());
+    assert!(g.claude_jobs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn delayed_persist_preserves_the_durable_disconnect_intent() {
     let (_keep, g, _dir, d) = gateway();
     let a = alloc(1);
@@ -1260,13 +1285,15 @@ fn disconnect_persists_intent_then_unpublishes_durably_before_the_root_begins_re
     let reserved = disconnect_receipt(&a, op, target, Stage::Disconnecting);
     receipt::begin(&d, &reserved).unwrap();
     let at_root = std::cell::RefCell::new(None);
-    let report = lifecycle::unpublish(&d, &owner, &reserved, || {
-        // What the root sees: config already gone AND the intent already durable.
-        *at_root.borrow_mut() = Some((
-            p.join(CONFIG_FILE).exists(),
-            receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
-        ));
-        Ok(())
+    let report = lifecycle::unpublish(&d, &owner, &reserved, |_| {
+        Ok(|| {
+            // What the root sees: config already gone AND the intent already durable.
+            *at_root.borrow_mut() = Some((
+                p.join(CONFIG_FILE).exists(),
+                receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
+            ));
+            Ok(())
+        })
     });
     assert_eq!(report.result.unwrap(), Unpub::Begun);
     let (still_published, intent) = at_root.into_inner().unwrap();
@@ -1299,7 +1326,7 @@ fn a_failed_root_begin_or_lost_reply_resumes_from_the_receipt_without_republishi
     let reserved = disconnect_receipt(&a, op, target, Stage::Disconnecting);
     receipt::begin(&d, &reserved).unwrap();
     // Root busy: the config is already unpublished, the intent durable, nothing ends.
-    let first = lifecycle::unpublish(&d, &owner, &reserved, || Err("busy".into()));
+    let first = lifecycle::unpublish(&d, &owner, &reserved, |_| Ok(|| Err("busy".into())));
     assert!(first.result.is_err() && first.intent.is_some());
     assert!(!p.join(CONFIG_FILE).exists());
     // Process restart: a new session resumes from the receipt as stored.
@@ -1308,9 +1335,11 @@ fn a_failed_root_begin_or_lost_reply_resumes_from_the_receipt_without_republishi
     let calls = std::cell::Cell::new(0);
     for _ in 0..2 {
         // The second pass is a terminal-receipt write that failed after the root ack.
-        let again = lifecycle::unpublish(&d, &owner, &stored, || {
-            calls.set(calls.get() + 1);
-            Ok(())
+        let again = lifecycle::unpublish(&d, &owner, &stored, |_| {
+            Ok(|| {
+                calls.set(calls.get() + 1);
+                Ok(())
+            })
         });
         assert_eq!(again.result.unwrap(), Unpub::Begun);
         assert!(again.intent.is_none(), "the intent is never rewritten");
@@ -1319,7 +1348,7 @@ fn a_failed_root_begin_or_lost_reply_resumes_from_the_receipt_without_republishi
     assert!(unfinished(&d));
     // Another owner's pin can never drive this receipt.
     let stranger = owner_of(&alloc(1).allocation).unwrap();
-    let refused = lifecycle::unpublish(&d, &stranger, &stored, || panic!("never begins"));
+    let refused = lifecycle::unpublish(&d, &stranger, &stored, |_| Ok(|| panic!("never begins")));
     assert!(refused.result.is_err());
 }
 
@@ -1355,7 +1384,7 @@ fn disconnect_never_touches_a_config_that_is_not_the_exact_owned_target() {
         let mut r = disconnect_receipt(&a, op, target, Stage::Disconnecting);
         r.config_sha256 = intent;
         receipt::begin(&d, &r).unwrap();
-        let report = lifecycle::unpublish(&d, &owner, &r, || panic!("must not begin"));
+        let report = lifecycle::unpublish(&d, &owner, &r, |_| Ok(|| panic!("must not begin")));
         assert_eq!(report.result.unwrap(), Unpub::Hold);
         assert_eq!(fs::read(p.join(CONFIG_FILE)).unwrap(), bytes);
         assert_eq!(
@@ -1370,7 +1399,7 @@ fn disconnect_never_touches_a_config_that_is_not_the_exact_owned_target() {
     let r = disconnect_receipt(&a, op, target, Stage::Disconnecting);
     receipt::begin(&d, &r).unwrap();
     assert!(
-        lifecycle::unpublish(&d, &owner, &r, || panic!("must not begin"))
+        lifecycle::unpublish(&d, &owner, &r, |_| Ok(|| panic!("must not begin")))
             .result
             .is_err()
     );
@@ -1396,9 +1425,11 @@ fn an_absent_or_superseded_target_confirms_and_begins_without_deleting_anything_
     let (_t, _p, d) = private_dir();
     receipt::begin(&d, &r).unwrap();
     let calls = std::cell::Cell::new(0);
-    let report = lifecycle::unpublish(&d, &owner, &r, || {
-        calls.set(calls.get() + 1);
-        Ok(())
+    let report = lifecycle::unpublish(&d, &owner, &r, |_| {
+        Ok(|| {
+            calls.set(calls.get() + 1);
+            Ok(())
+        })
     });
     assert_eq!(report.result.unwrap(), Unpub::Begun);
     assert_eq!(calls.get(), 1);
@@ -1408,9 +1439,11 @@ fn an_absent_or_superseded_target_confirms_and_begins_without_deleting_anything_
     let other = config_for(&a, Uuid::new_v4());
     receipt::commit(&d2, &other, None).unwrap();
     receipt::begin(&d2, &r).unwrap();
-    let report = lifecycle::unpublish(&d2, &owner, &r, || {
-        calls.set(calls.get() + 1);
-        Ok(())
+    let report = lifecycle::unpublish(&d2, &owner, &r, |_| {
+        Ok(|| {
+            calls.set(calls.get() + 1);
+            Ok(())
+        })
     });
     assert_eq!(report.result.unwrap(), Unpub::Begun);
     assert_eq!(fs::read(p2.join(CONFIG_FILE)).unwrap(), other);
@@ -1419,7 +1452,7 @@ fn an_absent_or_superseded_target_confirms_and_begins_without_deleting_anything_
     // infer retirement authority from absence or another revision.
     r.config_sha256 = None;
     for dir in [&d, &d2] {
-        let held = lifecycle::unpublish(dir, &owner, &r, || panic!("unproven intent"));
+        let held = lifecycle::unpublish(dir, &owner, &r, |_| Ok(|| panic!("unproven intent")));
         assert_eq!(held.result.unwrap(), Unpub::Hold);
     }
 }
@@ -1501,7 +1534,9 @@ async fn reservation_needs_the_exact_owned_target_and_replays_only_the_same_oper
             },
             s.to_owned(),
         );
-        async move { lifecycle::reserve(&g, &a, &s, disconnect_input(op, t)).await }
+        async move {
+            lifecycle::reserve_for_test(&g, &a, &s, disconnect_input(op, t), |_, _| Ok(())).await
+        }
     };
     assert_eq!(
         go(&a, "s", op, op).await.unwrap_err(),
@@ -1740,4 +1775,225 @@ fn durable_browser_intent_cannot_become_terminal_until_cleared() {
     r.browser_pending = false;
     receipt::write_receipt(&dir, &r).unwrap();
     assert_eq!(receipt::read_receipt(&dir).unwrap().unwrap().version, 2);
+}
+
+#[test]
+fn subscription_management_is_exact_and_never_adopts_a_malformed_managed_path() {
+    use lifecycle::Management;
+    let a = alloc(1).allocation;
+    let owner = owner_of(&a).unwrap();
+    let target = Uuid::new_v4();
+    let original: Value = serde_json::from_slice(&config_for(&a, target)).unwrap();
+    for (socket, expected) in [
+        (
+            "/run/moosuri-claude-worker-60001/engine.sock",
+            Some(Management::Managed),
+        ),
+        (
+            "/run/external-example/engine.sock",
+            Some(Management::External),
+        ),
+        ("/run/moosuri-claude-worker-60002/engine.sock", None),
+        ("/run/moosuri-claude-worker-60001/other.sock", None),
+        ("relative/engine.sock", None),
+    ] {
+        let mut value = original.clone();
+        value["bindings"][0]["worker"]["socket"] = json!(socket);
+        let bytes = serde_json::to_vec(&value).unwrap();
+        assert_eq!(lifecycle::management(&bytes, &owner, target), expected);
+        assert_eq!(
+            lifecycle::management(&bytes, &owner_of(&alloc(1).allocation).unwrap(), target),
+            None
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_replacement_hint_is_owner_and_revision_bound() {
+    let (_keep, g, _dir, d) = gateway();
+    let a = alloc(1);
+    let target = Uuid::new_v4();
+    let mut value: Value = serde_json::from_slice(&config_for(&a.allocation, target)).unwrap();
+    value["bindings"][0]["worker"]["socket"] = json!("/run/external-example/engine.sock");
+    let bytes = serde_json::to_vec(&value).unwrap();
+    receipt::commit(&d, &bytes, None).unwrap();
+    assert_eq!(
+        list(&g, &a, "owner").await.unwrap()["replacement_revision"],
+        json!(target)
+    );
+    assert!(list(&g, &alloc(1), "foreign").await.unwrap()["replacement_revision"].is_null());
+    assert_eq!(read(&d, CONFIG_FILE).unwrap().unwrap().as_slice(), bytes);
+    assert!(receipt::read_receipt(&d).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_missing_managed_record_does_not_reserve_or_unpublish_the_connection() {
+    let (_keep, g, dir, d) = gateway();
+    let a = alloc(1);
+    let target = Uuid::new_v4();
+    let bytes = config_for(&a.allocation, target);
+    receipt::commit(&d, &bytes, None).unwrap();
+    let result = lifecycle::reserve_for_test(
+        &g,
+        &a,
+        "owner",
+        disconnect_input(Uuid::new_v4(), target),
+        |_, _| Err("claude_connection_record_missing".into()),
+    )
+    .await;
+    assert!(matches!(result, Err(StatusCode::PRECONDITION_FAILED)));
+    assert_eq!(fs::read(dir.join(CONFIG_FILE)).unwrap(), bytes);
+    assert!(receipt::read_receipt(&d).unwrap().is_none());
+    assert!(g.claude_jobs.lock().unwrap().is_empty());
+}
+
+#[test]
+fn retirement_preflight_failure_preserves_config_and_has_no_disconnect_intent() {
+    let (_keep, dir, d) = private_dir();
+    let a = alloc(1).allocation;
+    let owner = owner_of(&a).unwrap();
+    let target = Uuid::new_v4();
+    let bytes = config_for(&a, target);
+    receipt::commit(&d, &bytes, None).unwrap();
+    let r = disconnect_receipt(&a, Uuid::new_v4(), target, Stage::Disconnecting);
+    receipt::begin(&d, &r).unwrap();
+    let report = lifecycle::unpublish(&d, &owner, &r, |_| {
+        Err::<fn() -> Result<(), String>, _>("record changed after reservation".into())
+    });
+    assert!(report.result.is_err());
+    assert!(report.intent.is_none());
+    assert_eq!(fs::read(dir.join(CONFIG_FILE)).unwrap(), bytes);
+    assert!(
+        receipt::read_receipt(&d)
+            .unwrap()
+            .unwrap()
+            .config_sha256
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn definitive_preflight_refusal_can_finish_without_removing_the_connection() {
+    for error in [
+        "claude_connection_record_missing",
+        "claude_connection_request_conflict",
+        "claude_connection_phase_invalid",
+        "claude_connection_record_invalid",
+        "claude_connection_record_conflict",
+        "claude_connection_worker_conflict",
+    ] {
+        let (_keep, g, dir, d) = gateway();
+        let a = alloc(1);
+        let target = Uuid::new_v4();
+        let bytes = config_for(&a.allocation, target);
+        receipt::commit(&d, &bytes, None).unwrap();
+        let j = Job::disconnect(
+            Uuid::new_v4(),
+            &a,
+            "session",
+            lifecycle::digest_of(&a.allocation, target),
+            target,
+            ("claude-sonnet-5-5".into(), Some("medium".into())),
+        );
+        let id = j.id;
+        let r = j.snapshot();
+        receipt::begin(&d, &r).unwrap();
+        g.claude_jobs.lock().unwrap().push(j);
+        let report = lifecycle::unpublish(&d, &owner_of(&a.allocation).unwrap(), &r, |uid| {
+            assert_eq!(uid, Some(60001));
+            Err::<fn() -> Result<(), String>, _>(error.into())
+        });
+        assert_eq!(report.result.unwrap(), lifecycle::Unpub::Hold);
+        assert!(report.intent.is_none());
+        finish(&g, id, Some(Stage::Failed)).await;
+        assert_eq!(fs::read(dir.join(CONFIG_FILE)).unwrap(), bytes);
+        assert!(ensure_settled(&d).is_ok());
+        assert_eq!(
+            receipt::read_receipt(&d).unwrap().unwrap().state,
+            Stage::Failed
+        );
+        // Terminal failure survives restart; the next operation can reserve.
+        g.claude_jobs.lock().unwrap().clear();
+        assert!(!unfinished(&d));
+        receipt::begin(
+            &d,
+            &receipt_for(&a.allocation, Uuid::new_v4(), Stage::Preparing),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn external_config_never_prepares_retirement_or_records_an_intent() {
+    let (_keep, dir, d) = private_dir();
+    let a = alloc(1).allocation;
+    let target = Uuid::new_v4();
+    let mut value: Value = serde_json::from_slice(&config_for(&a, target)).unwrap();
+    value["bindings"][0]["worker"]["socket"] = json!("/run/external-example/engine.sock");
+    let bytes = serde_json::to_vec(&value).unwrap();
+    receipt::commit(&d, &bytes, None).unwrap();
+    let r = disconnect_receipt(&a, Uuid::new_v4(), target, Stage::Disconnecting);
+    receipt::begin(&d, &r).unwrap();
+    let report = lifecycle::unpublish(&d, &owner_of(&a).unwrap(), &r, |_| {
+        panic!("must not prepare an external worker");
+        #[allow(unreachable_code)]
+        Ok(|| Ok(()))
+    });
+    assert_eq!(report.result.unwrap(), lifecycle::Unpub::Hold);
+    assert!(report.intent.is_none());
+    assert_eq!(fs::read(dir.join(CONFIG_FILE)).unwrap(), bytes);
+    assert!(
+        receipt::read_receipt(&d)
+            .unwrap()
+            .unwrap()
+            .config_sha256
+            .is_none()
+    );
+}
+
+#[test]
+fn a_started_disconnect_cannot_use_the_unstarted_failure_escape() {
+    let (_keep, _dir, d) = private_dir();
+    let a = alloc(1).allocation;
+    let mut r = disconnect_receipt(&a, Uuid::new_v4(), Uuid::new_v4(), Stage::CleanupPending);
+    r.config_sha256 = Some("0".repeat(64));
+    receipt::write_receipt(&d, &r).unwrap();
+    r.state = Stage::Failed;
+    assert!(receipt::write_receipt(&d, &r).is_err());
+    assert!(unfinished(&d));
+}
+
+#[tokio::test]
+async fn lost_intent_acknowledgement_cannot_abort_a_started_disconnect() {
+    let (_keep, g, _dir, d) = gateway();
+    let a = alloc(1);
+    let target = Uuid::new_v4();
+    let j = Job::disconnect(
+        Uuid::new_v4(),
+        &a,
+        "session",
+        lifecycle::digest_of(&a.allocation, target),
+        target,
+        ("claude-sonnet-5-5".into(), Some("medium".into())),
+    );
+    let id = j.id;
+    let stale = j.snapshot();
+    let mut disk = stale.clone();
+    disk.config_sha256 = Some("0".repeat(64));
+    receipt::write_receipt(&d, &disk).unwrap();
+    g.claude_jobs.lock().unwrap().push(j);
+    // Even a stale finalizer cannot erase the on-disk cleanup obligation.
+    finish(&g, id, Some(Stage::Failed)).await;
+    assert_eq!(
+        receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
+        disk.config_sha256
+    );
+    assert!(unfinished(&d));
+    let report =
+        lifecycle::unpublish_recorded(&d, &owner_of(&a.allocation).unwrap(), &stale, |_| {
+            Err::<fn() -> Result<(), String>, _>("claude_connection_record_missing".into())
+        })
+        .unwrap();
+    assert_eq!(report.result.unwrap(), lifecycle::Unpub::Hold);
+    assert_eq!(report.intent, disk.config_sha256);
 }

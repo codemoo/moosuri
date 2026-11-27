@@ -40,6 +40,10 @@ use std::{
 use uuid::Uuid;
 
 type R<T> = Result<T, String>;
+/// Shared by config publication and its lifecycle classification.
+pub(crate) fn managed_socket(uid: u32) -> PathBuf {
+    PathBuf::from(format!("{}/engine.sock", unit::socket_dir(uid)))
+}
 /// Cap for hashing pinned executables (cli, engine, helper).
 const CAP: u64 = 512 << 20;
 
@@ -323,7 +327,7 @@ fn assemble(layout: Layout, request: Request, rec: &Record, lock: File) -> R<Pre
         .ok_or("claude_connection_record_conflict")?;
     let uid = evidence.runtime.service.uid;
     let endpoint = Endpoint {
-        socket: PathBuf::from(format!("{}/engine.sock", unit::socket_dir(uid))),
+        socket: managed_socket(uid),
         worker_uid: uid,
     };
     endpoint.validate()?;
@@ -841,37 +845,63 @@ fn mark_record(store: &Store, rec: &mut Record, request_id: Uuid) -> R<()> {
     }
 }
 
-/// Authorize cleanup of an Active/WorkerReady attempt after explicit disconnect.
-///
-/// AUTHORITY PRECONDITION: the caller must hold the fresh administrator
-/// authority and the installation registry lock, and must already have durably
-/// unpublished the EXACT owned connection/binding for this request with an
-/// explicit disconnect intent. This function only persists `Phase::Cleanup` in
-/// the root record (bounded local IO); it destroys nothing and runs no command.
-/// The caller then runs `retire_request` after releasing the registry lock.
-pub(crate) fn begin_retirement(owner: Owner, request_id: Uuid) -> R<()> {
+/// A checked full-owner retirement lease. Keep the root record locked while
+/// the gateway durably unpublishes its exact config; only then call `begin`.
+/// Merely preparing this lease never changes a record, worker or credential.
+pub(crate) struct Retirement {
+    store: Store,
+    record: Record,
+    _lock: File,
+}
+impl Retirement {
+    pub(crate) fn verify_worker(&self, uid: u32) -> R<()> {
+        if self.record.evidence.as_ref().map(|e| e.runtime.service.uid) == Some(uid) {
+            Ok(())
+        } else {
+            Err("claude_connection_worker_conflict".into())
+        }
+    }
+    pub(crate) fn begin(mut self) -> R<()> {
+        if matches!(
+            self.record.attempt.phase,
+            Phase::Active | Phase::WorkerReady
+        ) {
+            self.record.attempt.phase = Phase::Cleanup;
+            self.store.save(&self.record)?;
+        }
+        Ok(())
+    }
+}
+pub(crate) fn prepare_retirement(owner: Owner, request_id: Uuid) -> R<Retirement> {
     RuntimeRequest::new(request_id, owner).validate()?;
     super::require_linux_root()?;
-    begin_retirement_in(&Layout::system(), owner, request_id)
+    prepare_retirement_in(&Layout::system(), owner, request_id)
 }
-fn begin_retirement_in(layout: &Layout, owner: Owner, request_id: Uuid) -> R<()> {
+fn prepare_retirement_in(layout: &Layout, owner: Owner, request_id: Uuid) -> R<Retirement> {
     let store = Store::new(layout);
     store.ensure()?;
-    let _lock = store.lock(&owner)?;
-    let mut rec = store
+    let lock = store.lock(&owner)?;
+    let record = store
         .load(&owner)?
         .ok_or("claude_connection_record_missing")?;
-    if rec.owner != owner || rec.attempt.request_id != request_id {
+    if record.owner != owner || record.attempt.request_id != request_id {
         return Err("claude_connection_request_conflict".into());
     }
-    match rec.attempt.phase {
-        Phase::Cleanup | Phase::RemovingFiles | Phase::Retired => Ok(()),
-        Phase::Active | Phase::WorkerReady => {
-            rec.attempt.phase = Phase::Cleanup;
-            store.save(&rec)
-        }
-        _ => Err("claude_connection_phase_invalid".into()),
+    if !matches!(
+        record.attempt.phase,
+        Phase::Active | Phase::WorkerReady | Phase::Cleanup | Phase::RemovingFiles | Phase::Retired
+    ) {
+        return Err("claude_connection_phase_invalid".into());
     }
+    Ok(Retirement {
+        store,
+        record,
+        _lock: lock,
+    })
+}
+#[cfg(test)]
+fn begin_retirement_in(layout: &Layout, owner: Owner, request_id: Uuid) -> R<()> {
+    prepare_retirement_in(layout, owner, request_id)?.begin()
 }
 
 /// Recovery after gateway restart. The caller must authenticate the current

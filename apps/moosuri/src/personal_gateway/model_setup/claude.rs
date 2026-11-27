@@ -557,7 +557,7 @@ async fn finish(g: &Gateway, id: Uuid, stage: Option<Stage>) {
         persist(g, id).await;
         return;
     }
-    let Some(mut r) = with_job(g, id, |j| {
+    let Some(r) = with_job(g, id, |j| {
         let mut r = j.snapshot();
         r.state = stage.unwrap_or(j.after);
         r.updated = now();
@@ -568,9 +568,18 @@ async fn finish(g: &Gateway, id: Uuid, stage: Option<Stage>) {
     let mut durable = false;
     for attempt in 0..3 {
         let next = r.clone();
-        if receipts_io(g, move |d| receipt::write_receipt(d, &next))
-            .await
-            .is_ok()
+        if receipts_io(g, move |d| {
+            // receipts_io already holds the receipt lock.
+            if next.mode == Mode::Disconnect && next.state == Stage::Failed {
+                let old = receipt::read_receipt(d)?.ok_or(io::ErrorKind::NotFound)?;
+                if old.request_id != next.request_id || old.config_sha256.is_some() {
+                    return Err(io::ErrorKind::InvalidData.into());
+                }
+            }
+            receipt::write_receipt(d, &next)
+        })
+        .await
+        .is_ok()
         {
             durable = true;
             break;
@@ -597,8 +606,9 @@ async fn finish(g: &Gateway, id: Uuid, stage: Option<Stage>) {
         j.expires = Instant::now() + RETENTION;
     });
     if !durable {
-        r.state = Stage::CleanupPending;
-        let _ = receipts_io(g, move |d| receipt::write_receipt(d, &r)).await;
+        // Merge the durable intent just like every other delayed writer; a
+        // failed finalizer must not erase an acknowledged cleanup obligation.
+        persist(g, id).await;
     }
 }
 
@@ -1237,8 +1247,22 @@ async fn list(g: &Gateway, a: &SessionAllocation, session: &str) -> Result<Value
         Err(_) if recoverable => None,
         Err(_) => return Err(UNAVAILABLE),
     };
+    let replacement = if let (Some(owner), Some(target)) = (owner_of(&a.allocation), current) {
+        receipts(g, move |d| {
+            Ok(read(d, CONFIG_FILE)?
+                .as_deref()
+                .is_some_and(|bytes| {
+                    lifecycle::management(bytes, &owner, target)
+                        == Some(lifecycle::Management::External)
+                })
+                .then_some(target))
+        })
+        .await?
+    } else {
+        None
+    };
     Ok(json!({"supported":true,"saved":current.is_some(),
-        "connection_revision":current,"operation":operation}))
+        "connection_revision":current,"replacement_revision":replacement,"operation":operation}))
 }
 async fn start(
     g: &Gateway,

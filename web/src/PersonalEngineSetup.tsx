@@ -107,9 +107,8 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
   if (subscription && !setup.subscription_operation) return <section className="member-page-list management-engine-overview">
     <h2>Claude 연결</h2>
     <PersonalClaudeSetup account={account} disconnectRevision={subscriptionRevision ?? undefined}
-      expired={expired} unavailable={unavailable} onSaved={() => { void refresh(); }}
-      onDisconnected={afterDisconnect}/>
-    <p className="management-note">구독을 다른 연결로 바꾸려면 먼저 연결을 해제해 주세요. 해제가 끝나기 전에는 API 키 저장이나 구독 교체가 거절됩니다.</p>
+      expired={expired} unavailable={unavailable} onSaved={() => { onSaved(); void refresh(); }}
+      onDisconnected={afterDisconnect} onRefresh={() => { onSaved(); void refresh(); }}/>
   </section>;
   const form = !setup.saved || replacing;
   const claude = mode === "subscription";

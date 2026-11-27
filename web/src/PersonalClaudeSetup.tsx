@@ -5,7 +5,7 @@ import { PersonalClaudeBrowser } from "./PersonalClaudeBrowser";
 
 export type ClaudeStage = "preparing" | "awaiting_code" | "verifying" | "activating" | "ready" | "cancelled" | "failed" | "interrupted" | "cleanup_pending" | "disconnecting" | "disconnected";
 type Operation = { request_id: string; state: ClaudeStage; kind?: string; browser_available?: boolean; connection_revision?: string };
-type Reply = { operation?: Operation | null };
+type Reply = { operation?: Operation | null; replacement_revision?: string | null; connection_revision?: string | null };
 const path = "/personal/admin/engine/subscription";
 const stages: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "ready", "cancelled", "failed", "interrupted", "cleanup_pending", "disconnecting", "disconnected"];
 const active: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "cleanup_pending", "disconnecting"];
@@ -31,12 +31,13 @@ function known(value: unknown): value is Operation {
 
 /** Own-subscription Claude setup. Sign-in happens in the private browser screen
  * of the initiating session; no sign-in address or code ever reaches this page. */
-export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevision, onSaved, onDisconnected, expired, unavailable, onActive, pollMs = 1000 }: {
+export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevision, onSaved, onDisconnected, onRefresh, expired, unavailable, onActive, pollMs = 1000 }: {
   account: string; replaceRevision?: string | null; onSaved: () => void; expired: () => void; unavailable: () => void;
   /** Set while this installation's own subscription is connected: offers the explicit disconnect. */
   disconnectRevision?: string;
   /** Called once when the server reports this flow's disconnect as finished. */
   onDisconnected?: () => void;
+  onRefresh?: () => void;
   /** True while an operation is unfinished, so the parent keeps this flow mounted. */
   onActive?: (active: boolean) => void; pollMs?: number;
 }) {
@@ -45,6 +46,10 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [accepted, setAccepted] = useState(false);
+  const [replacement, setReplacement] = useState<string | null>(null);
+  const [checkedRevision, setCheckedRevision] = useState<string | null>(null);
+  const [connectionChanged, setConnectionChanged] = useState(false);
+  const connectionChecked = !!disconnectRevision && checkedRevision === disconnectRevision;
   const emailInput = useRef<HTMLInputElement>(null);
   const modelInput = useRef<HTMLInputElement>(null);
   const effortInput = useRef<HTMLSelectElement>(null);
@@ -52,8 +57,11 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   const authorityLost = useRef(false);
   const request = useRef<string>(crypto.randomUUID());
   const saved = useRef<string | null>(null);
-  const replacing = replaceRevision !== undefined;
-  const missingRevision = replacing && !replaceRevision;
+  const terminal = useRef<string | null>(null);
+  const external = connectionChecked && replacement === disconnectRevision;
+  const effectiveReplace = external ? disconnectRevision : replaceRevision;
+  const replacing = effectiveReplace !== undefined;
+  const missingRevision = replacing && !effectiveReplace;
 
   function clear() {
     setOp(null); setBusy(false); pending.current = false;
@@ -68,6 +76,10 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   function adopt(next: unknown) {
     // Only this flow's own operation counts; another request is never "ready" here.
     if (!known(next) || next.request_id !== request.current) { setError("설정 상태를 확인하지 못했습니다. 다시 확인해 주세요."); return; }
+    // A poll sent before cancel may arrive after its terminal reply. Never
+    // reopen a completed operation or announce a different late outcome.
+    if (terminal.current === next.request_id) return;
+    if (["ready", "cancelled", "failed", "disconnected"].includes(next.state)) terminal.current = next.request_id;
     setOp(next);
     if (next.state === "ready" && saved.current !== next.request_id) { saved.current = next.request_id; onSaved(); }
     if (next.state === "disconnected" && saved.current !== next.request_id) { saved.current = next.request_id; onDisconnected?.(); }
@@ -92,17 +104,36 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   async function resume(signal?: AbortSignal): Promise<boolean> {
     try {
       const reply = await scope.request<Reply>(path, "GET", undefined, signal);
+      if (signal?.aborted) return false;
+      const hint = typeof reply.replacement_revision === "string" ? reply.replacement_revision : null;
+      const observed = reply.connection_revision ?? hint;
+      const changed = !!disconnectRevision && !!observed && observed !== disconnectRevision;
+      setReplacement(changed ? null : hint);
+      setCheckedRevision(changed ? null : disconnectRevision ?? null);
+      setConnectionChanged(changed);
+      if (changed) setError("기존 연결이 먼저 변경되었습니다. 위의 새로고침으로 현재 연결을 확인해 주세요.");
       const found = reply.operation;
+      if (known(found) && terminal.current === found.request_id) return false;
       if (known(found) && (active.includes(found.state) || found.state === "interrupted")) { request.current = found.request_id; setOp(found); return true; }
-    } catch (e) { if (!(e instanceof ApiFailure && [404, 405, 501].includes(e.status))) fail(e); }
+    } catch (e) {
+      if (signal?.aborted || fail(e)) return false;
+      if (disconnectRevision) setError("기존 연결 상태를 확인하지 못했습니다. 다시 확인해 주세요.");
+    }
     return false;
   }
   useEffect(() => {
     const cancel = new AbortController();
-    request.current = crypto.randomUUID(); saved.current = null; authorityLost.current = false;
-    void resume(cancel.signal);
+    request.current = crypto.randomUUID(); saved.current = null; terminal.current = null; authorityLost.current = false;
+    setReplacement(null); setCheckedRevision(null); setConnectionChanged(false);
+    if (!disconnectRevision) void resume(cancel.signal);
     return () => { cancel.abort(); setOp(null); };
   }, [scope]);
+  useEffect(() => {
+    const cancel = new AbortController();
+    setCheckedRevision(null); setConnectionChanged(false);
+    if (disconnectRevision) void resume(cancel.signal);
+    return () => cancel.abort();
+  }, [scope, disconnectRevision]);
 
   const polling = op !== null && active.includes(op.state);
   const unfinished = polling || op?.state === "interrupted";
@@ -140,7 +171,7 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
     try {
       const reply = await scope.request<Reply>(path, "POST", {
         op: "start", request_id: id, email, model, effort, hosting_terms_accepted: true,
-        ...(replaceRevision ? { replace_revision: replaceRevision } : {}),
+        ...(effectiveReplace ? { replace_revision: effectiveReplace } : {}),
       }, undefined, { timeoutMs: 30_000 });
       adopt(reply.operation);
     } catch (e) {
@@ -172,7 +203,7 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   /** One deliberate action: a fresh operation id plus the exact connection
    * revision being removed. A lost reply is inspected by the same id, never repeated. */
   async function disconnect() {
-    if (pending.current || !disconnectRevision || op) return;
+    if (pending.current || !disconnectRevision || !connectionChecked || external || op) return;
     pending.current = true; setBusy(true); setError("");
     const id = request.current;
     try {
@@ -183,26 +214,33 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
       if (e instanceof ApiFailure && e.status === 409) {
         request.current = crypto.randomUUID();
         if (!(await resume())) setError("다른 설정이 진행 중이거나 연결이 먼저 변경되어 해제하지 못했습니다. 현재 상태를 확인한 뒤 다시 시도해 주세요.");
+      } else if (e instanceof ApiFailure && e.status === 412) {
+        setError("이 연결의 관리 기록을 확인하지 못해 해제하지 않았습니다. 기존 연결은 유지됩니다. 관리자에게 연결 복구를 요청해 주세요.");
       } else if (e instanceof ApiFailure) {
         setError("연결을 해제하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
       } else await inspect(id);
     } finally { pending.current = false; setBusy(false); }
   }
   function again() {
-    request.current = crypto.randomUUID(); saved.current = null; setError(""); setOp(null);
+    request.current = crypto.randomUUID(); saved.current = null; terminal.current = null; setError(""); setOp(null);
   }
 
   const screen = op?.state === "awaiting_code" && op.browser_available === true;
   return <div className="management-list" data-testid="claude-subscription-setup">
     {error && <p role="alert" className="preview-error">{error}</p>}
-    {!op && disconnectRevision && <div className="management-list">
+    {!op && disconnectRevision && !connectionChecked && <div>
+      {!error && <p role="status">기존 연결을 확인하고 있습니다…</p>}
+      {error && <button className="member-page-action" type="button" onClick={() => { setError(""); if (connectionChanged && onRefresh) onRefresh(); else void resume(); }}>연결 상태 다시 확인</button>}
+    </div>}
+    {!op && disconnectRevision && connectionChecked && !external && <div className="management-list">
       <p role="status">Claude 구독이 연결되어 있습니다.</p>
       <p className="management-row management-note">연결을 해제하면 이 서버에 저장된 내 Claude 로그인이 삭제됩니다. 정리가 끝나면 API 키 또는 새 구독으로 다시 연결할 수 있습니다.</p>
       <div className="management-row compatible-actions">
         <button className="member-page-action" type="button" disabled={busy} onClick={() => void disconnect()}>{busy ? "해제하는 중…" : "구독 연결 해제"}</button>
       </div>
     </div>}
-    {!op && !disconnectRevision && <form className="management-list" onSubmit={start}>
+    {!op && (!disconnectRevision || external) && <form className="management-list" onSubmit={start}>
+      {external && <p className="management-note">이전에 등록한 연결은 새 로그인이 확인될 때 교체됩니다. 이전 로그인 자체는 삭제하지 않습니다.</p>}
       <p className="management-row management-note">{replacing
         ? "내 Claude 구독으로 현재 연결을 교체합니다. 로그인이 끝나기 전에는 기존 연결이 유지됩니다."
         : "이 설치의 Claude 연결로 내 Claude 구독을 사용합니다. 같은 화면 안의 안전한 로그인 창에서 Claude에 로그인하면 자동으로 연결됩니다."}</p>
@@ -219,7 +257,7 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
       </div>
     </form>}
     {op && <>
-      <p role="status">{label[op.state]}</p>
+      <p role="status">{op.kind === "disconnect" && op.state === "failed" ? "연결 상태가 변경되어 해제하지 못했습니다. 연결과 로그인은 삭제하지 않았습니다. 현재 상태를 확인한 뒤 다시 시도해 주세요." : label[op.state]}</p>
       {op.state === "awaiting_code" && !screen && <p className="management-note">로그인을 시작한 세션에서 계속해 주세요. 이 세션에서는 로그인 화면을 볼 수 없습니다.</p>}
       {screen && <PersonalClaudeBrowser key={op.request_id} account={account} requestId={op.request_id} frameMs={pollMs}
         onOperation={adopt} onFailure={fail} onRefresh={() => void inspect(op.request_id)}/>}

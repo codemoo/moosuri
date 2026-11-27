@@ -91,12 +91,16 @@ expand M05-A/M06 without adding completed primary journeys.
 
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
-| V01 | Google connection with an empty Vault | Request Google email/password first; encrypt and save, then create fresh Kiri | Open in final portable install |
+| V01 | Google connection with an empty Vault | Request Google email/password first; encrypt and save, then create fresh Kiri | Installed candidate preflight passed; final portable provider journey open |
 | V02 | One saved Google account; unlock the Vault | Reuse it without requesting Google password again; selected identity bound to recipient | Live pass, 2026-11-27 |
-| V03 | Two saved Google accounts; choose the second | Explicit chooser; only chosen account reaches Google; no first-account fallback | Open in final portable install |
+| V03 | Two saved Google accounts; choose the second | Explicit chooser; only chosen account reaches Google; no first-account fallback | Installed candidate preflight passed; final portable provider journey open |
 | V04 | Enter a wrong Vault password, then the correct one | Remain locked after the failure; same connection continues after correct unlock | Live pass again after production c8cf8e8 transition, 2026-11-27 |
-| V05 | Use a Google email different from the Moosuri login email | Preserve member ownership while consent and read match selected Google identity | Open with real second account |
-| V06 | Cancel, log out, or switch member before/during sealed delivery | No browser release for revoked identity; stale ciphertext cannot reopen a run | Open full journey; prior synthetic boundary tests retained |
+| V05 | Use a Google email different from the Moosuri login email | Preserve member ownership while consent and read match selected Google identity | Installed distinct synthetic Google identity/save/handoff passed; real second account remains open |
+| V06 | Cancel, log out, or switch member before/during sealed delivery | No browser release for revoked identity; stale ciphertext cannot reopen a run | Installed selection cancel/logout/foreign recipient and stale replay refusal passed; full provider journey open |
+
+[Installed GV01–GV06 results and retained failures](../../../docs/reviews/2026-11-27-google-vault-preflight.md)
+cover actual Vault crypto, selection and cancellation. Live delivery is deliberately
+aborted before Google; these checks do not close final provider acceptance.
 
 ## Google login and device confirmation — 6 journeys
 

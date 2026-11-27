@@ -1500,3 +1500,15 @@ expand/pan controls. Native browser166/model-setup53/render3 and UI25 passed;
 independent21/39/17-turn official Claude reviews closed the material source
 findings. Real account/inference and a final-source empty install remain open.
 Production stays dee84754; this unit is a tested source candidate.
+
+### Installed Vault preflight — 2026-11-27
+
+GV01–GV06 passed across preserved initial and bounded resume runs: empty/one/two
+Google account selection, different identity, encrypted save, exact ciphertext
+retry, foreign-member non-disclosure and popup/logout cleanup. Wrong status
+expectations in the harness were corrected after observing real adapter behavior;
+no product auth change was necessary. Final GV05/GV06 added positive key inventory,
+unknown-challenge and explicit final cleanup controls and passed. Independent
+official Claude Sonnet5.5/medium review completed. Earlier checks' evidence limits
+and failures remain in the [unit report](../../../docs/reviews/2026-11-27-google-vault-preflight.md).
+No actual Google login/consent/inference or production change occurred.

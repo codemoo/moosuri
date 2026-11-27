@@ -62,7 +62,12 @@ def main():
                         help='Only U01/U03; do not initiate provider login preparation')
     parser.add_argument('--claude-lifecycle', action='store_true',
                         help='Disconnect a staged synthetic Active binding and reopen login; no authentication')
+    parser.add_argument('--google-vault-journeys', action='store_true',
+                        help='Installed Vault selection/cancel/isolation; stop sealed delivery before any provider login')
+    parser.add_argument('--google-vault-resume', type=Path,
+                        help='Resume GV05/GV06 from the preserved GV01-GV04 evidence; never reset the Vault')
     args = parser.parse_args()
+    assert not args.google_vault_resume or args.google_vault_journeys
     assert sys.platform == 'linux'
     os.umask(0o077)
     root = args.vm_root.resolve()
@@ -140,6 +145,11 @@ print('matched_running_revision_verified')
             browser = pw.chromium.launch(channel='chromium', headless=True,
                         proxy={'server': f'http://127.0.0.1:{proxy.server_port}'})
             try:
+                if args.google_vault_journeys:
+                    import runpy
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-google-vault.py')))
+                    module['run'](browser, args, ssh, target, members)
+                    return
                 if args.claude_lifecycle:
                     import runpy
                     module = runpy.run_path(str(Path(__file__).with_name('installed-claude-lifecycle-ui.py')))
@@ -274,6 +284,6 @@ if __name__ == '__main__':
     except Exception as error:
         frames = traceback.extract_tb(error.__traceback__)
         frame = next((frame for frame in reversed(frames)
-                      if Path(frame.filename).name in (Path(__file__).name, 'installed-invitation-journeys.py')), frames[-1])
+                      if Path(frame.filename).name in (Path(__file__).name, 'installed-invitation-journeys.py', 'installed-google-vault.py')), frames[-1])
         print(f'FAIL installed-browser: {type(error).__name__} at {Path(frame.filename).name}:{frame.lineno}', file=sys.stderr)
         raise SystemExit(1)

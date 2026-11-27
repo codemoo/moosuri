@@ -4,8 +4,10 @@
 use crate::{kiri_lifecycle, kiri_provision};
 use clap::Args;
 use fs2::FileExt;
+use moosuri_store::runtime_registry::admin::invitation_links;
 use moosuri_store::runtime_registry::{self, Allocation, InviteState};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     fs::{self, File, OpenOptions},
     io::{IsTerminal, Read, Write},
@@ -20,6 +22,12 @@ use std::{
 use uuid::Uuid;
 use zeroize::Zeroizing;
 const CAP: u64 = 64 * 1024;
+/// Request-owned secrets. Never serialize or print this value.
+pub(crate) struct WebInput {
+    pub token: Zeroizing<String>,
+    pub password: Zeroizing<String>,
+    pub password_set: AtomicBool,
+}
 #[derive(Args)]
 #[group(id = "KiriInviteOptions")]
 pub struct Options {
@@ -213,6 +221,7 @@ fn child(
     prepared: &kiri_provision::PreparedMember,
     initialize: bool,
     password: Option<&str>,
+    member_chosen_password: bool,
 ) -> Result<bool, String> {
     let mut command = Command::new(executable()?);
     command
@@ -237,6 +246,9 @@ fn child(
             &options.profile.email,
             "--password-stdin",
         ]);
+        if member_chosen_password {
+            command.arg("--member-chosen-password");
+        }
     } else {
         command.args(["initialization-status", "--email", &options.profile.email]);
     }
@@ -279,6 +291,22 @@ fn child(
             .map_err(|_| "invite_private_pipe_failed")?;
         drop(input);
     }
+    // Wait before reading the tiny status. A stuck or overproducing child must
+    // not hold the registry's revocation lock indefinitely.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        match process.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = process.kill();
+                let _ = process.wait();
+                return Err("invite_child_timeout_or_failure".into());
+            }
+        }
+    };
     let mut out = Vec::new();
     if let Some(output) = process.stdout.take() {
         output
@@ -286,7 +314,6 @@ fn child(
             .read_to_end(&mut out)
             .map_err(|_| "invite_child_status_failed")?;
     }
-    let status = process.wait().map_err(|_| "invite_child_wait_failed")?;
     if !status.success() {
         return Err("invite_private_initialization_unavailable".into());
     }
@@ -370,6 +397,14 @@ pub(crate) async fn run_with_terminal(
     options: &Options,
     allow_terminal: bool,
 ) -> Result<(), String> {
+    run_with_input(options, allow_terminal, None).await
+}
+
+pub(crate) async fn run_with_input(
+    options: &Options,
+    allow_terminal: bool,
+    web: Option<&WebInput>,
+) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !options.profile.experimental
         || unsafe { libc::geteuid() } != 0
@@ -395,6 +430,20 @@ pub(crate) async fn run_with_terminal(
     .map_err(|_| "invite_reservation_conflict")?;
     planned_invitation(options)?;
     check_record(options, &a)?;
+    if let Some(web) = web {
+        let link = invitation_links::inspect(&options.profile.registry_directory, &web.token)
+            .map_err(|_| "invite_link_unavailable")?;
+        let i = link.invitation;
+        if i.request_id != options.request_id
+            || i.account_id != a.account_id
+            || i.tenant_id != a.tenant_id
+            || i.volume_id != a.volume_id
+            || i.generation != a.generation
+            || i.email != options.profile.email
+        {
+            return Err("invite_link_identity_changed".into());
+        }
+    }
     let initial = not_fenced(options, &a)?;
     save(options, &a, "reserved")?;
     let prepared = match kiri_provision::prepare_member(&options.profile).await {
@@ -436,7 +485,7 @@ pub(crate) async fn run_with_terminal(
             );
         }
     } else {
-        let initialized = match child(options, &a, &prepared, false, None) {
+        let initialized = match child(options, &a, &prepared, false, None, false) {
             Ok(value) => value,
             Err(_) => {
                 return emit(
@@ -448,14 +497,51 @@ pub(crate) async fn run_with_terminal(
             }
         };
         if !initialized {
-            let Some(secret) = password(options, allow_terminal)? else {
+            if web.is_none()
+                && invitation_links::requires_link(
+                    &options.profile.registry_directory,
+                    options.request_id,
+                )
+                .map_err(|_| "invite_link_unavailable")?
+            {
+                return emit(options, &a, "password_required", None);
+            }
+            let secret = if let Some(web) = web {
+                Some(Zeroizing::new(web.password.to_string()))
+            } else {
+                password(options, allow_terminal)?
+            };
+            let Some(secret) = secret else {
                 return emit(options, &a, "password_required", None);
             };
             not_fenced(options, &a)?;
             save(options, &a, "initializing")?;
-            child(options, &a, &prepared, true, Some(&secret))?;
+            if let Some(web) = web {
+                invitation_links::with_pending(
+                    &options.profile.registry_directory,
+                    &web.token,
+                    &a,
+                    || {
+                        // Status was checked outside the registry lock. The
+                        // private transaction remains the one-time guard if an
+                        // independent owner initializer raced that check.
+                        child(options, &a, &prepared, true, Some(&secret), true)?;
+                        web.password_set.store(true, Ordering::Relaxed);
+                        Ok::<(), String>(())
+                    },
+                )
+                .map_err(|_| "invite_link_unavailable")??;
+            } else {
+                invitation_links::with_unlinked(
+                    &options.profile.registry_directory,
+                    options.request_id,
+                    &a,
+                    || child(options, &a, &prepared, true, Some(&secret), false),
+                )
+                .map_err(|_| "invite_link_required_or_allocation_changed")??;
+            }
             drop(secret);
-            if !child(options, &a, &prepared, false, None)? {
+            if !child(options, &a, &prepared, false, None, false)? {
                 return Err("invite_initialization_not_verified".into());
             }
         }
@@ -473,12 +559,22 @@ pub(crate) async fn run_with_terminal(
             );
         }
     }
-    runtime_registry::activate_invitation(
-        &options.profile.registry_directory,
-        options.request_id,
-        &a,
-    )
-    .map_err(|_| "invite_activation_fenced_or_changed")?;
+    if let Some(web) = web {
+        invitation_links::activate(&options.profile.registry_directory, &web.token, &a)
+            .map_err(|_| "invite_link_unavailable")?;
+    } else {
+        if invitation_links::requires_link(&options.profile.registry_directory, options.request_id)
+            .map_err(|_| "invite_link_unavailable")?
+        {
+            return emit(options, &a, "web_confirmation_required", None);
+        }
+        runtime_registry::activate_invitation(
+            &options.profile.registry_directory,
+            options.request_id,
+            &a,
+        )
+        .map_err(|_| "invite_activation_fenced_or_changed")?;
+    }
     emit(options, &a, "ready", None)
 }
 

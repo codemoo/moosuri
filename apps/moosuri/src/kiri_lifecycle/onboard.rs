@@ -197,9 +197,19 @@ pub async fn run(o: &Options) -> Result<(), String> {
 
 pub(super) async fn run_locked(
     o: &Options,
+    config: Config,
+    root: PathBuf,
+    allow_terminal: bool,
+) -> Result<(), String> {
+    run_locked_with_input(o, config, root, allow_terminal, None).await
+}
+
+pub(super) async fn run_locked_with_input(
+    o: &Options,
     mut config: Config,
     root: PathBuf,
     allow_terminal: bool,
+    web: Option<&kiri_invite::WebInput>,
 ) -> Result<(), String> {
     if let (Some(name), Some(email)) = (&o.first_name, &o.first_email) {
         admin::reserve_first_invitation(
@@ -287,7 +297,7 @@ pub(super) async fn run_locked(
         .await
         .map_err(|_| reason)??;
     }
-    kiri_invite::run_with_terminal(
+    kiri_invite::run_with_input(
         &kiri_invite::Options {
             request_id: o.request_id,
             name: invite.name,
@@ -296,6 +306,7 @@ pub(super) async fn run_locked(
             profile,
         },
         allow_terminal,
+        web,
     )
     .await
 }

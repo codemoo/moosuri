@@ -64,11 +64,12 @@ it("binds a management change to the displayed revision and reuses the request a
   });
 });
 
-it("recovers a lost invitation across remount, copies the host command, and restores the accepted receipt", async () => {
+it("recovers a lost invitation across remount, copies a private invitation link, and restores the accepted receipt", async () => {
   const requests: any[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, init: RequestInit) => {
+      if (path.endsWith("/invitations/link")) return Response.json({ url: "https://assistant.example.test/join#" + ("X".repeat(42) + "A"), expires_at: 1900000000 });
       if (path.endsWith("/invitations")) {
         const r = JSON.parse(String(init.body));
         requests.push(r);
@@ -99,14 +100,14 @@ it("recovers a lost invitation across remount, copies the host command, and rest
   );
   const receipt = await screen.findByRole("region", { name: "최근 초대" });
   expect(within(receipt).getByRole("status")).toHaveTextContent("guest@example.test 초대 요청을 등록했습니다.");
-  await user.click(screen.getByRole("button", { name: "요청 번호 복사" }));
-  expect(await navigator.clipboard.readText()).toBe(requests[0].request_id);
-  await user.click(within(receipt).getByText("설치 서버에서 계정 준비하기"));
-  await user.click(within(receipt).getByRole("button", { name: "계정 준비 명령 복사" }));
-  expect(await navigator.clipboard.readText()).toContain(`--request-id ${requests[0].request_id} --uid "\${MEMBER_UID:?}"`);
+  await user.click(within(receipt).getByRole("button", { name: "초대 링크 만들기" }));
+  await user.click(await within(receipt).findByRole("button", { name: "초대 링크 복사" }));
+  expect(await navigator.clipboard.readText()).toBe("https://assistant.example.test/join#" + ("X".repeat(42) + "A"));
+  expect(sessionStorage.getItem("moosuri.personal.admin-operation.v1") ?? "").not.toContain(("X".repeat(42) + "A"));
   page.unmount();
   mount();
-  expect(await screen.findByRole("region", { name: "최근 초대" })).toHaveTextContent(requests[0].request_id);
+  expect(await screen.findByRole("region", { name: "최근 초대" })).toHaveTextContent("guest@example.test");
+  expect(screen.queryByRole("textbox", {name:"초대 링크"})).not.toBeInTheDocument();
   expect(requests).toHaveLength(2);
   expect(requests[0]).toEqual(requests[1]);
   expect(Object.keys(requests[0]).sort()).toEqual([
@@ -141,7 +142,7 @@ it("protects the last available administrator and refreshes controls when anothe
   expect(actorRow.getByRole("button", { name: "계정 정지" })).toBeEnabled();
 });
 
-it("searches and filters the roster and keeps the server request ID available after an invitation", async () => {
+it("searches and filters the roster and keeps the invitation link action available after filtering", async () => {
   const baseline = { generation: 1, revision: 1, admin: false, eligible: true, ready: true, suspended: false };
   const requestId = "8bd0a15f-461b-43a2-abdc-1954e7bd38ae";
   const fetcher = vi.fn(async () => Response.json({ members: [
@@ -162,8 +163,7 @@ it("searches and filters the roster and keeps the server request ID available af
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(screen.getByText("손님")).toBeInTheDocument();
   await user.click(screen.getByText("초대 확인"));
-  await user.click(screen.getByRole("button", { name: "요청 번호 복사" }));
-  expect(await navigator.clipboard.readText()).toBe(requestId);
+  expect(screen.getByRole("button", { name: "초대 링크 만들기" })).toBeEnabled();
   await user.type(search, "UNKNOWN");
   expect(screen.getByText("조건에 맞는 회원이 없습니다.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "검색과 필터 초기화" }));

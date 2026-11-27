@@ -124,6 +124,9 @@ enum PersonalOperation {
         /// Accept one newline-terminated temporary password on private standard input.
         #[arg(long)]
         password_stdin: bool,
+        /// The invitation capability was checked by the host; password was chosen by its member.
+        #[arg(long, requires = "password_stdin")]
+        member_chosen_password: bool,
     },
     /// Check the owner, generation and persisted account before accepting traffic.
     Verify,
@@ -282,6 +285,7 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
             name,
             email,
             password_stdin,
+            member_chosen_password,
         } => {
             let password = if *password_stdin {
                 use std::io::Read;
@@ -300,9 +304,20 @@ pub async fn personal(options: &PersonalOptions) -> Result<(), String> {
                 rpassword::prompt_password("Temporary password / 임시 비밀번호: ")
                     .map_err(|_| "password_input_unavailable")?
             };
-            owner
-                .initialize(&options.root, name.clone(), email.clone(), password)
-                .await
+            if *member_chosen_password {
+                owner
+                    .initialize_member_password(
+                        &options.root,
+                        name.clone(),
+                        email.clone(),
+                        password,
+                    )
+                    .await
+            } else {
+                owner
+                    .initialize(&options.root, name.clone(), email.clone(), password)
+                    .await
+            }
         }
         PersonalOperation::Verify => owner.open_verified(&options.root).await.map(drop),
     }
@@ -358,14 +373,12 @@ async fn serve_member(
         .map_err(|_| "invalid_ipc_root")?
         .uid();
     let extensions = match vault_origin {
-        Some(origin) => extensions.merge(
-            moosuri_server::personal_tasks::member_vault::routes(
-                store.clone(),
-                owner,
-                origin,
-                gateway_uid,
-            )?,
-        ),
+        Some(origin) => extensions.merge(moosuri_server::personal_tasks::member_vault::routes(
+            store.clone(),
+            owner,
+            origin,
+            gateway_uid,
+        )?),
         None => extensions,
     };
     let extensions = extensions.merge(moosuri_server::personal_tasks::timer_routes_with_readers(

@@ -1513,7 +1513,7 @@ mod tests {
             c.query_row("PRAGMA user_version", [], |row| row.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         // Neither command may be sent blind, and the old bit is not aliased to one of them.
         assert_eq!(
             command_state(r, &s, run, Command::Audience).unwrap(),

@@ -519,9 +519,9 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            11
+            12
         );
-        c.execute_batch("PRAGMA user_version=12").unwrap();
+        c.execute_batch("PRAGMA user_version=13").unwrap();
     }
     assert!(lookup(r, "a@example.test".into()).is_err());
 }

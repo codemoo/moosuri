@@ -26,7 +26,6 @@ const memberFilters: { value: MemberFilter; label: string }[] = [
   { value: "suspended", label: "정지" },
   { value: "admin", label: "관리자" },
 ];
-const memberGuide = "https://github.com/codemoo/moosuri/blob/main/deployment/kiri/admin.md#초대받은-회원의-공간-준비";
 const actions: Record<Change, { label: string; question: string; detail: string; result: string }> = {
   promote: {
     label: "관리자로 지정",
@@ -95,6 +94,17 @@ export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup,
   const [name, setName] = useState(initialInvite?.name ?? "");
   const [email, setEmail] = useState(initialInvite?.email ?? "");
   const [receipt, setReceipt] = useState<InvitationReceipt | null>(restored?.kind === "receipt" ? restored.receipt : null);
+  const [links, setLinks] = useState<Record<string, { url: string; expires_at: number }>>({});
+  const linkRequests = useRef(new Set<string>());
+  async function createLink(id: string) {
+    if (linkRequests.current.has(id)) return;
+    linkRequests.current.add(id);
+    setLinks(prior => { const next = { ...prior }; delete next[id]; return next; });
+    try {
+      const result = await scope.request<{ url: string; expires_at: number }>(adminBase + "/invitations/link", "POST", { request_id: id });
+      setLinks(prior => ({ ...prior, [id]: result }));
+    } finally { linkRequests.current.delete(id); }
+  }
   const [inviteId, setInviteId] = useState<string | null>(initialInvite?.request_id ?? null);
 
   useEffect(() => {
@@ -195,6 +205,7 @@ export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup,
     setError("");
     setNotice("");
     setReceipt(null);
+    setLinks({});
     remember({ kind: "change", change: p });
     setPending(p);
     try {
@@ -273,7 +284,7 @@ export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup,
       )}
       <section id="member-invite" className="member-page-list management-invitation" aria-labelledby="member-invite-title" hidden={!inviteOpen}>
         <h2 id="member-invite-title">초대 요청</h2>
-        <p className="management-note" id="member-invite-help">요청을 등록하면 설치 서버에서 계정을 준비할 때 쓸 요청 번호를 받습니다.</p>
+        <p className="management-note" id="member-invite-help">초대 링크를 전달하면 회원이 직접 비밀번호를 정하고 가입할 수 있습니다.</p>
         <form className="management-invite-form" aria-labelledby="member-invite-title" aria-describedby="member-invite-help"
           onSubmit={e => { e.preventDefault(); void invite(); }}>
           <div className="management-form-fields">
@@ -305,12 +316,12 @@ export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup,
             <p role="status"><strong>{receipt.email}</strong> 초대 요청을 등록했습니다.</p>
             <button type="button" className="member-page-action" onClick={() => { clearAdminRecovery(); setReceipt(null); }}>접수 내역 닫기</button>
           </div>
-          {receiptMember?.ready ? (
+          {receiptMember?.ready || receiptMember?.suspended ? (
             <p className="management-note">{receiptMember.suspended ? "계정이 정지되어 있습니다." : "계정이 준비되었습니다."}</p>
           ) : (
             <>
-              <p className="management-note">계정 준비 후 임시 비밀번호를 회원에게 직접 전달하세요. 회원이 처음 로그인하면 비밀번호를 변경합니다.</p>
-              <RequestNumber key={receipt.request_id} id={receipt.request_id} />
+              <p className="management-note">초대 링크를 회원에게 직접 전달하세요. 회원이 자신의 비밀번호를 정해 가입합니다.</p>
+              <InvitationLink key={receipt.request_id} id={receipt.request_id} link={links[receipt.request_id]} create={createLink} failed={e => fail(e, "초대 링크를 만들지 못했습니다. 다시 시도해 주세요.")} />
             </>
           )}
         </section>
@@ -368,9 +379,9 @@ export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup,
                       <summary aria-label={`${m.email} ${m.ready || m.suspended ? "계정 관리" : "초대 확인"}`}>
                         {m.ready || m.suspended ? "계정 관리" : "초대 확인"}
                       </summary>
-                      {m.invitation_request_id && !m.ready && (
+                      {m.invitation_request_id && !m.ready && !m.suspended && (
                         <>
-                          <RequestNumber key={m.invitation_request_id} id={m.invitation_request_id} />
+                          <InvitationLink key={m.invitation_request_id} id={m.invitation_request_id} link={links[m.invitation_request_id]} create={createLink} failed={e => fail(e, "초대 링크를 만들지 못했습니다. 다시 시도해 주세요.")} />
                         </>
                       )}
                       {m.ready && !m.suspended && !m.eligible && !m.admin && (
@@ -381,9 +392,9 @@ export default function PersonalAdmin({ account, recoveryScope, openGoogleSetup,
                           onClick={event => setConfirm({ member: m, action: "resume", trigger: event.currentTarget })}>
                           {actions.resume.label}
                         </button>
-                      ) : m.ready && (
+                      ) : (m.ready || m.invitation_request_id) && (
                         <div className="management-person-actions">
-                          {(m.admin || m.eligible) && (
+                          {m.ready && (m.admin || m.eligible) && (
                             <button className="member-page-action" disabled={controlsDisabled || lastAdmin}
                               onClick={event => setConfirm({ member: m, action: roleChange, trigger: event.currentTarget })}>
                               {actions[roleChange].label}
@@ -451,30 +462,30 @@ function MemberChangeDialog({ member, action, trigger, onCancel, onConfirm }: {
   );
 }
 
-function RequestNumber({ id }: { id: string }) {
+function InvitationLink({ id, link, create, failed }: {
+  id: string; link?: { url: string; expires_at: number };
+  create: (id: string) => Promise<void>; failed: (error: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const command = `sudo /usr/local/bin/moosuri kiri-onboard --experimental --config /etc/moosuri/kiri-members.json --request-id ${id} --uid "\${MEMBER_UID:?}" --operations-root /var/lib/moosuri-control/invitations`;
-  async function copy(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setMessage(`${label} 복사했습니다.`);
-    } catch {
-      setMessage(`${label} 선택해 직접 복사해 주세요.`);
-    }
+  const lock = useRef(false);
+  async function issue() {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setMessage("");
+    try { await create(id); } catch (e) { failed(e); }
+    finally { lock.current = false; setBusy(false); }
   }
-  return (
-    <div className="management-request">
-      <span className="management-note">서버에서 사용할 요청 번호</span>
-      <code>{id}</code>
-      <button className="member-page-action" type="button" onClick={() => void copy(id, "요청 번호를")}>요청 번호 복사</button>
-      {/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) && <details>
-        <summary>설치 서버에서 계정 준비하기</summary>
-        <p>서버의 사용하지 않는 UID를 <code>MEMBER_UID</code>에 지정하고 설치 경로를 확인하세요. 모델 바인딩을 준비했다면 <code>--enable-text-preview</code>, Google 릴레이를 준비했다면 <code>--enable-local-gws</code>를 추가하세요. 재시도할 때는 첫 실행의 UID와 옵션을 그대로 쓰세요.</p>
-        <p><code>{command}</code></p>
-        <button type="button" className="member-page-action" onClick={() => void copy(command, "계정 준비 명령을")}>계정 준비 명령 복사</button>
-        <a href={memberGuide} target="_blank" rel="noreferrer">서버 경로와 바인딩 옵션 확인</a>
-      </details>}
-      {message && <p role="status" className="management-note">{message}</p>}
-    </div>
-  );
+  async function copy() {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(link.url); setMessage("초대 링크를 복사했습니다. 초대할 회원에게 전달해 주세요."); }
+    catch { setMessage("초대 링크를 선택해 직접 복사해 주세요."); }
+  }
+  return <div className="management-request">
+    <p className="management-note">링크는 24시간 동안 한 회원의 가입에만 사용할 수 있습니다. 새 링크를 만들면 이전 링크는 사용할 수 없습니다.</p>
+    <button className="member-page-action" type="button" disabled={busy} onClick={() => void issue()}>{busy ? "만드는 중…" : link ? "새 초대 링크 만들기" : "초대 링크 만들기"}</button>
+    {link && <><label>초대 링크<input type="text" readOnly value={link.url} onFocus={e => e.target.select()} /></label>
+      <button className="member-page-action" type="button" onClick={() => void copy()}>초대 링크 복사</button>
+      <p className="management-note">만료: {new Date(link.expires_at * 1000).toLocaleString()}</p></>}
+    {message && <p role="status" className="management-note">{message}</p>}
+  </div>;
 }

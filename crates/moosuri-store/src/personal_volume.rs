@@ -132,6 +132,31 @@ impl VolumeOwner {
         email: String,
         temporary_password: String,
     ) -> Result<()> {
+        self.initialize_password(root, name, email, temporary_password, true)
+            .await
+    }
+
+    /// Only the capability-checked invitation flow supplies a member-chosen
+    /// password. The same atomic one-time initialization guard applies.
+    pub async fn initialize_member_password(
+        self,
+        root: &Path,
+        name: String,
+        email: String,
+        password: String,
+    ) -> Result<()> {
+        self.initialize_password(root, name, email, password, false)
+            .await
+    }
+
+    async fn initialize_password(
+        self,
+        root: &Path,
+        name: String,
+        email: String,
+        temporary_password: String,
+        must_change_password: bool,
+    ) -> Result<()> {
         let password = Zeroizing::new(temporary_password);
         let name = name_valid(name, 200)?;
         let email = email_valid(email)?;
@@ -154,7 +179,7 @@ impl VolumeOwner {
                         email,
                         hash,
                         Role::Member,
-                        true,
+                        must_change_password,
                     )?;
                 } else {
                     self.check_identity(&tx, Some(&email))?;
@@ -193,6 +218,51 @@ impl VolumeOwner {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    #[tokio::test]
+    async fn member_chosen_password_needs_no_change_and_replay_cannot_replace_it() {
+        let _guard = crate::tests::TEST_LOCK.lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let owner = VolumeOwner {
+            account: Uuid::new_v4(),
+            tenant: Uuid::new_v4(),
+            volume: Uuid::new_v4(),
+            generation: 1,
+        };
+        owner
+            .initialize_member_password(
+                &root,
+                "Invited".into(),
+                "guest@example.test".into(),
+                "chosen42".into(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            owner
+                .initialize_member_password(
+                    &root,
+                    "Invited".into(),
+                    "guest@example.test".into(),
+                    "replacement42".into()
+                )
+                .await,
+            Err(StoreError::AlreadyInitialized)
+        ));
+        let store = owner.open_verified(&root).await.unwrap();
+        assert!(
+            store
+                .login("guest@example.test".into(), "replacement42".into())
+                .await
+                .is_err()
+        );
+        let login = store
+            .login("guest@example.test".into(), "chosen42".into())
+            .await
+            .unwrap();
+        assert!(!login.user.password_change_required());
+    }
     #[tokio::test]
     async fn session_survives_restart_only_on_its_owner_volume() {
         let _guard = crate::tests::TEST_LOCK.lock().await;

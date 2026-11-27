@@ -113,7 +113,7 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
     }
     let id: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if id != APP_ID || !(1..=11).contains(&version) {
+    if id != APP_ID || !(1..=12).contains(&version) {
         return Err(StoreError::InvalidInput);
     }
     if version == 1 {
@@ -189,6 +189,13 @@ fn open(root: &Path, create: bool) -> Result<(fs::File, Connection)> {
         ))?;
         tx.commit()?;
     }
+    if version <= 11 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!(
+            "../../../migrations/installation_registry/0012_invitation_links.sql"
+        ))?;
+        tx.commit()?;
+    }
     Ok((directory, db))
 }
 fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<Allocation> {
@@ -261,7 +268,7 @@ pub fn invitation_state(
 /// Invite completion cannot revive a fenced route or adopt another request.
 pub fn activate_invitation(root: &Path, request: Uuid, allocation: &Allocation) -> Result<()> {
     let (_directory, db) = open(root, false)?;
-    let changed=db.execute("UPDATE allocations SET route_state='ready' WHERE request_id=?1 AND account_id=?2 AND tenant_id=?3 AND volume_id=?4 AND generation=?5 AND route_state='reserved' AND NOT EXISTS(SELECT 1 FROM installation_members m WHERE m.account_id=allocations.account_id AND m.tenant_id=allocations.tenant_id AND m.volume_id=allocations.volume_id AND m.generation=allocations.generation AND m.suspended=1)",params![request.to_string(),allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation])?;
+    let changed=db.execute("UPDATE allocations SET route_state='ready' WHERE request_id=?1 AND account_id=?2 AND tenant_id=?3 AND volume_id=?4 AND generation=?5 AND route_state='reserved' AND NOT EXISTS(SELECT 1 FROM installation_invitation_links l WHERE l.request_id=allocations.request_id) AND NOT EXISTS(SELECT 1 FROM installation_members m WHERE m.account_id=allocations.account_id AND m.tenant_id=allocations.tenant_id AND m.volume_id=allocations.volume_id AND m.generation=allocations.generation AND m.suspended=1)",params![request.to_string(),allocation.account_id,allocation.tenant_id,allocation.volume_id,allocation.generation])?;
     if changed != 1 {
         return Err(StoreError::Conflict);
     }

@@ -251,6 +251,7 @@ async fn handle(
     registry: &Path,
     request_id: Uuid,
     finish: bool,
+    web: Option<&crate::kiri_invite::WebInput>,
 ) -> Result<(), String> {
     let (config, root) = onboard::context(&o.config, &o.operations_root)?;
     if config.registry_directory != registry {
@@ -321,7 +322,7 @@ async fn handle(
         enable_local_gws: false,
         password_stdin: finish && o.password_stdin,
     };
-    onboard::run_locked(&opts, config, root, finish).await
+    onboard::run_locked_with_input(&opts, config, root, finish && web.is_none(), web).await
 }
 
 pub async fn run(o: &Options) -> Result<(), String> {
@@ -333,14 +334,23 @@ pub async fn run(o: &Options) -> Result<(), String> {
     policy.validate(&config)?;
     let _lock = lock(&o.operations_root)?;
     if let Some(request) = o.finish_request {
-        return handle(o, &policy, &config.registry_directory, request, true).await;
+        return handle(o, &policy, &config.registry_directory, request, true, None).await;
     }
     let after = queue(&o.operations_root)?.after;
     let page = admin::pending_web_invitations(&config.registry_directory, after)
         .map_err(|_| "onboard_worker_registry_unavailable")?;
     let mut failed = false;
     for (_, request) in &page {
-        if let Err(reason) = handle(o, &policy, &config.registry_directory, *request, false).await {
+        if let Err(reason) = handle(
+            o,
+            &policy,
+            &config.registry_directory,
+            *request,
+            false,
+            None,
+        )
+        .await
+        {
             eprintln!("request_id={request} stage=blocked reason={reason}");
             failed = true;
         }
@@ -354,6 +364,83 @@ pub async fn run(o: &Options) -> Result<(), String> {
     if failed {
         Err("onboard_worker_incomplete_requests".into())
     } else {
+        Ok(())
+    }
+}
+
+/// Explicit installation profile; never accepted from an HTTP request.
+#[derive(Clone)]
+pub(crate) struct WebEnrollment {
+    pub config: PathBuf,
+    pub policy: PathBuf,
+    pub operations_root: PathBuf,
+}
+impl WebEnrollment {
+    pub(crate) fn validate(&self, registry: &Path, origin: &str) -> Result<(), String> {
+        if !cfg!(target_os = "linux") || unsafe { libc::geteuid() } != 0 {
+            return Err("onboard_worker_root_linux_only".into());
+        }
+        let (config, _) = onboard::context(&self.config, &self.operations_root)?;
+        if config.registry_directory != registry || config.public_origin.as_deref() != Some(origin)
+        {
+            return Err("onboard_web_installation_mismatch".into());
+        }
+        let policy: Policy = read_json(&self.policy)?;
+        policy.validate(&config)
+    }
+    /// Timer prepares resources; web only finishes its already pinned claim.
+    /// Password remains in request memory and the dedicated UID child's pipe.
+    pub(crate) async fn redeem(
+        &self,
+        registry: &Path,
+        origin: &str,
+        input: &crate::kiri_invite::WebInput,
+    ) -> Result<(), String> {
+        use admin::invitation_links;
+        self.validate(registry, origin)?;
+        let _lock = lock(&self.operations_root)?;
+        let link = invitation_links::inspect(registry, &input.token)
+            .map_err(|_| "invite_link_unavailable")?;
+        if link.ready {
+            return Ok(());
+        }
+        let request = link.invitation.request_id;
+        let q = queue(&self.operations_root)?;
+        if !q.claims.contains_key(&request) {
+            return Err("onboard_web_preparing".into());
+        }
+        let stage: serde_json::Value =
+            read_json(&self.operations_root.join(format!("{request}.json")))
+                .map_err(|_| "onboard_web_preparing")?;
+        if !matches!(
+            stage["stage"].as_str(),
+            Some(
+                "password_required"
+                    | "initializing"
+                    | "initialized"
+                    | "service_waiting"
+                    | "web_confirmation_required"
+                    | "ready"
+            )
+        ) {
+            return Err("onboard_web_preparing".into());
+        }
+        let policy: Policy = read_json(&self.policy)?;
+        let opts = Options {
+            experimental: true,
+            config: self.config.clone(),
+            policy: self.policy.clone(),
+            operations_root: self.operations_root.clone(),
+            finish_request: Some(request),
+            password_stdin: false,
+        };
+        handle(&opts, &policy, registry, request, true, Some(input)).await?;
+        if !invitation_links::inspect(registry, &input.token)
+            .map_err(|_| "invite_link_unavailable")?
+            .ready
+        {
+            return Err("onboard_web_preparing".into());
+        }
         Ok(())
     }
 }

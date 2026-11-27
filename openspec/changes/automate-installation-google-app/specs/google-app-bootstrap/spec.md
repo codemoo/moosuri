@@ -229,3 +229,29 @@ key and decrypted password SHALL stay inside that capsule.
 #### Scenario: The provider returns to the callback
 - **WHEN** the page contains a denial or a mismatched callback state
 - **THEN** the worker does not report return success; only the gateway's actual callback processing can grant a connection
+
+
+### Requirement: Invited members complete admission on the web
+A later member SHALL choose their account password through a private expiring
+invitation link, using the existing pinned host onboarding claim. Root CLI and
+developer credentials SHALL NOT be prerequisites for ordinary joining.
+
+#### Scenario: A member opens a current invitation
+- **WHEN** a current administrator creates a link for a reserved web invitation
+- **THEN** the invitee can choose a password and sign in without another password change, while their Vault and data remain separate
+
+#### Scenario: An invitation expires or loses authority
+- **WHEN** its token is rotated/expired, issuer role changes, or invitee is suspended/replaced
+- **THEN** initialization and activation are refused; a fresh authorized reissue can resume the same eligible reservation
+
+#### Scenario: A password save reply is lost
+- **WHEN** the member checks status or retries after initialization or restart
+- **THEN** the existing password cannot be overwritten and ready status does not claim a replacement was applied
+
+#### Scenario: The preparation timer resumes
+- **WHEN** a link-issued invitation is incomplete or expired
+- **THEN** the timer may prepare resources but cannot initialize or activate through its legacy operator authority
+
+#### Scenario: A link page reloads or a foreign origin submits
+- **WHEN** joining is reentered or attempted cross-origin
+- **THEN** neither password nor capability is recovered from browser storage, and only exact-origin bounded private requests may admit a valid link

@@ -61,7 +61,7 @@ def request(host, path, method='GET', body=None, jar=None, account=None, form=Fa
         headers['Content-Type'] = 'application/x-www-form-urlencoded' if form else 'application/json'
         body = body if form else json.dumps(body)
     tls = ssl.create_default_context(cafile='/root/moosuri-install-tls/cert.pem')
-    c = LocalTLS(host, context=tls, timeout=20)
+    c = LocalTLS(host, context=tls, timeout=90 if path.endswith('/invitations/redeem') else 20)
     try:
         c.request(method, path, body=body, headers=headers)
         response = c.getresponse()
@@ -208,18 +208,24 @@ def main(bundle):
     code, response = app('personal/admin/invitations', 'POST',
         {'request_id': invitation, 'name': 'Second Install Tester', 'email': 'second-install@example.com'}, jar, account)
     assert code == 200 and response['request_id'] == invitation
+    code, issued = app('personal/admin/invitations/link', 'POST',
+                       {'request_id': invitation}, jar, account)
+    assert code == 200 and issued['url'].startswith(ORIGIN+'/join#')
+    token = issued['url'].split('#')[1]
+    assert len(token) == 43
     record = CONTROL / 'invitations' / (invitation + '.json')
     until(lambda: record.exists() and json.loads(record.read_text())['stage'] == 'password_required', 155)
     second_password = secrets.token_urlsafe(24)
-    result = run([BIN, 'kiri-onboard-worker', '--experimental', '--config', ETC / 'kiri-members.json',
-        '--policy', ETC / 'kiri-onboard-policy.json', '--operations-root', CONTROL / 'invitations',
-        '--finish-request', invitation, '--password-stdin'], second_password + '\n', 180)
-    assert result.returncode == 0 and json.loads(result.stdout)['ready']
+    code, joined = app('personal/invitations/redeem', 'POST',
+                       {'token': token, 'password': second_password})
+    assert code == 200 and joined == {'ready': True, 'password_set': True}
     second, jar2 = login('second-install@example.com', second_password)
     account2 = second['user']['id']
-    assert second['password_change_required'] and account2 != account
+    assert not second['password_change_required'] and not second['user']['must_change_password'] and account2 != account
     replacement = secrets.token_urlsafe(24)
-    assert app('auth/password', 'POST', {'password': replacement}, jar2, account2)[0] == 200
+    code, replay = app('personal/invitations/redeem', 'POST', {'token': token, 'password': replacement})
+    assert code == 200 and replay['ready'] and not replay['password_set']
+    assert app('auth/login', 'POST', {'email': 'second-install@example.com', 'password': replacement})[0] == 401
     second_vault = vault_session(jar2, account2)
     enrolled = json.loads((CONTROL / 'enrolled/members.json').read_text())['members']
     assert len(enrolled) == 2 and len({m['uid'] for m in enrolled}) == 2
@@ -236,7 +242,7 @@ def main(bundle):
     }, jar2, account2)[0] == 403
     assert app('personal/admin/engine/setup', jar=jar, account=account)[1] == {'supported': True, 'saved': False}
     assert not (CONTROL / 'model-setup/runtime-model.json').exists()
-    passed('CI-05 installed invitation timer, independent member UID and GWS; second member is not admin')
+    passed('CI-05 installed timer and web invitation API completion without CLI password; independent UID/GWS, member role and replay fence')
     passed('I02/M01 model service starts unconfigured; only administrator can open setup; member writes denied')
 
     sessions = [(jar, account, first_vault), (jar2, account2, second_vault)]
@@ -245,7 +251,7 @@ def main(bundle):
     journal = run(['journalctl', '--no-pager', '-u', 'moosuri-*'], timeout=30).stdout
     argv = run(['ps', '-eo', 'args']).stdout
     metadata = b'\n'.join(p.read_bytes() for p in ETC.glob('*.json'))
-    for secret in (password, second_password, replacement):
+    for secret in (password, second_password, replacement, token):
         assert secret not in journal and secret not in argv and secret.encode() not in metadata
     for name in ('browser', 'google-browser'):
         cfg = json.loads((ETC / (name + '.json')).read_text())
@@ -259,7 +265,7 @@ def main(bundle):
         'files': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in before},
         'members': [
             {'email': receipt['admin_email'], 'password': password, 'account': account, 'admin_status': 200},
-            {'email': 'second-install@example.com', 'password': replacement, 'account': account2, 'admin_status': 403},
+            {'email': 'second-install@example.com', 'password': second_password, 'account': account2, 'admin_status': 403},
         ],
     }
     fd = os.open(REBOOT_STATE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

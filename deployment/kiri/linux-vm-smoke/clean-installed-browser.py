@@ -53,6 +53,9 @@ def main():
                         help='Check failed model setup via UI; one invalid-key catalog call, no inference')
     parser.add_argument('--matched-rollout-dir', type=Path)
     parser.add_argument('--expected-revision')
+    parser.add_argument('--invitation-journeys', action='store_true',
+                        help='Run actual web joining/recovery branches on this synthetic installation')
+    parser.add_argument('--post-invitation-reboot', action='store_true')
     args = parser.parse_args()
     assert sys.platform == 'linux'
     os.umask(0o077)
@@ -131,6 +134,11 @@ print('matched_running_revision_verified')
             browser = pw.chromium.launch(channel='chromium', headless=True,
                         proxy={'server': f'http://127.0.0.1:{proxy.server_port}'})
             try:
+                if args.invitation_journeys or args.post_invitation_reboot:
+                    import runpy
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-invitation-journeys.py')))
+                    module['run'](browser, args, ssh, target, members)
+                    return
                 contexts, vaults, forbidden = [], [], []
                 for index, member in enumerate(members):
                     context = browser.new_context(ignore_https_errors=True, service_workers='block',
@@ -250,6 +258,6 @@ if __name__ == '__main__':
     except Exception as error:
         frames = traceback.extract_tb(error.__traceback__)
         frame = next((frame for frame in reversed(frames)
-                      if Path(frame.filename).name == Path(__file__).name), frames[-1])
+                      if Path(frame.filename).name in (Path(__file__).name, 'installed-invitation-journeys.py')), frames[-1])
         print(f'FAIL installed-browser: {type(error).__name__} at {Path(frame.filename).name}:{frame.lineno}', file=sys.stderr)
         raise SystemExit(1)

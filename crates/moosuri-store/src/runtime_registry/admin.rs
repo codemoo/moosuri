@@ -634,5 +634,6 @@ pub(super) fn guard_reserve(c: &Connection, request: Uuid, email: &str) -> Resul
     Ok(())
 }
 pub mod google_bootstrap;
+pub mod invitation_links;
 #[cfg(test)]
 mod tests;

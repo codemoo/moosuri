@@ -35,6 +35,7 @@ mod browser;
 mod google;
 mod google_connection;
 mod google_setup;
+mod invitations;
 mod memory;
 pub(crate) mod model_setup;
 mod tasks;
@@ -109,9 +110,18 @@ pub struct Options {
     /// model unit reads the same directory and both units must run as one user.
     #[arg(long, requires = "model_setup")]
     model_setup_dir: Option<PathBuf>,
+    /// Existing invitation worker profile, policy and operation records.
+    #[arg(long, requires_all = ["onboard_policy", "onboard_operations_root"])]
+    onboard_config: Option<PathBuf>,
+    #[arg(long, requires = "onboard_config")]
+    onboard_policy: Option<PathBuf>,
+    #[arg(long, requires = "onboard_config")]
+    onboard_operations_root: Option<PathBuf>,
 }
 #[derive(Clone)]
 struct Gateway {
+    onboarding: Option<crate::kiri_lifecycle::worker::WebEnrollment>,
+    invitation_inflight: Arc<tokio::sync::Semaphore>,
     model_setup: bool,
     model_setup_dir: Option<PathBuf>,
     google_jobs: google_connection::Jobs,
@@ -255,6 +265,8 @@ impl Gateway {
             }
         }
         Ok(Self {
+            onboarding: invitations::configuration(options)?,
+            invitation_inflight: Arc::new(tokio::sync::Semaphore::new(1)),
             model_setup: options.model_setup,
             model_setup_dir: options.model_setup_dir.clone(),
             google_jobs: Default::default(),
@@ -1168,6 +1180,7 @@ async fn public_shell(
         "/" | "/preview"
             | "/app"
             | "/login"
+            | "/join"
             | "/personal.html"
             | "/about"
             | "/privacy"
@@ -1231,6 +1244,7 @@ fn router(g: Gateway) -> Router {
         .merge(google_setup::routes())
         .merge(model_setup::routes())
         .merge(admin::routes())
+        .merge(invitations::routes())
         .with_state(g)
 }
 async fn bind_public_socket(options: &Options) -> Result<(File, tokio::net::UnixListener), String> {
@@ -1335,6 +1349,9 @@ mod tests {
             google_runtime_installation: None,
             model_setup: false,
             model_setup_dir: None,
+            onboard_config: None,
+            onboard_policy: None,
+            onboard_operations_root: None,
         }
     }
     #[test]
@@ -2928,33 +2945,63 @@ mod tests {
         let (a, _, task) = real_member(&options, "a@example.test").await;
         let g = Gateway::new(&options).unwrap();
         let login = request(
-            &g, "/api/v1/auth/login", Method::POST, headers(),
-            &serde_json::json!({"email":"a@example.test","password":"Synthetic-password-42"}).to_string(),
-        ).await;
+            &g,
+            "/api/v1/auth/login",
+            Method::POST,
+            headers(),
+            &serde_json::json!({"email":"a@example.test","password":"Synthetic-password-42"})
+                .to_string(),
+        )
+        .await;
         assert_eq!(login.status(), StatusCode::OK);
         let h = authenticated(&cookies(&login), &a);
         let view = serde_json::from_value::<moosuri_core::SessionView>(json(login).await).unwrap();
         control::bootstrap(&options.registry, Uuid::new_v4(), &a, &view).unwrap();
         assert_eq!(google_connection::unpublished_app(&g).await, Ok(false));
-        let pin = control::checked_session(&options.registry, &a, &view).unwrap().at_epoch(0).unwrap();
+        let pin = control::checked_session(&options.registry, &a, &view)
+            .unwrap()
+            .at_epoch(0)
+            .unwrap();
         google_bootstrap::claim(
-            &options.registry, &pin, Uuid::new_v4(), "google@example.test".into(),
+            &options.registry,
+            &pin,
+            Uuid::new_v4(),
+            "google@example.test".into(),
             "https://assistant.example.test/api/v1/mail/oauth/callback".into(),
-        ).unwrap();
+        )
+        .unwrap();
         // Even the initial checkpoint blocks consent: a private client file can
         // survive a lost checkpoint acknowledgement and must not bypass setup.
         assert_eq!(google_connection::unpublished_app(&g).await, Ok(true));
-        for service in ["", "drive/", "docs/", "slides/", "sheets/", "calendar/", "mail-write/"] {
+        for service in [
+            "",
+            "drive/",
+            "docs/",
+            "slides/",
+            "sheets/",
+            "calendar/",
+            "mail-write/",
+        ] {
             let response = request(
-                &g, &format!("/api/v1/personal/google/{service}start"),
-                Method::POST, h.clone(), "{}",
-            ).await;
+                &g,
+                &format!("/api/v1/personal/google/{service}start"),
+                Method::POST,
+                h.clone(),
+                "{}",
+            )
+            .await;
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{service}");
-            assert_eq!(json(response).await, serde_json::json!({"code":"google_setup_required"}));
+            assert_eq!(
+                json(response).await,
+                serde_json::json!({"code":"google_setup_required"})
+            );
         }
         // A storage failure must never be interpreted as a legacy ready app.
         fs::rename(&options.registry, temp.path().join("unreadable-registry")).unwrap();
-        assert_eq!(google_connection::unpublished_app(&g).await, Err(StatusCode::SERVICE_UNAVAILABLE));
+        assert_eq!(
+            google_connection::unpublished_app(&g).await,
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        );
         task.abort();
     }
     async fn check_google_setup_administration(
@@ -3385,7 +3432,10 @@ mod tests {
                 StatusCode::NOT_FOUND
             );
             let mut foreign_origin = h.clone();
-            foreign_origin.insert("origin", HeaderValue::from_static("https://evil.example.test"));
+            foreign_origin.insert(
+                "origin",
+                HeaderValue::from_static("https://evil.example.test"),
+            );
             assert_eq!(
                 request(&gateway, path, Method::GET, foreign_origin, "")
                     .await

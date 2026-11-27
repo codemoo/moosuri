@@ -1,6 +1,6 @@
 # Work log
 
-The current [50 user journeys](journeys.md) cover installation, Vault, Google login,
+The current [58 user journeys](journeys.md) cover installation, Vault, Google login,
 OAuth setup, sharing, conversation reads and recovery. They distinguish live
 provider results, diagnostic installation evidence and open acceptance gates.
 
@@ -1192,3 +1192,73 @@ before any password field. No verified login or consent occurred. Stop provider
 retries; do not bypass its rejection with another browser or borrowed session.
 Socket zero/only proxy and released phone reservation confirm cleanup.
 [Installed result and resumption condition](../../../docs/reviews/2026-11-27-matched-production.md#live-identifier-correction-and-provider-rejection).
+
+
+### Web invitation completion and pristine public source — 2026-11-27
+
+I04 had an actual usability gap: the installed timer stopped at password_required
+and the prior two-member harness finished with root CLI. That receipt never
+proved invited-member web joining. Eight explicit J01–J08 branches now cover
+completion, expiry/rotation, lost replies, restart, revocation, capacity,
+concurrency and browser privacy. This is one cohesive admission unit, not eight
+separate product goals.
+
+Candidate code reuses the existing registry, pinned worker policy, UID claims,
+private-volume initialization and member UI. Admin copies a 24-hour link;
+invitee opens /join and chooses a password. Only the random capability digest is
+stored. It binds issuer role revision and exact invitation allocation; ordinary
+issuer logout does not revoke a delivered invitation, while role/suspension/
+generation changes do. Password and capability stay in request memory/private
+child stdin, never durable job records. One-time private initialization decides
+replay. A link-issued invitation cannot fall back to timer/CLI activation even
+after expiry or a lost response. Final activation rechecks the capability.
+No invitation email is sent.
+
+A separate untouched Ubuntu24 VM completed public HTTPS clone f0812c7a source
+installation. Its baseline recorded no Kiri/Docker/Node/Rust/GWS/gcloud or Moosuri
+state. Durable acceptance verified bundle provenance, both installed users and
+encrypted Vaults in actual Chromium, real reboot and six egress/isolation checks.
+All passed. It used the prior CLI credential step and excluded real Google/model.
+That run is a prerequisite baseline, not acceptance of this new candidate.
+The narrow production auth image and existing member data remain unchanged.
+
+- [x] Complete integrated invitation store/HTTP/UI checks and independent Claude review.
+- [x] Execute J01–J08 with actual installed Linux services/browser and preserve failures.
+- [ ] Publish and deploy the accepted admission unit with compatible registry consumers.
+- [ ] Reconcile pristine result and resume remaining Google/model/default-installer gates.
+
+
+Independent official Claude Sonnet5.5/medium review completed in 37 turns.
+Its capacity-starvation finding was not adopted: `worker::run` explicitly wraps
+an empty page to cursor zero (`page.last().map_or(0, ...)`), and the existing
+actual capacity harness retries two scans. The new installed J06 still verifies
+capacity recovery rather than relying on that static conclusion.
+The blocking-initializer finding was adopted: web completion and registry I/O
+now run off Tokio async workers; status bypasses the initializer permit; the
+private status child runs before the registry lock, while the one-time private
+write remains capability-guarded. The critical child has a 15-second bound, to
+be measured on the installed guest. Parent inspection also moved expiry-clock
+sampling after registry-lock admission, with a contended-expiry regression.
+Candidate checks passed before those targeted corrections: store51/52 (the sole
+failure was a stale schema11 test expectation, corrected and passed), new link9,
+member-chosen password1, gateway3, existing worker3, installer15 and frontend16.
+The corrected paths passed Linux link-store10, gateway4 and the host build.
+A second independent official Claude Sonnet5.5/medium review (14 turns) found
+no material defect. Low-priority blocking-pool contention under distributed
+invalid-token load remains a hardening item; expiry after private password save
+requires a new admin link, as documented. No activation grace weakens expiry.
+These results do not upgrade installed-journey or production status.
+
+After the pristine baseline completed, its disposable host registry consumers
+were switched together to the admission candidate (binary SHA256
+b1c8a28dee1dc8c57b8efbf68f7daeba57d84f80d81a06edf1c84c61ec96d4bb), preserving
+both original members. Member/auth images remain f0812c7a for this narrow
+integration test; this is not a final matched release or a production switch.
+
+Installed candidate J01–J08 branches and actual reboot passed, including two
+web-created members with distinct Vaults. The capacity harness initially counted
+occupied UIDs as free; its synthetic UID budget was corrected without replacing
+users. Replacement-password denial was tightened and observed as HTTP401 after
+reboot. [Exact evidence and limits](../../../docs/reviews/2026-11-27-web-invitation.md).
+The future clean-installed harness now completes through the invitation API;
+that revised full-install sequence is pending the final matched-source run.

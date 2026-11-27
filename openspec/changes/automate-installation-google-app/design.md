@@ -197,3 +197,28 @@ and [audience guidance](https://support.google.com/cloud/answer/15549945?hl=en)
 were checked on 2026-11-27. Limited audiences below 100 users can operate without
 verification with the unverified-app warning. Broader public use is a separate
 provider verification boundary, not something this installer can promise.
+
+
+## Invited-member web admission
+
+The admin reserves the existing member identity, then creates a private link to
+`/join#<random capability>`. Link issuance is a fresh authenticated admin action.
+SQLite stores only a SHA-256 digest, 24-hour expiry, exact invitee allocation and
+issuer role revision. Reissue rotates the digest; routine issuer logout leaves
+an issued invitation valid, but demotion/suspension/replacement invalidates it.
+The URL fragment is removed before any API call and is not persisted by React.
+The invitee chooses the account password; Vault creation remains a separate step.
+No mail is sent by this flow.
+
+The existing timer prepares its pinned UID/storage/runtime claim. The gateway
+finishes only a prepared claim using installer-owned profile paths, the same
+operation lock and the dedicated UID child. It keeps the password only in
+request memory and the child's private pipe. Registry locking revalidates the
+capability across one-time local initialization, and again on activation. The
+private account transaction refuses replacement even after an interrupted or
+lost response. Once a link is issued, legacy CLI/timer completion is fenced;
+expired links require reissue, not a fallback. Ready replay reports completion
+without claiming a newly submitted password was applied. A member-chosen initial
+password needs no forced change at first login. No separate queue or service is
+introduced; the existing root gateway explicitly opts in to its existing worker
+profile. The registry version change requires matched host consumers at rollout.

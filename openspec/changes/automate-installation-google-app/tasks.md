@@ -4,35 +4,28 @@ The current [61 user journeys](journeys.md) cover installation, Vault, Google lo
 OAuth setup, sharing, conversation reads and recovery. They distinguish live
 provider results, diagnostic installation evidence and open acceptance gates.
 
-Latest: public `c3d18bd9` passed from a separate untouched Ubuntu24 guest:
-actual terminal install, public second-member admission, both encrypted Vaults,
-real reboot, confinement, Claude U01–U03, FM01–FM03 and LR01–LR06. The reviewed
-matching bundle is deployed on Linux with the original accounts/Vault/keys/grants
-preserved. Existing GWS read and saved history passed; a legacy gateway egress
-rule was corrected. Real Claude SSO screen transition failed after Google was
-selected. The subsequent3fd8e586 popup patch is deployed, with installed official
-Google-window display, ownership and cleanup passing; one production UI retry
-still failed before account input. The later51c98a7f diagnostic patch passed the
-installed two-member preservation/popup/cancel checks and was deployed. Its
-production UI reached Google identifier entry, then Google rejected the browser;
-explicit cancellation cleaned the capsule. The earlier intermittent crash was
-not reproduced. A separate official Claude email path reached a provider security
-verification pause, then a polling failure correlated to Chrome OOM in the
-exact768MiB auth container. The0926adc2 auth-only1536MiB correction and first-setup
-UI entry correction passed installed resource/popup/cancel checks and matched
-production deployment with preserved data. A fresh production login remained at
-provider security verification: no OOM over21 samples, but the same capsule's
-PID limit was hit4 times. The e29a4ee4 auth-only512-PID follow-up passed native
-and independent review, installed actual kernel/popup/cancel checks and matched
-production deployment. Its live152-sample run peaked at260 PIDs/818954240 bytes,
-with zero PID-limit/OOM events; official email continuation reached security
-verification, which did not complete after one visible checkbox selection.
-Cancellation removed the capsule and cgroup. Actual authentication remains open.
-R06 now passes on current production: actual member stop/automatic recovery,
-unchanged grant/key/app identity, saved replay and fresh five-item GWS read.
-Natural-language interpretation and two-member consent remain separate gates.
-Actual authentication/inference, automatic OAuth setup and two real member
-consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
+Latest: public `e5038af8` passed from a separate untouched Ubuntu24 guest:
+actual terminal source install, public second-member admission, both encrypted
+Vaults, real reboot, confinement, Claude U01–U03, FM01–FM03 and LR01–LR06. No
+build recovery or diagnostic overlay was used. ACME/provider authentication and
+mail/model replies remain outside that synthetic acceptance scope.
+
+The complete matching bundle is now deployed on existing Ubuntu22/Kiri0.2.2,
+replacing the c3 base/e29 authentication patch combination. Independent official
+Claude Sonnet5.5/medium reviewed the operator and corrections. The existing
+account, data, Vault, keys, grants, model settings and confinement were preserved.
+Actual Kiri login/connection survived; one real GWS read returned five metadata
+items and was stored once. Reload displayed three saved receipts without an
+inbox request; a foreign asserted member received401. Actual natural-language UI
+returned model-unavailable422, retained the draft and made zero inbox requests.
+R06's prior live member restart/recovery remains valid and is recorded separately.
+
+The earlier e29 resource observation reached260 PIDs/818954240 bytes with zero
+PID-limit/OOM events; official email continuation still did not complete provider
+security verification. No identical authentication retry was made for this
+rollout. Real Claude authentication/inference, new automatic OAuth issuance and
+recovery, publication and two real member consents remain open.
+[Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 
 The bounded SSO follow-up confirmed that Google's new page has the original
 Claude page as opener but remains unattached. No credentials were submitted;

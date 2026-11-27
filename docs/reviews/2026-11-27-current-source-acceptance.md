@@ -203,3 +203,76 @@ cause is not established; this is an open real SSO screen-transition failure,
 not evidence of provider rejection or successful authentication. K06, real model
 inference/Gmail conversation, fresh automatic Google/OAuth setup and two real
 members' consents remain open.
+
+
+## Integrated public e503 installation — passed
+
+A new empty Ubuntu24 guest cloned public
+`e5038af811c9f2aa609db9ee6aa717c2ab6faa35`, including the popup, diagnostics,
+authentication memory/PID limits and first-Google-setup UI changes. No product,
+provider configuration or Docker/Kiri/Node/Rust/GWS was preinstalled. The actual
+terminal source installation completed without a build recovery or binary
+overlay. Its single coordinator finished with `stage=complete`, `status=passed`.
+
+Both members completed public invitation/password admission and actual browser
+Vault journeys: eight-character passwords, encrypted save/reopen, wrong-password
+refusal and member isolation. An actual reboot preserved both identities, stored
+Vault items, role boundaries and routing. Six network/cleanup checks, Claude
+U01–U03, first-mail FM01–FM03 and existing-connection LR01–LR06 all passed on the
+same installed bundle; the temporary legacy fixtures were restored.
+
+TLS and the mail/model responses were synthetic. The explicit results remain
+`real_acme=not_run` and `real_google_and_model=not_run`. This does not complete
+new OAuth creation, real provider authentication, natural-language Gmail or two
+real member consents. Earlier failed coordinators and their evidence are retained.
+
+The exact installed and staged manifest SHA-256 is
+`6d154c9516353d3482dbeb37d7e180fb40f4f4fe43c19a216e5d17a05302c569`.
+Gateway SHA-256:
+`b1ec271f5fa13ce7660d0a694ac233ad5606f84e6ccb3c192ad347125eacd5b5`.
+Vault SHA-256:
+`a115be93af7b08463d34908f809138678f9b1ba2e13ad2f264ac0ddea1a53989`.
+The root staging proof binds the two members, changed boot ID, successful
+coordinator, restored LR fixtures and matching FM/LR/running gateway to this
+manifest. Its SHA-256 is
+`6c57891921f32149ddd605ffd096ded813ae2819a547dd0ff06cfc88b60906cf`.
+
+
+### Matching e503 production transition and real UI follow-up
+
+The same complete bundle replaced the c3 member/Vault/ordinary-browser base and
+e29 gateway/auth patch on existing Ubuntu22/kernel5.15/Kiri0.2.2. Both new host
+binaries executed on Ubuntu22 before transition. A consistent private backup was
+saved; old releases/images/proxies remain available. Exact member/Vault logical
+contents, ownership/modes, protected keys, allocation/registry identities, model
+configuration and member/service confinement were preserved. Database checks
+used stable private copies including WAL, avoiding root-created SQLite sidecars
+in live member storage. All eight effective service commands point to e503.
+The original onboarding policy/timer remains; no installer receipt was adopted.
+
+Independent official Claude Sonnet5.5/medium reviewed the frozen operators and
+corrections. Optimization now refuses execution before any mutation; exact
+manifest bytes and current command/configuration pins are bound. A real Linux
+transient service restart verified that normalized command comparisons ignore
+volatile PID/timestamps while retaining static fields. The same c3/e503 registry
+and rollout source plus the earlier successful equality check resolved the
+review's migration concern. Actual production command/inventory and private-WAL
+copy checks passed. Final staging/operator SHA-256 values:
+`8e7f75d68947a5baf2d075c1be6b7eb1fc1f738142bacd8df7ea085fe1d0a032` /
+`f777d404ab79c300c080723e921266c8227d15efc27708e7c87b6a1456552d9d`.
+Only artifact pins and the opening description changed after the reviewed logic;
+an AST comparison confirmed that boundary. Public Google HTTPS probes and
+private-address refusal passed; no credentials or OAuth resources were submitted.
+
+The existing authenticated Kiri session and Google connection ID/epoch/mailbox
+survived. One actual GWS request returned HTTP200/completed with five metadata
+items, correct thread/request identity and exactly one saved receipt. A foreign
+asserted member received401. Reload displayed three saved receipts of five rows
+each and made zero inbox requests. No raw mail or tokens were exported.
+
+The actual composer then submitted “최근 받은 메일 5개 확인해줘”. Work interpretation
+returned422 and visibly reported that the assistant model could not connect.
+The draft remained; there were zero inbox requests and no additional receipt.
+This is an observed remaining authentication/model gate, not a completed
+natural-language Gmail journey. The provider security check needs resolution
+before real Claude inference; no fallback or borrowed authentication was used.

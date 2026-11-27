@@ -255,3 +255,18 @@ developer credentials SHALL NOT be prerequisites for ordinary joining.
 #### Scenario: A link page reloads or a foreign origin submits
 - **WHEN** joining is reentered or attempted cross-origin
 - **THEN** neither password nor capability is recovered from browser storage, and only exact-origin bounded private requests may admit a valid link
+### Requirement: Public Linux source setup collects missing public inputs
+The README SHALL lead Linux member-server installation to the existing public
+source path. The Rust setup command SHALL collect missing assistant/Vault HTTPS
+origins and certificate contact/terms from a terminal before product writes.
+The separate local standard preview SHALL remain explicitly labelled.
+
+#### Scenario: Operator declines certificate terms after source compilation
+- **WHEN** the operator leaves the certificate terms answer empty or refuses
+- **THEN** setup stops before creating product configuration or a member
+- **AND** prerequisite/build outputs remain available for a later explicit retry
+
+#### Scenario: Standard input is reserved for the account password
+- **WHEN** a required public input is missing under `--password-stdin` or without a terminal
+- **THEN** setup fails with an input requirement without consuming the password as public input
+- **AND** complete scripted options continue to use the existing installation/replay path

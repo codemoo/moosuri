@@ -1,6 +1,6 @@
 # Work log
 
-The current [58 user journeys](journeys.md) cover installation, Vault, Google login,
+The current [61 user journeys](journeys.md) cover installation, Vault, Google login,
 OAuth setup, sharing, conversation reads and recovery. They distinguish live
 provider results, diagnostic installation evidence and open acceptance gates.
 
@@ -1262,3 +1262,44 @@ users. Replacement-password denial was tightened and observed as HTTP401 after
 reboot. [Exact evidence and limits](../../../docs/reviews/2026-11-27-web-invitation.md).
 The future clean-installed harness now completes through the invitation API;
 that revised full-install sequence is pending the final matched-source run.
+### Linux public entry and interactive setup — next usable unit
+
+The web-admission unit is public at9a7b83b3; its matching source bundle is building
+in the marked disposable Ubuntu VM. Production remains on its recorded bundle.
+Independent official Claude Sonnet5.5/medium source exploration (15 turns)
+identified the README's older default path and missing public-input prompts.
+The selected follow-up keeps the existing source entry and Rust setup, adds
+interactive inputs and labels platform routes clearly. A signed one-command
+Kiri release is separate packaging; it is not needed to meet the stated
+public-source installation objective. Real Google/model acceptance remains open.
+
+- [x] Validate public inputs/terms, non-terminal and password-pipe boundaries.
+- [x] Exercise actual Linux terminal rejection/recovery and retain earlier install contracts.
+- [x] Independent review and public entry/docs alignment.
+- [ ] Final matched fresh-source acceptance including interactive public entry.
+
+Linux installer21 tests and the native build passed. The marker-guarded
+[process harness](../../../deployment/kiri/linux-vm-smoke/setup-inputs.py) ran
+the actual candidate under a PTY: invalid/same origins and blank certificate
+terms refused before product writes; explicit acceptance reached only the
+intentionally missing bundle. A nonterminal missing-input invocation left the
+synthetic password pipe byte-for-byte unread. Source-entry missing/partial/empty
+flags failed before downloads; both complete TLS modes and spaced/equals flags
+passed the shell preflight. Existing product configuration/key hashes remained
+unchanged. These input checks do not establish certificate issuance or I08.
+
+Independent official Claude Sonnet5.5/medium review completed in19 turns.
+Its late scripted-input finding prompted early shell presence checks, verified
+with the process harness. Origin prompts now explain the accepted format;
+recovery docs identify the receipt and same-answer/supplied-TLS requirements.
+Its pristine-evidence objection cited the older interrupted116a8cd run: the
+separate untouched f0812c7a baseline is valid and the guide now names and links
+that exact evidence. No password or terms regression was found. The parent
+inspected and tested the follow-up shell changes; no second review is claimed.
+
+Final plan/link verification passed1,769 links and strict change validation
+passed on Linux. Shell/Python syntax and diff whitespace checks passed. The
+changed-file secret scan found only the pre-existing unusable `AAAA` PEM marker
+in the installer tests; no new credential or exception was added. Dependencies
+and third-party assets are unchanged. The candidate remains separate from the
+running production bundle and the final fresh-source acceptance.

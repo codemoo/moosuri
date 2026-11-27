@@ -13,7 +13,7 @@ Status: **live pass** means observed on the existing Linux installation;
 Prior component evidence remains in the task log and does not upgrade an open
 journey. All model execution and independent review uses Claude Sonnet 5.5 / medium.
 
-## Install and first use — 7 journeys
+## Install and first use — 10 journeys
 
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
@@ -24,6 +24,9 @@ journey. All model execution and independent review uses Claude Sonnet 5.5 / med
 | I05 | Stop installation after preparation, then run the same installer | Original installation, member allocation and keys retained; conflicting inputs refused | Candidate116a8cd recovered prior build interruption; complete same-input replay and conflicting-origin refusal preserved identities/keys |
 | I06 | Reboot a completed installation with two members | Same identities and connections, usable app/Vault and services; no duplicated requests | Candidate116a8cd reboots and upgraded0b5e8fa actual reboot passed; identities, independent Kiri recipients, handoff, admin boundary and both encrypted Vaults/items retained; Google/model connections still unconfigured |
 | I07 | Upgrade an existing Kiri installation with an encrypted Vault and connected member | Preserve member/volume/key identities and grants; validate host/engine compatibility before a matched component switch; no unrelated host OS change | Same-kernel Ubuntu 22.04/5.15.0-179/Kiri 0.2.2 member recovery, both confined browsers and six owned profile-rollout checks passed; different-image candidate0b5e8fa transition and real reboot passed after correcting shared-service order and the confined seccomp path; production c8cf8e8 transition retained the real account/Vault/keys/grants and existing Gmail read passed; fresh login exposed missing proxy egress, repaired with real public/private and restart checks; post-repair authentication remains open; no new-installer receipt is fabricated |
+| I08 | Follow README's Linux route, run source setup with no flags from a terminal | Build the selected public revision; prompt for distinct HTTPS origins, certificate contact/terms and administrator; reach the member app | Interactive candidate implemented; final fresh-source journey open |
+| I09 | Enter invalid/same origins or decline certificate terms | No product configuration or member created; existing prerequisite/build outputs are reusable | Actual Linux PTY invalid/same origins and blank terms refused; configuration/key hashes unchanged. Accepted terms reached bundle validation only; full install remains I08 |
+| I10 | Run unattended with complete flags/password pipe, or omit a required public input | Complete flags remain compatible; missing values fail without reading the password as an address or waiting for terminal input | Actual Linux password pipe remained unread; missing/partial/empty source-entry flags failed before downloads; complete supplied-certificate and Certbot preflight passed in both flag forms. Full installation remains I08 |
 
 ## Invited member joins on the web — 8 journeys
 

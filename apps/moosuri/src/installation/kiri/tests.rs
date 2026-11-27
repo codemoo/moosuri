@@ -2,6 +2,144 @@
 use super::*;
 use std::{collections::BTreeMap, os::unix::fs::PermissionsExt};
 
+fn input_options(flags: &[&str]) -> Options {
+    use clap::Parser;
+    #[derive(Parser)]
+    struct InputCli {
+        #[command(flatten)]
+        options: Options,
+    }
+    InputCli::try_parse_from(
+        ["setup", "--bundle", "/synthetic-bundle"]
+            .into_iter()
+            .chain(flags.iter().copied()),
+    )
+    .unwrap()
+    .options
+}
+
+#[test]
+fn interactive_setup_collects_public_choices_and_explicit_terms() {
+    let mut replies = [
+        "https://assistant.example.com",
+        "https://vault.example.com",
+        "operator@example.com",
+        "yes",
+    ]
+    .into_iter();
+    let o = setup_inputs(input_options(&[]), true, |_| {
+        Ok(replies.next().unwrap().into())
+    })
+    .unwrap();
+    assert_eq!(o.public_origin, "https://assistant.example.com");
+    assert_eq!(o.vault_origin, "https://vault.example.com");
+    assert_eq!(o.certbot_email.as_deref(), Some("operator@example.com"));
+    assert!(o.accept_certbot_terms && replies.next().is_none());
+}
+
+#[test]
+fn invalid_or_same_origin_stops_before_certificate_or_secret_questions() {
+    for (public, vault) in [
+        ("http://assistant.example.com", "https://vault.example.com"),
+        (
+            "https://assistant.example.com",
+            "https://assistant.example.com",
+        ),
+    ] {
+        let mut replies = [public, vault].into_iter();
+        assert!(
+            setup_inputs(input_options(&[]), true, |_| Ok(replies
+                .next()
+                .expect("unexpected extra prompt")
+                .into()))
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn declined_or_missing_terms_never_become_implicit_acceptance() {
+    let options = input_options(&[
+        "--public-origin",
+        "https://assistant.example.com",
+        "--vault-origin",
+        "https://vault.example.com",
+        "--certbot-email",
+        "operator@example.com",
+    ]);
+    for reply in ["", "no", "N"] {
+        assert_eq!(
+            setup_inputs(options.clone(), true, |_| Ok(reply.into()))
+                .err()
+                .unwrap(),
+            "kiri_install_certificate_terms_declined_no_product_changes"
+        );
+    }
+    assert_eq!(
+        setup_inputs(options, false, |_| panic!("nonterminal prompt"))
+            .err()
+            .unwrap(),
+        "kiri_install_certbot_terms_required"
+    );
+}
+
+#[test]
+fn password_pipe_and_nonterminal_never_feed_public_setup_questions() {
+    for (flags, terminal) in [(vec!["--password-stdin"], true), (vec![], false)] {
+        assert_eq!(
+            setup_inputs(input_options(&flags), terminal, |_| panic!(
+                "password pipe read"
+            ))
+            .err()
+            .unwrap(),
+            "kiri_install_public_options_required_use_flags_or_terminal"
+        );
+    }
+}
+
+#[test]
+fn complete_supplied_certificate_flags_need_no_prompt_or_certbot_consent() {
+    let o = setup_inputs(
+        input_options(&[
+            "--public-origin",
+            "https://assistant.example.com",
+            "--vault-origin",
+            "https://vault.example.com",
+            "--tls-certificate",
+            "/synthetic/cert.pem",
+            "--tls-key",
+            "/synthetic/key.pem",
+            "--password-stdin",
+        ]),
+        false,
+        |_| panic!("scripted input prompted"),
+    )
+    .unwrap();
+    assert_eq!(o.tls_certificate, Some("/synthetic/cert.pem".into()));
+    assert!(o.certbot_email.is_none() && !o.accept_certbot_terms);
+}
+
+#[test]
+fn complete_certbot_flags_work_without_tty_and_invalid_email_is_refused() {
+    let mut o = input_options(&[
+        "--public-origin",
+        "https://assistant.example.com",
+        "--vault-origin",
+        "https://vault.example.com",
+        "--certbot-email",
+        "operator@example.com",
+        "--accept-certbot-terms",
+    ]);
+    assert!(setup_inputs(o.clone(), false, |_| panic!("scripted input prompted")).is_ok());
+    o.certbot_email = Some("not-an-email".into());
+    assert_eq!(
+        setup_inputs(o, true, |_| panic!("invalid email should stop"))
+            .err()
+            .unwrap(),
+        "kiri_install_certbot_email_invalid"
+    );
+}
+
 fn dirs(root: &Path, list: &[&str]) {
     for d in list {
         let p = root.join(d.trim_start_matches('/'));

@@ -1,8 +1,12 @@
 # Clean Linux source installation
 
-This development path prepares the member Kiri runtime from a selected public
-Git commit. It is under acceptance testing; it does not yet replace the standard
-one-line installer or complete automatic Google OAuth application issuance.
+This is the recommended Linux member-server entry from a selected public Git
+commit. The signed one-line local preview remains a separate product path.
+Public revision f0812c7a passed a separate untouched-server source installation,
+two-member Vaults and actual reboot. [Baseline and later admission evidence](../../docs/reviews/2026-11-27-web-invitation.md)
+
+Final interactive installation and automatic Google OAuth issuance remain under
+acceptance.
 See [current support](../../docs/status.md) and the
 [remaining Google setup work](../../openspec/changes/automate-installation-google-app/tasks.md).
 
@@ -18,11 +22,30 @@ From a public clone:
 ```sh
 git clone https://github.com/codemoo/moosuri.git
 cd moosuri
+sudo bash deployment/kiri/install-from-source.sh
+```
+
+Run from an interactive terminal. The build runs first; then the Rust setup asks for
+the assistant and separate Vault HTTPS addresses, certificate contact email and
+explicit certificate-authority terms acceptance. Invalid/same origins or declined
+terms stop before product configuration/account changes. Prerequisites and build
+outputs remain available. To supply these public choices ahead of time:
+
+```sh
 sudo bash deployment/kiri/install-from-source.sh \
   --public-origin https://assistant.example.com \
   --vault-origin https://vault.example.com \
   --certbot-email operator@example.com --accept-certbot-terms
 ```
+
+Provided certificate/key flags remain supported for scripted installs.
+Without a terminal, also supply `--admin-email`, `--admin-name` and
+`--password-stdin`; use a private password pipe. Missing required flags fail
+before dependency downloads. Rust still validates the actual values after build.
+
+For repeatable source selection, check out the desired public commit before
+running the script. It prints and builds that exact `HEAD` revision. Preserve the
+printed bundle directory to resume installation without repeating the build.
 
 The installer prompts for the first administrator's name, email and hidden
 password. Keep the chosen password: a retry uses it to authenticate through the
@@ -58,6 +81,10 @@ origins, member limits and administrator identity. Installation and first-member
 request IDs stay the same. Changed inputs are refused; do not delete private
 state to force a retry. Root-owned supplied certificates are supported with the
 paired `--tls-certificate` and `--tls-key` options instead of Certbot.
+For interactive retries, give the same answers. If the original installation
+used supplied certificates, retain both TLS file flags instead of selecting
+automatic Certbot. The private `/etc/moosuri/kiri-install.json` receipt records
+the selected origins and TLS mode for the operator's recovery reference.
 The candidate also serves public product information at `/about`, `/privacy`
 and `/terms` on the assistant origin. These pages do not require a member
 session or load private data. They describe this installation's data handling;
@@ -78,4 +105,6 @@ configuration is not proof of working inference: verify a conversation. This
 API path does not create Claude subscription workers. A malformed provider file
 at service startup is rejected until corrected; runtime key/config recovery is
 retried without admitting invalid calls. Final first-provider acceptance and
-the single default public installer entry remain open. No Mac credentials or existing Cloud project may satisfy those gates.
+the final interactive-source installation remain open. A signed single-command
+Kiri release is separate future packaging, not a prerequisite for the public-source
+journey. No Mac credentials or existing Cloud project may satisfy acceptance.

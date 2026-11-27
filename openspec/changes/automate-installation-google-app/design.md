@@ -222,3 +222,20 @@ without claiming a newly submitted password was applied. A member-chosen initial
 password needs no forced change at first login. No separate queue or service is
 introduced; the existing root gateway explicitly opts in to its existing worker
 profile. The registry version change requires matched host consumers at rollout.
+
+## Linux public entry and setup inputs
+
+The public-source Linux journey is the primary server entry in README and the
+installation guide. macOS/WSL2/local standard-server preview remains separately
+labelled. A signed single-command Kiri release is future packaging, not an extra
+condition on the user's public-source journey. The overall Google/model/member
+acceptance gates remain unchanged.
+
+The existing Rust setup command prompts for missing HTTPS origins, certificate
+contact and explicit certificate terms after the source build. It validates these
+before product state changes. Prerequisites/build outputs may already exist and
+are retained on rejection. `--password-stdin` and non-terminal use never consume
+private input for public questions; complete flags remain supported. No new
+installer framework, queue or service is introduced. I08–I10 supplement the
+existing install/replay/reboot journeys, bringing installation to10 and total
+journeys to61.

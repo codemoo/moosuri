@@ -12,9 +12,31 @@ if ! /usr/bin/grep -qx 'ID=ubuntu' /etc/os-release || ! /usr/bin/grep -qx 'VERSI
     echo 'Ubuntu 24.04 is required.' >&2
     exit 1
 fi
-if [[ $# == 0 ]]; then
-    echo 'Usage: sudo bash deployment/kiri/install-from-source.sh --public-origin https://assistant.example.com --vault-origin https://vault.example.com --certbot-email operator@example.com --accept-certbot-terms' >&2
-    exit 2
+# Fail fast for missing unattended inputs before downloading/building anything.
+# Values and product semantics are still validated by Rust; no password is read.
+source_flag() {
+    local wanted=$1 arg; shift
+    for arg in "$@"; do [[ $arg != "$wanted" ]] || return 0; done
+    return 1
+}
+source_value() {
+    local wanted=$1 arg pending=0; shift
+    for arg in "$@"; do
+        if [[ $pending == 1 ]]; then [[ -n $arg && $arg != --* ]] && return 0; pending=0; fi
+        [[ $arg != "$wanted="* || -z ${arg#*=} ]] || return 0
+        [[ $arg != "$wanted" ]] || pending=1
+    done
+    return 1
+}
+if [[ ! -t 0 ]]; then
+    if ! { source_value --public-origin "$@" && source_value --vault-origin "$@" \
+        && source_value --admin-email "$@" && source_value --admin-name "$@" \
+        && source_flag --password-stdin "$@" \
+        && { { source_value --tls-certificate "$@" && source_value --tls-key "$@"; } \
+          || { source_value --certbot-email "$@" && source_flag --accept-certbot-terms "$@"; }; }; }; then
+        echo 'Unattended setup needs both origins, admin email/name, --password-stdin and a complete TLS choice. / 비대화형 설치 옵션이 빠졌습니다. source-install.md를 확인하세요.' >&2
+        exit 2
+    fi
 fi
 source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 cd -- "$source_root"

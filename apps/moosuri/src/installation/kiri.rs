@@ -41,16 +41,16 @@ const START_BEFORE_ONBOARD: [&str; 4] = [
     "moosuri-google-browser.socket",
 ];
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct Options {
     /// Private root-owned directory containing manifest.json and the six artifacts.
     #[arg(long)]
     pub bundle: PathBuf,
     /// Assistant HTTPS origin, for example https://assistant.example.com
-    #[arg(long)]
+    #[arg(long, default_value = "")]
     pub public_origin: String,
     /// Different vault HTTPS origin, for example https://vault.example.com
-    #[arg(long)]
+    #[arg(long, default_value = "")]
     pub vault_origin: String,
     /// First administrator email (prompted when omitted and standard input is free).
     #[arg(long)]
@@ -72,7 +72,7 @@ pub struct Options {
     #[arg(long, requires = "tls_certificate")]
     pub tls_key: Option<PathBuf>,
     /// Obtain one certificate for exactly the two selected names with certbot.
-    #[arg(long, requires = "accept_certbot_terms")]
+    #[arg(long)]
     pub certbot_email: Option<String>,
     /// Confirm that you accept the certificate authority subscriber terms.
     #[arg(long)]
@@ -260,6 +260,62 @@ fn prompt(label: &str) -> Result<String> {
         .read_line(&mut line)
         .map_err(|_| "kiri_install_prompt_failed")?;
     Ok(line.trim().to_owned())
+}
+/// Collect only public setup choices. Standard input may instead be a private
+/// password pipe, so that mode must never consume it for a missing option.
+fn setup_inputs(
+    mut o: Options,
+    interactive: bool,
+    mut ask: impl FnMut(&str) -> Result<String>,
+) -> Result<Options> {
+    let can_ask = interactive && !o.password_stdin;
+    let mut required = |value: &mut String, label: &str| -> Result<()> {
+        if value.is_empty() {
+            if !can_ask {
+                return Err("kiri_install_public_options_required_use_flags_or_terminal".into());
+            }
+            *value = ask(label)?;
+        }
+        Ok(())
+    };
+    required(
+        &mut o.public_origin,
+        "Assistant HTTPS address (lowercase; no trailing slash, path or port)\n무수리 HTTPS 주소 (예: https://assistant.example.com): ",
+    )?;
+    required(
+        &mut o.vault_origin,
+        "Separate Vault HTTPS address (lowercase; no trailing slash, path or port)\n별도 볼트 HTTPS 주소 (예: https://vault.example.com): ",
+    )?;
+    render::origins(&o.public_origin, &o.vault_origin)?;
+    if o.tls_certificate.is_some() != o.tls_key.is_some()
+        || (o.tls_certificate.is_some() && o.certbot_email.is_some())
+    {
+        return Err("kiri_install_tls_choice_invalid".into());
+    }
+    if o.tls_certificate.is_none() {
+        let mut email = o.certbot_email.take().unwrap_or_default();
+        required(
+            &mut email,
+            "Both DNS names must point here; ports 80/443 must be reachable.\nCertificate contact email / 인증서 연락 이메일: ",
+        )?;
+        if !valid_email(&email) {
+            return Err("kiri_install_certbot_email_invalid".into());
+        }
+        o.certbot_email = Some(email);
+        if !o.accept_certbot_terms {
+            if !can_ask {
+                return Err("kiri_install_certbot_terms_required".into());
+            }
+            let answer = ask(
+                "Accept Let's Encrypt subscriber terms at https://letsencrypt.org/repository/ ?\n인증서 발급 약관에 동의하시나요? [y/N]: ",
+            )?;
+            if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                return Err("kiri_install_certificate_terms_declined_no_product_changes".into());
+            }
+            o.accept_certbot_terms = true;
+        }
+    }
+    Ok(o)
 }
 fn identity(o: &Options) -> Result<(String, String)> {
     let ask = |given: &Option<String>, label: &str| -> Result<String> {
@@ -972,11 +1028,10 @@ fn plan_fresh(
 
 pub async fn run(o: &Options) -> std::result::Result<(), String> {
     require_host()?;
+    use std::io::IsTerminal;
+    let resolved = setup_inputs(o.clone(), std::io::stdin().is_terminal(), prompt)?;
+    let o = &resolved;
     let layout = Layout::system();
-    render::origins(&o.public_origin, &o.vault_origin)?;
-    if o.tls_certificate.is_none() && o.certbot_email.is_none() {
-        return Err("kiri_install_tls_choice_required".into());
-    }
     let bundle = bundle::validate(&layout, &o.bundle)?;
     bundle.require_running(
         &std::env::current_exe().map_err(|_| "kiri_install_executable_unknown")?,
@@ -1155,7 +1210,11 @@ pub async fn run(o: &Options) -> std::result::Result<(), String> {
         "Sign in as {} with the password you entered; it was not stored.",
         receipt.admin_email
     );
-    println!("Google OAuth application setup is a separate next step.");
+    println!("Next: sign in, open Management to connect Claude and invite members.");
+    println!("다음: 로그인 → 관리에서 Claude 연결과 회원 초대 → 연결에서 개인 볼트·Google 설정.");
+    println!(
+        "Google setup: https://github.com/codemoo/moosuri/blob/main/deployment/kiri/google.md"
+    );
     Ok(())
 }
 /// Re-derive the operator inputs of an invocation for comparison with the receipt.

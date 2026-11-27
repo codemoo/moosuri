@@ -1,11 +1,29 @@
 # Install Moosuri / 무수리 설치
 
-Moosuri is a **development preview**. The installer includes the Rust server/CLI,
+Moosuri is a **development preview**. For a **Linux member server**, use the
+[public-source Ubuntu24.04 installation](../deployment/kiri/source-install.md).
+It prepares member Kiri containers, shared model transport, separate encrypted
+Vault and the Google browser runtime. The README starts with this Linux route.
+
+```sh
+git clone https://github.com/codemoo/moosuri.git
+cd moosuri
+sudo bash deployment/kiri/install-from-source.sh
+```
+
+Run from a terminal. After the source build, enter the two HTTPS addresses,
+certificate contact and terms, then the first administrator's identity/password.
+Domains and external port80/443 reachability are prerequisites. Source build
+and root installation differ from the signed local preview below; see the
+[current acceptance limits](status.md).
+
+The **local standard-server preview** below includes the Rust server/CLI,
 React dashboard and SQLite support. Rust, Node, Python and Docker are not required
 to run it. The separate encrypted vault and credential companion remain optional,
 separate deployments; this installer does not claim to install them.
 
-Linux per-member Kiri isolation is available from the development source on a separate installation. Its host and storage setup is documented in the [Linux operator guide](../deployment/kiri/README.md). 현재 한 줄 설치로 받는 배포판과 개인 컨테이너 개발판의 설치 절차는 다릅니다.
+아래 한 줄 명령은 표준 서버 개발판입니다. Linux 회원용 서버는 위 소스 설치
+경로를 사용합니다. [Linux 운영 안내](../deployment/kiri/README.md)
 
 ## One command / 한 줄 설치
 

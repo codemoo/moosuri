@@ -2,17 +2,36 @@
 
 Moosuri is a self-hosted personal assistant for individuals, families and friends. Members have separate conversations, memories and connected accounts. Only the installation administrator chooses the model and reasoning effort for chat and internal inference. [Model settings](docs/provider-settings.md)
 
-Moosuri is in development preview. The public installer runs the standard server. The Linux deployment uses a Kiri container per member and a shared inference engine. Features and verification differ between the two. [Current support and remaining work / 현재 상태](docs/status.md)
+Moosuri is in development preview. The Linux server uses a Kiri container per member, a separate encrypted Vault and a shared inference engine. The local standard-server preview has a different installation and feature set. [Current support and remaining work / 현재 상태](docs/status.md)
 
 ## Start
 
-Run this command in a macOS or Linux terminal, or inside a Windows WSL2 distribution. Choose English or 한국어 and follow the prompts to create the first administrator account.
+For a **Linux server**, start on an empty Ubuntu 24.04 amd64 system. Prepare two
+DNS names for the assistant and Vault, pointing to the server, with ports80/443
+reachable. In an interactive terminal:
+
+```sh
+git clone https://github.com/codemoo/moosuri.git
+cd moosuri
+sudo bash deployment/kiri/install-from-source.sh
+```
+
+The source build takes time. Setup then asks for the two HTTPS addresses,
+certificate contact/terms, and first administrator account. It installs Kiri,
+the app and separate Vault without developer credentials or preinstalled model
+tools. After sign-in, use **Management** for the model and member invitations,
+then **Connections** for your Vault and Google account. Google/model acceptance
+is still in progress. [Linux requirements, scripted setup and recovery](deployment/kiri/source-install.md)
+
+For a **local standard-server preview on macOS, Linux or Windows WSL2**, use:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/codemoo/moosuri/main/install.sh | bash
 ```
 
-For installer requirements, updates and troubleshooting, see the [installation guide / 설치 안내](docs/install.md). To operate the per-member runtime on Linux, follow the [Kiri operator guide](deployment/kiri/README.md).
+This signed preview is separate from the Linux member Kiri installation above.
+[Installation and platform support / 설치 안내](docs/install.md) ·
+[Kiri operations](deployment/kiri/README.md)
 
 ## Use and configure
 

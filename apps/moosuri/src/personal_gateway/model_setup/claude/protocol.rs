@@ -1,15 +1,19 @@
 //! Official login helper protocol: bounded JSON lines on stdout. At most one
 //! `authorization_url`, then exactly one `result`, then end of output.
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 pub(super) const MAX_LINE: usize = 8192;
 pub(super) const MAX_LINES: usize = 4;
 const URL_PREFIX: &str = "https://claude.com/cai/oauth/authorize?";
+/// The official CLI's manual redirect. The sign-in browser captures only this
+/// exact top-level callback.
+const CALLBACK: &str = "https://platform.claude.com/oauth/code/callback";
 
 #[derive(Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 enum Wire {
-    AuthorizationUrl { url: String },
+    AuthorizationUrl { url: Zeroizing<String> },
     Result { result: String },
 }
 
@@ -21,8 +25,36 @@ pub(super) enum Outcome {
     Failed,
 }
 pub(super) enum Step {
-    Url(String),
+    /// Memory only: it goes to the sealed sign-in browser and nowhere else.
+    Url(Zeroizing<String>),
     Result(Outcome),
+}
+
+/// What the browser worker will also verify: the official authorize URL with
+/// exactly one non-empty `state` and exactly one `redirect_uri` equal to the
+/// official callback. Anything else never reaches a browser.
+pub(super) fn browser_ready(url: &str) -> bool {
+    if !official_url(url) {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let (mut states, mut redirects, mut exact) = (0, 0, true);
+    for (key, value) in parsed.query_pairs() {
+        match &*key {
+            "state" => {
+                states += 1;
+                exact &= !value.is_empty() && value.len() <= 256;
+            }
+            "redirect_uri" => {
+                redirects += 1;
+                exact &= value == CALLBACK;
+            }
+            _ => {}
+        }
+    }
+    exact && states == 1 && redirects == 1
 }
 
 /// Exact official origin and path only: no credentials, port, fragment or
@@ -76,6 +108,9 @@ impl Sequence {
                     "timeout" => Outcome::Timeout,
                     _ => Outcome::Failed,
                 };
+                if outcome == Outcome::Ready && !self.url {
+                    return Err(());
+                }
                 self.result = Some(outcome);
                 Ok(Step::Result(outcome))
             }
@@ -111,11 +146,34 @@ mod tests {
         assert!(!valid_code(&"a".repeat(4097)));
     }
     #[test]
+    fn browser_url_needs_one_state_and_the_exact_official_callback() {
+        let base = "https://claude.com/cai/oauth/authorize?code=true&client_id=x";
+        let cb = "redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback";
+        assert!(browser_ready(&format!("{base}&{cb}&state=abc")));
+        for bad in [
+            format!("{base}&state=abc"),
+            format!("{base}&{cb}"),
+            format!("{base}&{cb}&state=abc&state=def"),
+            format!("{base}&{cb}&{cb}&state=abc"),
+            format!("{base}&{cb}&state="),
+            format!("{base}&redirect_uri=https%3A%2F%2Fevil.test%2Fcb&state=abc"),
+            format!(
+                "{base}&redirect_uri=http%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=abc"
+            ),
+            format!("{base}&{cb}%2F&state=abc"),
+            format!("https://claude.com.evil.test/cai/oauth/authorize?{cb}&state=a"),
+        ] {
+            assert!(!browser_ready(&bad), "{bad}");
+        }
+    }
+    #[test]
     fn url_at_most_once_then_exactly_one_result_and_nothing_after() {
         let mut s = Sequence::default();
         assert!(matches!(s.accept(URL.as_bytes()), Ok(Step::Url(_))));
         assert!(s.accept(URL.as_bytes()).is_err());
         let mut s = Sequence::default();
+        assert!(s.accept(br#"{"event":"result","result":"ready"}"#).is_err());
+        assert!(matches!(s.accept(URL.as_bytes()), Ok(Step::Url(_))));
         assert!(matches!(
             s.accept(br#"{"event":"result","result":"ready"}"#),
             Ok(Step::Result(Outcome::Ready))

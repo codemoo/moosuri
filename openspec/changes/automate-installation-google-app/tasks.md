@@ -1485,3 +1485,18 @@ source-specific results are retained in the
 LC03 automatic API-swap, LC05 authenticated-worker reboot, LC06 generation-wide
 reclaim and LC07 member enrollment remain open. Preparation and synthetic Active
 fixtures do not close real login, model inference, Google/OAuth or Gmail goals.
+
+### Same-Kiri Claude authentication — verified partial unit
+
+- [x] Integrate the private headful browser, session-bound frame/input and automatic official callback delivery into the existing subscription flow.
+- [x] Verify installed screen/session/stale-input/cancel/restart/logout and synthetic callback boundaries on Linux; resolve material independent review findings and document each scope limit.
+- [ ] Verify the real provider callback/SSO and K06 with the owner's fresh authentication; do not borrow reviewer credentials or count synthetic callbacks as provider acceptance.
+
+[Six supporting journeys and current evidence](../../../docs/reviews/2026-11-27-claude-kiri-auth.md)
+expand the existing 61 journeys without replacing their full installation/Google/
+model/Gmail acceptance gates. Installed K01/K02/K03/K05a–c passed, and actual
+Chromium U01–U03 passed again after correcting the unreadable mobile frame with
+expand/pan controls. Native browser166/model-setup53/render3 and UI25 passed;
+independent21/39/17-turn official Claude reviews closed the material source
+findings. Real account/inference and a final-source empty install remain open.
+Production stays dee84754; this unit is a tested source candidate.

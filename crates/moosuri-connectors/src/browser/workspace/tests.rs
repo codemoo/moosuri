@@ -221,6 +221,7 @@ async fn fixture() -> (
             ignored_targets: HashSet::new(),
             last_links: None,
             human_interacted: false,
+            private_auth: false,
         },
         state,
         server,

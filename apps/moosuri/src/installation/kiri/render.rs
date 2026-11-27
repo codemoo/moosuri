@@ -326,6 +326,9 @@ mod tests {
             "--vault-adapter-key-file /etc/moosuri/vault-adapter.key",
             "--google-runtime-socket /run/moosuri-google-browser/runtime.sock",
             "--google-runtime-installation 11111111-1111-4111-8111-111111111111",
+            // Own Claude sign-in reuses the Google capsule inventory and its
+            // root startup lock; the installer supplies no second config.
+            "--claude-browser-capsule-config /etc/moosuri/google-browser.json",
         ] {
             assert!(text.contains(expected), "{expected}");
         }

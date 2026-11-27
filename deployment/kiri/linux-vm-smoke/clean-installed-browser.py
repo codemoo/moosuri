@@ -57,7 +57,7 @@ def main():
                         help='Run actual web joining/recovery branches on this synthetic installation')
     parser.add_argument('--post-invitation-reboot', action='store_true')
     parser.add_argument('--claude-journeys', action='store_true',
-                        help='Admin UI official Claude URL/cancel only; no account authentication or inference')
+                        help='Admin UI private Kiri Claude screen/cancel; no account authentication or inference')
     parser.add_argument('--claude-structure-only', action='store_true',
                         help='Only U01/U03; do not initiate provider login preparation')
     parser.add_argument('--claude-lifecycle', action='store_true',

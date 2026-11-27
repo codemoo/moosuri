@@ -287,3 +287,20 @@ Reboot reconstructs the same owned services and bindings, not a second login.
 These are the target contracts for the remaining subscription unit. Credential-
 free Linux preparation and startup evidence is not successful official login,
 model inference, product UI integration or C01 acceptance.
+
+### Same-Kiri Claude screen
+
+The administrator setup supervisor owns a private Claude browser attempt and the
+existing official CLI child. The gateway reads the existing pinned Google Chrome
+capsule config and shares the Google broker's startup flock and two-container
+inventory. A narrowly typed worker mode reuses headful Chrome, private X display,
+frame proofs and human input; it exposes no page observation or arbitrary script
+operation. The general conversation browser and optional legacy SSH bridge are
+not part of this path. No new service, credential store or model is introduced.
+
+The official CLI2.1.322 artifact identifies the manual redirect as
+`https://platform.claude.com/oauth/code/callback` and accepts `code#state` with a
+state comparison. The private browser must intercept the exact matching top-level
+callback before rendering it. This source evidence guides implementation; actual
+provider callback acceptance remains an independent, unexecuted gate until an
+owner authenticates. Preparation or synthetic callback evidence is not real login.

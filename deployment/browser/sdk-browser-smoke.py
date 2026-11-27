@@ -14,9 +14,18 @@ from uuid import uuid4
 p = argparse.ArgumentParser()
 p.add_argument('--image', required=True)
 p.add_argument('--test-binary', required=True)
-cases = ("valid", "wrong_state", "iframe", "popup", "subresource", "burst", "retry_after_error")
-p.add_argument('--case', choices=cases)
+p.add_argument('--claude', action='store_true', help='Private Claude callback instead of Google SDK')
+p.add_argument('--docker-host', default='unix:///var/run/docker.sock',
+               choices=('unix:///var/run/docker.sock', 'unix:///run/kiri/docker.sock'))
+p.add_argument('--case')
 a = p.parse_args()
+cases = (("valid", "wrong_state", "iframe", "popup", "subresource", "cancel") if a.claude else
+         ("valid", "wrong_state", "iframe", "popup", "subresource", "burst", "retry_after_error"))
+if a.case and a.case not in cases:
+    p.error('case must be one of: '+', '.join(cases))
+test = ('browser::workspace::claude::browser_tests::actual_chrome_binds_private_claude_callback'
+        if a.claude else 'browser::google_auth::sdk::tests::actual_chrome_intercepts_only_the_bound_top_level_callback')
+case_env = 'MOOSURI_CLAUDE_TEST_CASE' if a.claude else 'MOOSURI_SDK_TEST_CASE'
 root = Path(__file__).resolve().parent
 binary = Path(a.test_binary).resolve(strict=True)
 assert binary.is_file() and os.access(binary, os.X_OK)
@@ -28,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='moosuri-sdk-browser-') as directory:
     script = Path(directory) / 'entrypoint.sh'
     script.write_text(entry.replace(old, '/usr/local/bin/sdk-browser-tests "$@"'))
     script.chmod(0o555)
-    docker = ['docker', '--host=unix:///var/run/docker.sock']
+    docker = ['docker', '--host=' + a.docker_host]
     for scenario in (a.case,) if a.case else cases:
         name = 'moosuri-sdk-browser-test-' + uuid4().hex
         try:
@@ -43,11 +52,11 @@ with tempfile.TemporaryDirectory(prefix='moosuri-sdk-browser-') as directory:
                 '--tmpfs=/run:rw,noexec,nosuid,size=1m,mode=0755', '--shm-size=256m',
                 '--env=MOOSURI_BROWSER_PROXY_IP=10.42.17.2',
                 '--env=MOOSURI_BROWSER_TENANT=' + str(uuid4()),
-                '--env=MOOSURI_SDK_TEST_CASE=' + scenario,
+                '--env=' + case_env + '=' + scenario,
                 '--mount=type=bind,src=' + str(binary) + ',dst=/usr/local/bin/sdk-browser-tests,readonly',
                 '--mount=type=bind,src=' + str(script) + ',dst=/capsule/sdk-test-entry.sh,readonly',
                 '--entrypoint=/usr/bin/tini', a.image, '--', '/capsule/sdk-test-entry.sh',
-                '--ignored', '--exact', 'browser::google_auth::sdk::tests::actual_chrome_intercepts_only_the_bound_top_level_callback',
+                '--ignored', '--exact', test,
                 '--nocapture',
             ], timeout=90)
             if result.returncode != 0:

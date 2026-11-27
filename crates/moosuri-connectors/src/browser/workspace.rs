@@ -39,6 +39,8 @@ pub struct BrowserWorkspace {
     ignored_targets: HashSet<String>,
     last_links: Option<(Identity, Vec<String>)>,
     human_interacted: bool,
+    // Only the sealed authentication controller can select this identity policy.
+    private_auth: bool,
 }
 macro_rules! bounded {
     ($this:ident, $operation:expr) => {{
@@ -53,6 +55,8 @@ macro_rules! bounded {
     }};
 }
 mod tabs;
+// Narrow Claude sign-in controller; must follow `bounded!` and stay inside `browser`.
+pub(super) mod claude;
 impl BrowserWorkspace {
     fn clear_proofs(&mut self) {
         self.proof = None;
@@ -90,6 +94,7 @@ impl BrowserWorkspace {
             ignored_targets: HashSet::new(),
             last_links: None,
             human_interacted: false,
+            private_auth: false,
         })
     }
     /// Fresh target only, with no prior URL, POST, input or handle restored.
@@ -156,7 +161,9 @@ impl BrowserWorkspace {
             loader: string(frame, "loaderId")?,
             url: {
                 let url = string(frame, "url")?;
-                if url == "about:blank" {
+                if self.private_auth {
+                    claude::identity_url(&url)?
+                } else if url == "about:blank" {
                     url
                 } else {
                     net::public_url(&url)?.to_string()

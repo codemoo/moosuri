@@ -379,3 +379,28 @@ SHALL remain read-only; old public catalog revisions SHALL NOT be republished.
 #### Scenario: A deployed version-two connection receipt exists
 - **WHEN** the updated gateway reads a valid version-two connect receipt
 - **THEN** it preserves that connection's ownership and recovery semantics, without interpreting it as a disconnect or accepting legacy unbound version-one authority
+
+### Requirement: Claude authentication stays inside the member Kiri screen
+The existing subscription flow SHALL use fresh Kiri Chrome for the initiating
+session and deliver the matching official callback privately to its CLI child.
+Authentication URLs, codes, frames and input SHALL NOT enter conversations,
+model requests, receipts or logs. Frame/input access SHALL require the current
+owner and initiating session. Uncertain input SHALL NOT be replayed.
+
+#### Scenario: Fresh setup and same-session reload
+- **WHEN** the administrator starts their own subscription login and reloads the management page
+- **THEN** the same session resumes its existing Kiri screen and no second login or profile is created
+
+#### Scenario: Another session cannot view or control authentication
+- **WHEN** another session of the same owner or a different member requests a frame or input
+- **THEN** it receives no authentication frame, URL, code or control; the initiating session remains usable
+
+#### Scenario: Only the matching callback completes the official child
+- **WHEN** the private browser reaches the official top-level callback with its original state
+- **THEN** the one-use code reaches the existing child once and never appears in the screen API
+- **AND** a wrong state, duplicate parameter, alternate origin or repeated callback cannot activate a connection
+
+#### Scenario: Cancellation and interruption retain cleanup ownership
+- **WHEN** cancellation, authorization loss or gateway restart interrupts authentication
+- **THEN** the browser and official child are cleaned before the setup slot is released
+- **AND** unconfirmed cleanup remains recoverable rather than being reported as completed

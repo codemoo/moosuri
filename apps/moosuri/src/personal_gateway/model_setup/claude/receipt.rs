@@ -9,11 +9,14 @@ use crate::engine_login::{Endpoint, Owner, model_catalog};
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 const FILE: &str = "claude-subscription-operation.json";
 const PENDING: &str = "claude-subscription-operation.pending";
-/// Connect receipts keep the public v2 shape byte-for-byte (the new fields are
-/// omitted), so v2 files stay readable and writable. Only a disconnect receipt
-/// is v3; v1 and any other version are refused as before.
+/// Legacy connect v2 and disconnect v3 remain readable. A v4 connect receipt
+/// durably holds a browser-start intent until actual cleanup is acknowledged.
 pub(super) const VERSION: u32 = 2;
 const DISCONNECT_VERSION: u32 = 3;
+const BROWSER_VERSION: u32 = 4;
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 /// What the one operation receipt is for. A disconnect names the connection
 /// revision it removes in `target_revision`; its own `request_id` is only the
@@ -58,6 +61,8 @@ pub(super) struct Receipt {
     pub mode: Mode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_revision: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub browser_pending: bool,
 }
 /// How the currently published config relates to one receipt's request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,11 +190,20 @@ impl Receipt {
     fn well_formed(&self) -> bool {
         let lifecycle = matches!(self.state, Stage::Disconnecting | Stage::Disconnected);
         match (self.version, self.mode) {
-            (VERSION, Mode::Connect) => self.target_revision.is_none() && !lifecycle,
+            (VERSION, Mode::Connect) => {
+                self.target_revision.is_none() && !lifecycle && !self.browser_pending
+            }
+            (BROWSER_VERSION, Mode::Connect) => {
+                self.target_revision.is_none()
+                    && !lifecycle
+                    && self.browser_pending
+                    && !self.state.terminal()
+            }
             (DISCONNECT_VERSION, Mode::Disconnect) => {
                 self.target_revision
                     .is_some_and(|t| !t.is_nil() && t != self.request_id)
                     && self.replace_revision.is_none()
+                    && !self.browser_pending
                     && (lifecycle || self.state == Stage::CleanupPending)
             }
             _ => false,
@@ -226,7 +240,11 @@ pub(super) fn read_receipt(d: &File) -> io::Result<Option<Receipt>> {
 }
 pub(super) fn write_receipt(d: &File, r: &Receipt) -> io::Result<()> {
     let mut r = r.clone();
-    r.version = r.mode.version();
+    r.version = if r.browser_pending {
+        BROWSER_VERSION
+    } else {
+        r.mode.version()
+    };
     if !r.well_formed() {
         return Err(io::ErrorKind::InvalidData.into());
     }

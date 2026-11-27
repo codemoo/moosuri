@@ -5,9 +5,9 @@ import { PersonalClaudeSetup } from "./PersonalClaudeSetup";
 import { PersonalEngineSetup } from "./PersonalEngineSetup";
 
 afterEach(() => vi.unstubAllGlobals());
-const official = "https://claude.com/cai/oauth/authorize?code=true&state=synthetic";
 const current = "11111111-1111-4111-8111-111111111111";
 type Call = { url: string; method: string; body?: Record<string, unknown> };
+const pixels = { frame_token: "frame-1", png_base64: "iVBORw0KGgo=", width: 400, height: 800, url: "https://claude.ai" };
 
 /** Stubs fetch; `subscription` answers the subscription endpoint. */
 function serve(subscription: (call: Call, calls: Call[]) => Response | Promise<Response>, other?: () => Response) {
@@ -36,109 +36,115 @@ async function begin() {
   await user.click(start);
   return user;
 }
+/** Answers status/frame for the initiating session while the stage is `awaiting_code`. */
+function owner(id: () => string, stage: () => string) {
+  return (call: Call) => {
+    if (call.body?.op === "frame") {
+      return stage() === "awaiting_code"
+        ? Response.json({ ...op(id(), stage(), { browser_available: true }), frame: pixels })
+        : Response.json(op(id(), stage()));
+    }
+    return Response.json(op(id(), stage(), stage() === "awaiting_code" ? { browser_available: true } : {}));
+  };
+}
 
-it("needs explicit hosting acceptance, links only the official page and sends the code once", async () => {
+it("needs explicit hosting acceptance, shows the login in the same page and finishes without any code entry", async () => {
   let id = ""; let stage = "preparing";
+  const answer = owner(() => id, () => stage);
   const calls = serve(call => {
-    const body = call.body;
     if (call.method === "GET") return Response.json(idle);
-    if (body?.op === "start") { id = String(body.request_id); return Response.json(op(id, "preparing")); }
-    if (body?.op === "code") { stage = "ready"; return Response.json(op(id, "verifying")); }
-    if (stage === "preparing") stage = "awaiting_code";
-    return Response.json(stage === "awaiting_code" ? op(id, stage, { authorization_url: official }) : op(id, stage));
+    if (call.body?.op === "start") { id = String(call.body.request_id); stage = "awaiting_code"; return Response.json(op(id, "preparing")); }
+    return answer(call);
   });
   const props = view();
-  const user = await begin();
-  const link = await screen.findByRole("link", { name: "Claude 로그인 열기" });
-  expect(link).toHaveAttribute("href", official);
-  expect(link).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
-  expect(link).toHaveAttribute("referrerpolicy", "no-referrer");
-  const input = screen.getByLabelText("로그인 코드");
-  await user.type(input, "synthetic-code-1234");
-  await user.click(screen.getByRole("button", { name: "코드 제출" }));
+  await begin();
+  expect(await screen.findByAltText("Claude 로그인 화면")).toBeInTheDocument();
+  expect(screen.queryByLabelText("로그인 코드")).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Claude 로그인/ })).not.toBeInTheDocument();
+  stage = "ready"; // the server captured the callback by itself
   await waitFor(() => expect(props.onSaved).toHaveBeenCalledOnce());
   const start = calls.find(c => c.body?.op === "start")!.body!;
   expect(start).toMatchObject({ email: "owner@example.test", model: "claude-sonnet-5-5", effort: "medium", hosting_terms_accepted: true });
   expect(start).not.toHaveProperty("replace_revision");
-  expect(calls.filter(c => c.body?.op === "code")).toHaveLength(1);
-  expect(screen.queryByRole("link", { name: "Claude 로그인 열기" })).not.toBeInTheDocument();
+  expect(calls.some(c => c.body?.op === "code")).toBe(false);
+  expect(screen.queryByAltText("Claude 로그인 화면")).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("연결되었습니다");
-  expect(JSON.stringify(localStorage) + JSON.stringify(sessionStorage)).not.toContain("synthetic-code-1234");
-  expect(document.body.innerHTML).not.toContain("synthetic-code-1234");
 });
 
-it("never turns a foreign sign-in address into a link", async () => {
-  let id = "";
-  serve(call => {
-    if (call.method === "GET") return Response.json(idle);
-    if (call.body?.op === "start") { id = String(call.body.request_id); return Response.json(op(id, "preparing")); }
-    return Response.json(op(id, "awaiting_code", { authorization_url: "https://claude.com.evil.test/cai/oauth/authorize?x=1" }));
-  });
+it("shows another session of the same owner only the status: no screen, input or cancel", async () => {
+  const resumed = "22222222-2222-4222-8222-222222222222";
+  const calls = serve(() => Response.json(op(resumed, "awaiting_code")));
   view();
-  await begin();
   expect(await screen.findByText(/로그인을 시작한 세션에서/)).toBeInTheDocument();
-  expect(screen.queryByLabelText("로그인 코드")).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: "Claude 로그인 열기" })).not.toBeInTheDocument();
+  await new Promise(resolve => setTimeout(resolve, 60));
+  expect(screen.queryByAltText("Claude 로그인 화면")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("선택한 칸에 입력")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "취소" })).not.toBeInTheDocument();
+  expect(calls.some(c => c.body?.op === "frame" || c.body?.op === "input")).toBe(false);
 });
 
 it("inspects a lost start reply and never starts a second login", async () => {
   let id = "";
+  const answer = owner(() => id, () => "awaiting_code");
   const calls = serve(call => {
     if (call.method === "GET") return Response.json(idle);
     if (call.body?.op === "start") { id = String(call.body.request_id); throw new TypeError("synthetic response lost"); }
-    return Response.json(op(id, "awaiting_code", { authorization_url: official }));
+    return answer(call);
   });
   view();
   await begin();
-  expect(await screen.findByRole("link", { name: "Claude 로그인 열기" })).toBeInTheDocument();
+  expect(await screen.findByAltText("Claude 로그인 화면")).toBeInTheDocument();
   expect(calls.filter(c => c.body?.op === "start")).toHaveLength(1);
   expect(calls.find(c => c.body?.op === "status")!.body!.request_id).toBe(id);
 });
 
-it("does not resubmit a code whose reply was lost and asks again only if it was not taken", async () => {
-  let id = "";
+it("drops the screen and stops every request when the administrator loses authority", async () => {
+  let id = ""; let revoked = false;
+  const answer = owner(() => id, () => "awaiting_code");
   const calls = serve(call => {
     if (call.method === "GET") return Response.json(idle);
-    if (call.body?.op === "start") { id = String(call.body.request_id); return Response.json(op(id, "awaiting_code", { authorization_url: official })); }
-    if (call.body?.op === "code") throw new TypeError("synthetic response lost");
-    return Response.json(op(id, "awaiting_code", { authorization_url: official }));
-  });
-  view();
-  const user = await begin();
-  const input = await screen.findByLabelText("로그인 코드");
-  await user.type(input, "synthetic-code-1234");
-  await user.click(screen.getByRole("button", { name: "코드 제출" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("코드 전달을 확인하지 못했습니다");
-  expect(calls.filter(c => c.body?.op === "code")).toHaveLength(1);
-  expect(screen.getByLabelText("로그인 코드")).toHaveValue("");
-});
-
-it("drops the link and stops polling when the administrator loses authority", async () => {
-  let id = "";
-  const calls = serve(call => {
-    if (call.method === "GET") return Response.json(idle);
-    if (call.body?.op === "start") { id = String(call.body.request_id); return Response.json(op(id, "awaiting_code", { authorization_url: official })); }
-    return new Response(null, { status: 403 });
+    if (call.body?.op === "start") { id = String(call.body.request_id); return Response.json(op(id, "awaiting_code", { browser_available: true })); }
+    return revoked ? new Response(null, { status: 403 }) : answer(call);
   });
   const props = view();
   await begin();
+  await screen.findByAltText("Claude 로그인 화면");
+  revoked = true;
   await waitFor(() => expect(props.unavailable).toHaveBeenCalledOnce());
-  expect(screen.queryByRole("link", { name: "Claude 로그인 열기" })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("로그인 코드")).not.toBeInTheDocument();
+  expect(screen.queryByAltText("Claude 로그인 화면")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("선택한 칸에 입력")).not.toBeInTheDocument();
+  await new Promise(resolve => setTimeout(resolve, 40));
   const seen = calls.length;
   await new Promise(resolve => setTimeout(resolve, 80));
   expect(calls.length).toBe(seen);
 });
 
-it("resumes an unfinished operation after reload and offers an explicit restart when interrupted", async () => {
+it("resumes the initiating session's screen after reload without starting again", async () => {
   const resumed = "22222222-2222-4222-8222-222222222222";
-  const calls = serve(call => call.method === "GET"
-    ? Response.json(op(resumed, "awaiting_code", { authorization_url: official }))
-    : Response.json(op(resumed, "awaiting_code", { authorization_url: official })));
+  const calls = serve(call => call.body?.op === "frame"
+    ? Response.json({ ...op(resumed, "awaiting_code", { browser_available: true }), frame: pixels })
+    : Response.json(op(resumed, "awaiting_code", { browser_available: true })));
   view();
-  expect(await screen.findByRole("link", { name: "Claude 로그인 열기" })).toBeInTheDocument();
+  expect(await screen.findByAltText("Claude 로그인 화면")).toBeInTheDocument();
   expect(calls.some(c => c.body?.op === "start")).toBe(false);
 });
+
+it("cancels a live login with the same cancel request", async () => {
+  const id = "88888888-8888-4888-8888-888888888888";
+  let cancelled = false;
+  const calls = serve(call => {
+    if (call.body?.op === "cancel") { cancelled = true; return Response.json(op(id, "cancelled")); }
+    if (call.body?.op === "frame") return cancelled ? Response.json(op(id, "cancelled")) : Response.json({ ...op(id, "awaiting_code", { browser_available: true }), frame: pixels });
+    return Response.json(op(id, cancelled ? "cancelled" : "awaiting_code", cancelled ? {} : { browser_available: true }));
+  });
+  view();
+  await screen.findByAltText("Claude 로그인 화면");
+  await userEvent.setup().click(screen.getByRole("button", { name: "취소" }));
+  expect(await screen.findByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+  expect(calls.find(c => c.body?.op === "cancel")!.body).toEqual({ op: "cancel", request_id: id });
+  expect(screen.queryByAltText("Claude 로그인 화면")).not.toBeInTheDocument();
+});
+
 it("recovers an interrupted operation only through the authenticated cleanup request, then allows a fresh start", async () => {
   const orphan = "33333333-3333-4333-8333-333333333333";
   let cleaned = false;
@@ -178,7 +184,7 @@ it("shows an unfinished operation of this owner when a new start is refused", as
   expect(screen.getByRole("status")).toHaveTextContent("중단되었습니다");
 });
 
-it("keeps cleanup_pending retryable with the same cancel request and leaves no code behind", async () => {
+it("keeps cleanup_pending retryable with the same cancel request and shows no screen", async () => {
   const pendingId = "66666666-6666-4666-8666-666666666666";
   const calls = serve(call => call.method === "GET" || call.body?.op === "status"
     ? Response.json(op(pendingId, "cleanup_pending"))
@@ -187,8 +193,7 @@ it("keeps cleanup_pending retryable with the same cancel request and leaves no c
   const retry = await screen.findByRole("button", { name: "정리 다시 시도" });
   await userEvent.setup().click(retry);
   await waitFor(() => expect(calls.filter(c => c.body?.op === "cancel")).toHaveLength(1));
-  expect(screen.queryByLabelText("로그인 코드")).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: "Claude 로그인 열기" })).not.toBeInTheDocument();
+  expect(screen.queryByAltText("Claude 로그인 화면")).not.toBeInTheDocument();
 });
 
 it("never accepts another request's ready state", async () => {

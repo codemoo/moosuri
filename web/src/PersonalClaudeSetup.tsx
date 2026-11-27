@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
+import { PersonalClaudeBrowser } from "./PersonalClaudeBrowser";
 
 export type ClaudeStage = "preparing" | "awaiting_code" | "verifying" | "activating" | "ready" | "cancelled" | "failed" | "interrupted" | "cleanup_pending" | "disconnecting" | "disconnected";
-type Operation = { request_id: string; state: ClaudeStage; kind?: string; authorization_url?: string; connection_revision?: string };
+type Operation = { request_id: string; state: ClaudeStage; kind?: string; browser_available?: boolean; connection_revision?: string };
 type Reply = { operation?: Operation | null };
 const path = "/personal/admin/engine/subscription";
 const stages: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "ready", "cancelled", "failed", "interrupted", "cleanup_pending", "disconnecting", "disconnected"];
 const active: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "cleanup_pending", "disconnecting"];
 const label: Record<ClaudeStage, string> = {
   preparing: "로그인을 준비하고 있습니다…",
-  awaiting_code: "Claude 로그인 후 표시되는 코드를 입력해 주세요.",
-  verifying: "로그인 코드를 확인하고 있습니다…",
+  awaiting_code: "아래 화면에서 Claude에 로그인해 주세요. 로그인이 끝나면 자동으로 이어집니다.",
+  verifying: "로그인 결과를 확인하고 있습니다…",
   activating: "구독 연결을 활성화하고 있습니다…",
   ready: "내 Claude 구독이 연결되었습니다. 다른 회원은 각자의 구독 연결이 준비되기 전까지 이 모델을 쓸 수 없습니다.",
   cancelled: "설정이 취소되었습니다. 기존 연결은 그대로입니다.",
@@ -23,22 +24,13 @@ const label: Record<ClaudeStage, string> = {
 };
 const hostingTerms = "https://code.claude.com/docs/en/legal-and-compliance";
 
-/** Only the vetted official sign-in page may ever become a link target. */
-export function officialAuthorizationUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 4096 || !value.startsWith("https://claude.com/cai/oauth/authorize?")) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "claude.com" && url.port === "" && !url.username && !url.password
-      && !url.hash && url.pathname === "/cai/oauth/authorize" ? url.href : null;
-  } catch { return null; }
-}
 function known(value: unknown): value is Operation {
   const op = value as Operation | null;
   return !!op && typeof op.request_id === "string" && stages.includes(op.state);
 }
 
-/** Own-subscription Claude setup. The code lives only in a password input and one
- * request; the sign-in URL only in memory while the exact operation awaits it. */
+/** Own-subscription Claude setup. Sign-in happens in the private browser screen
+ * of the initiating session; no sign-in address or code ever reaches this page. */
 export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevision, onSaved, onDisconnected, expired, unavailable, onActive, pollMs = 1000 }: {
   account: string; replaceRevision?: string | null; onSaved: () => void; expired: () => void; unavailable: () => void;
   /** Set while this installation's own subscription is connected: offers the explicit disconnect. */
@@ -56,22 +48,21 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   const emailInput = useRef<HTMLInputElement>(null);
   const modelInput = useRef<HTMLInputElement>(null);
   const effortInput = useRef<HTMLSelectElement>(null);
-  const codeInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
+  const authorityLost = useRef(false);
   const request = useRef<string>(crypto.randomUUID());
   const saved = useRef<string | null>(null);
   const replacing = replaceRevision !== undefined;
   const missingRevision = replacing && !replaceRevision;
 
   function clear() {
-    if (codeInput.current) codeInput.current.value = "";
     setOp(null); setBusy(false); pending.current = false;
   }
   /** True when the failure ended this flow (authority lost) or was an abort. */
   function fail(e: unknown): boolean {
     if (isAborted(e)) return true;
-    if (e instanceof ApiFailure && e.status === 401) { clear(); expired(); return true; }
-    if (e instanceof ApiFailure && e.status === 403) { clear(); unavailable(); return true; }
+    if (e instanceof ApiFailure && e.status === 401) { clear(); if (!authorityLost.current) { authorityLost.current = true; expired(); } return true; }
+    if (e instanceof ApiFailure && e.status === 403) { clear(); if (!authorityLost.current) { authorityLost.current = true; unavailable(); } return true; }
     return false;
   }
   function adopt(next: unknown) {
@@ -108,9 +99,9 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
   }
   useEffect(() => {
     const cancel = new AbortController();
-    request.current = crypto.randomUUID(); saved.current = null;
+    request.current = crypto.randomUUID(); saved.current = null; authorityLost.current = false;
     void resume(cancel.signal);
-    return () => { cancel.abort(); if (codeInput.current) codeInput.current.value = ""; setOp(null); };
+    return () => { cancel.abort(); setOp(null); };
   }, [scope]);
 
   const polling = op !== null && active.includes(op.state);
@@ -164,27 +155,6 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
       } else await inspect(id); // A lost reply may follow a started login: inspect, never start twice.
     } finally { pending.current = false; setBusy(false); }
   }
-  async function submitCode(event: FormEvent) {
-    event.preventDefault();
-    if (pending.current || op?.state !== "awaiting_code") return;
-    const entered = codeInput.current?.value ?? "";
-    if (entered.length < 8) return;
-    if (codeInput.current) codeInput.current.value = "";
-    pending.current = true; setBusy(true); setError("");
-    const id = op.request_id;
-    try {
-      const reply = await scope.request<Reply>(path, "POST", { op: "code", request_id: id, code: entered }, undefined, { timeoutMs: 30_000 });
-      adopt(reply.operation);
-    } catch (e) {
-      if (fail(e)) return;
-      if (e instanceof ApiFailure && e.status === 400) setError("로그인 코드 형식을 확인해 주세요.");
-      else if (e instanceof ApiFailure && e.status === 409) setError("지금은 코드를 받을 수 없습니다. 상태를 확인해 주세요.");
-      else if (!(e instanceof ApiFailure)) {
-        // The code may have been delivered. Inspect; ask again only if it was not.
-        if (await inspect(id) === "awaiting_code") setError("코드 전달을 확인하지 못했습니다. 코드를 다시 입력해 주세요.");
-      } else setError("코드를 전달하지 못했습니다. 다시 시도해 주세요.");
-    } finally { pending.current = false; setBusy(false); }
-  }
   /** Cancel a running login, or (cleanup_pending / interrupted) ask the server
    * to retire what the unfinished setup left behind. Both are the same
    * authenticated request for this exact operation. */
@@ -222,7 +192,7 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
     request.current = crypto.randomUUID(); saved.current = null; setError(""); setOp(null);
   }
 
-  const link = op?.state === "awaiting_code" ? officialAuthorizationUrl(op.authorization_url) : null;
+  const screen = op?.state === "awaiting_code" && op.browser_available === true;
   return <div className="management-list" data-testid="claude-subscription-setup">
     {error && <p role="alert" className="preview-error">{error}</p>}
     {!op && disconnectRevision && <div className="management-list">
@@ -235,7 +205,7 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
     {!op && !disconnectRevision && <form className="management-list" onSubmit={start}>
       <p className="management-row management-note">{replacing
         ? "내 Claude 구독으로 현재 연결을 교체합니다. 로그인이 끝나기 전에는 기존 연결이 유지됩니다."
-        : "이 설치의 Claude 연결로 내 Claude 구독을 사용합니다. Claude에 로그인한 뒤 표시되는 코드를 여기에 입력합니다."}</p>
+        : "이 설치의 Claude 연결로 내 Claude 구독을 사용합니다. 같은 화면 안의 안전한 로그인 창에서 Claude에 로그인하면 자동으로 연결됩니다."}</p>
       <label className="management-row management-field"><span>Claude 계정 이메일</span><input ref={emailInput} type="email" autoComplete="off" required maxLength={254} disabled={busy}/></label>
       <label className="management-row management-field"><span>구독 모델 ID</span><input ref={modelInput} defaultValue="claude-sonnet-5-5" required maxLength={200} disabled={busy}/></label>
       <label className="management-row management-field"><span>구독 추론 강도</span><select aria-label="구독 추론 강도" ref={effortInput} defaultValue="medium" disabled={busy}>
@@ -250,14 +220,11 @@ export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevisi
     </form>}
     {op && <>
       <p role="status">{label[op.state]}</p>
-      {link && <p className="management-row"><a className="member-page-action" href={link} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Claude 로그인 열기</a></p>}
-      {op.state === "awaiting_code" && !link && <p className="management-note">로그인을 시작한 세션에서 계속해 주세요. 이 세션에서는 로그인 코드를 제출할 수 없습니다.</p>}
-      {op.state === "awaiting_code" && link && <form className="management-row management-field" onSubmit={submitCode}>
-        <label><span>로그인 코드</span><input ref={codeInput} type="password" autoComplete="off" spellCheck={false} required minLength={8} maxLength={4096} disabled={busy}/></label>
-        <button className="member-page-action primary" type="submit" disabled={busy}>코드 제출</button>
-      </form>}
+      {op.state === "awaiting_code" && !screen && <p className="management-note">로그인을 시작한 세션에서 계속해 주세요. 이 세션에서는 로그인 화면을 볼 수 없습니다.</p>}
+      {screen && <PersonalClaudeBrowser key={op.request_id} account={account} requestId={op.request_id} frameMs={pollMs}
+        onOperation={adopt} onFailure={fail} onRefresh={() => void inspect(op.request_id)}/>}
       <div className="management-row compatible-actions">
-        {active.includes(op.state) && op.state !== "cleanup_pending" && op.state !== "disconnecting" && (op.state !== "awaiting_code" || !!link) && <button className="member-page-action" type="button" disabled={busy} onClick={() => void cancel()}>취소</button>}
+        {active.includes(op.state) && op.state !== "cleanup_pending" && op.state !== "disconnecting" && (op.state !== "awaiting_code" || screen) && <button className="member-page-action" type="button" disabled={busy} onClick={() => void cancel()}>취소</button>}
         {(op.state === "cleanup_pending" || op.state === "interrupted") && <button className="member-page-action" type="button" disabled={busy} onClick={() => void cancel()}>{op.state === "interrupted" ? "중단된 설정 정리" : "정리 다시 시도"}</button>}
         {["cancelled", "failed", "disconnected"].includes(op.state) && <button className="member-page-action" type="button" onClick={again}>다시 시도</button>}
       </div>

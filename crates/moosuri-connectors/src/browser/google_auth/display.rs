@@ -7,7 +7,8 @@ use tokio::{
     process::{Child, Command},
 };
 
-pub(super) struct Display(Child);
+/// Shared with the Claude sign-in worker (same image, same private X contract).
+pub(in crate::browser) struct Display(Child);
 impl Display {
     pub async fn start() -> Result<Self, Error> {
         let root = "/tmp/moosuri-google-display";

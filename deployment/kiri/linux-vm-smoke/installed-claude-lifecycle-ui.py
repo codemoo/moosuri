@@ -33,9 +33,9 @@ def run(browser, args, members):
         page.get_by_label('Claude 계정 이메일', exact=True).fill('synthetic-owner@example.test')
         page.get_by_label('호스팅 조건을 확인했고, 제 구독을 이 설치에서 호스팅하는 데 동의합니다').check()
         page.get_by_role('button', name='구독 로그인 시작', exact=True).click()
-        expect(page.get_by_role('link', name='Claude 로그인 열기', exact=True)).to_be_visible(timeout=240000)
+        expect(page.get_by_alt_text('Claude 로그인 화면', exact=True)).to_be_visible(timeout=240000)
         page.get_by_test_id('claude-subscription-setup').get_by_role('button', name='취소', exact=True).click()
         expect(page.get_by_test_id('claude-subscription-setup').get_by_role('status')).to_contain_text('취소', timeout=180000)
-        print('PASS DU03 fresh login reaches official URL and cancels after disconnect', flush=True)
+        print('PASS DU03 fresh login reaches Kiri screen and cancels after disconnect', flush=True)
     finally:
         context.close()

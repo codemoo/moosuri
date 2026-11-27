@@ -12,6 +12,7 @@ mod sdk;
 mod worker;
 pub use binding::{Binding, Envelope, PROTOCOL, Recipient};
 pub use crypto::Receiver;
+pub(in crate::browser) use display::Display;
 pub use worker::{installation_probe, serve};
 #[cfg(test)]
 mod tests;

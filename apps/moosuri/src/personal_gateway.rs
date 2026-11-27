@@ -102,6 +102,12 @@ pub struct Options {
     /// Identity from the installation-owned Google capsule configuration.
     #[arg(long, requires = "google_runtime_socket")]
     google_runtime_installation: Option<Uuid>,
+    /// Existing root-only Google capsule configuration reused for the in-app
+    /// Claude sign-in browser. It must name the same installation as
+    /// `--google-runtime-installation`; there is no default path, so an older
+    /// installation without this flag offers no browser sign-in.
+    #[arg(long, requires_all = ["model_setup", "google_runtime_installation"])]
+    claude_browser_capsule_config: Option<PathBuf>,
     /// Allow first-provider setup for the installation's managed runtime-model.
     #[arg(long, requires = "model_setup_dir")]
     model_setup: bool,
@@ -126,6 +132,7 @@ struct Gateway {
     model_setup_dir: Option<PathBuf>,
     google_jobs: google_connection::Jobs,
     claude_jobs: model_setup::claude::Jobs,
+    claude_browser: Option<model_setup::claude::browser::Runtime>,
     google_runtime: Option<google_connection::portable::Runtime>,
     vault: Option<Arc<vault::Enrollment>>,
     origin: String,
@@ -272,6 +279,7 @@ impl Gateway {
             model_setup_dir: options.model_setup_dir.clone(),
             google_jobs: Default::default(),
             claude_jobs: Default::default(),
+            claude_browser: model_setup::claude::browser::Runtime::new(options)?,
             google_runtime: google_connection::portable::Runtime::new(options)?,
             vault,
             host: origin[8..].into(),
@@ -1349,6 +1357,7 @@ mod tests {
             vault_adapter_key_file: None,
             google_runtime_socket: None,
             google_runtime_installation: None,
+            claude_browser_capsule_config: None,
             model_setup: false,
             model_setup_dir: None,
             onboard_config: None,

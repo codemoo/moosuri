@@ -123,6 +123,15 @@ async fn main() {
             1
         });
     }
+    // Narrow Claude sign-in worker: same image/capsule, its own typed protocol; it
+    // never falls through to the generic workspace/read protocol below.
+    if std::env::args().len() == 2 && std::env::args().nth(1).as_deref() == Some("--claude-auth") {
+        std::process::exit(if moosuri_connectors::browser::claude_auth::serve().await {
+            0
+        } else {
+            1
+        });
+    }
     if std::env::args().len() == 2
         && std::env::args().nth(1).as_deref() == Some("--google-installation-probe")
     {

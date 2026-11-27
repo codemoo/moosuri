@@ -1,9 +1,12 @@
 //! Trusted fixed Docker launcher for one unauthenticated rendered-page read.
 //! No command, mount, environment, action or tenant comes from model arguments.
 use super::{BrowserError, net::public_url, private_proxy};
+mod auth_inventory;
+mod claude;
 mod google;
 mod installation;
 pub(super) mod workspace;
+pub use claude::{ClaudeAttempt, ClaudeView};
 pub use google::{BootstrapOutcome, GoogleAttempt, GooglePhase};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

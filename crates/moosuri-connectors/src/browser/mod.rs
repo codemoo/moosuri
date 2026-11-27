@@ -3,6 +3,7 @@
 //! No arbitrary script, click, type, upload, credential or download API is exposed.
 pub mod capsule;
 mod cdp;
+pub mod claude_auth;
 mod confinement;
 pub mod google_auth;
 mod net;

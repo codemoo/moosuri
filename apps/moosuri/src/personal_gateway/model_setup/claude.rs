@@ -6,9 +6,14 @@
 //! token, authorization URL and code live only in memory and never in a
 //! receipt or log.
 //!
+//! The sign-in happens inside this Kiri: the helper's authorization URL goes
+//! only to a sealed browser owned by a supervisor task (`browser`), which
+//! captures the official callback itself and hands the code once to the helper.
+//! No URL or code is ever part of an HTTP request or response.
+//!
 //! Ownership semantics. The initiating session (same session token and login
-//! epoch) alone sees the URL and may submit the code or cancel a running login.
-//! Any other session of the exact same owner (account, tenant, volume,
+//! epoch) alone sees the browser frame, may send it input or cancel a running
+//! login. Any other session of the exact same owner (account, tenant, volume,
 //! generation) may read the state and, only for an operation that needs cleanup
 //! (live `cleanup_pending`, or a receipt left by a restart), take over the
 //! cleanup. No other owner sees or touches the operation.
@@ -20,6 +25,7 @@
 //! owner lease are released only after the host reports the result.
 use super::*;
 use crate::{engine_login::Owner, installation::claude_runtime::connection as host};
+use moosuri_connectors::browser::capsule::{WorkspaceFrame, WorkspaceInput};
 use serde_json::{Value, json};
 use std::process::Stdio;
 use tokio::{
@@ -28,6 +34,7 @@ use tokio::{
     sync::mpsc,
     time::{MissedTickBehavior, interval, sleep, timeout},
 };
+pub(in crate::personal_gateway) mod browser;
 mod lifecycle;
 mod protocol;
 mod receipt;
@@ -83,7 +90,10 @@ enum Stop {
 enum Op {
     Start,
     Status,
-    Code,
+    /// Latest sanitized browser frame (initiating session only).
+    Frame,
+    /// One human input to the browser frame (initiating session only).
+    Input,
     Cancel,
     /// `request_id` is the fresh operation id; `replace_revision` the exact
     /// current connection revision to disconnect. Nothing else is accepted.
@@ -104,8 +114,11 @@ struct Input {
     hosting_terms_accepted: Option<bool>,
     #[serde(default)]
     replace_revision: Option<Uuid>,
+    /// Token of the frame the input was made on (`op:input` only).
     #[serde(default)]
-    code: Option<Zeroizing<String>>,
+    frame_token: Option<String>,
+    #[serde(default)]
+    input: Option<WorkspaceInput>,
 }
 impl Input {
     fn well_formed(&self) -> bool {
@@ -114,21 +127,22 @@ impl Input {
             && self.effort.is_none()
             && self.hosting_terms_accepted.is_none()
             && self.replace_revision.is_none();
+        let no_browser = self.frame_token.is_none() && self.input.is_none();
         match self.op {
             Op::Start => {
-                self.code.is_none()
+                no_browser
                     && self.email.is_some()
                     && self.model.is_some()
                     && self.hosting_terms_accepted.is_some()
             }
-            Op::Code => bare && self.code.is_some(),
-            Op::Status | Op::Cancel => bare && self.code.is_none(),
+            Op::Input => bare && self.frame_token.is_some() && self.input.is_some(),
+            Op::Status | Op::Frame | Op::Cancel => bare && no_browser,
             Op::Disconnect => {
                 self.email.is_none()
                     && self.model.is_none()
                     && self.effort.is_none()
                     && self.hosting_terms_accepted.is_none()
-                    && self.code.is_none()
+                    && no_browser
                     && self.replace_revision.is_some()
             }
         }
@@ -207,9 +221,19 @@ pub(in crate::personal_gateway) struct Job {
     effort: Option<String>,
     stage: Stage,
     after: Stage,
-    url: Option<String>,
+    /// Hand-over to the login helper of the one code the browser captured.
     code: Option<mpsc::Sender<Zeroizing<String>>>,
     code_taken: bool,
+    /// Bounded command channel and latest sanitized frame of the live sign-in
+    /// browser. The browser itself belongs to its supervisor task, never to
+    /// this mutex; both are cleared before it shuts down.
+    browser: Option<mpsc::Sender<browser::Command>>,
+    frame: Option<WorkspaceFrame>,
+    /// The browser failed on its own (not the owner's cancel).
+    faulted: bool,
+    /// The browser may still exist (shutdown unacknowledged, or a crash left
+    /// it). Blocks every terminal state and the release of the setup slot.
+    browser_unresolved: bool,
     cancel: CancellationToken,
     committing: bool,
     revoked: bool,
@@ -254,9 +278,12 @@ impl Job {
             effort,
             stage: Stage::Preparing,
             after: Stage::Failed,
-            url: None,
             code: Some(code),
             code_taken: false,
+            browser: None,
+            frame: None,
+            faulted: false,
+            browser_unresolved: false,
             cancel,
             committing: false,
             revoked: false,
@@ -311,8 +338,14 @@ impl Job {
     fn view(&self, owner: bool) -> Value {
         let mut v = json!({"request_id":self.id,"state":self.stage,
             "model":self.model,"effort":self.effort});
-        if let (true, Stage::AwaitingCode, Some(url)) = (owner, self.stage, &self.url) {
-            v["authorization_url"] = json!(url);
+        // Never a URL or code: only the exact initiating session learns that
+        // a live browser frame exists.
+        if owner
+            && self.stage == Stage::AwaitingCode
+            && self.browser.is_some()
+            && !self.cancel.is_cancelled()
+        {
+            v["browser_available"] = json!(true);
         }
         if self.stage == Stage::Ready {
             v["connection_revision"] = json!(self.id);
@@ -322,8 +355,9 @@ impl Job {
         }
         v
     }
-    /// The code is handed to the supervisor exactly once; any repeat (a lost
-    /// reply retried) only reads the current state.
+    /// The browser's captured code is handed to the login helper exactly once;
+    /// any repeat only reads the current state. Internal only: no HTTP
+    /// operation reaches it.
     fn accept_code(&mut self, code: Zeroizing<String>) -> CodeStep {
         match self.stage {
             Stage::Preparing => CodeStep::NotReady,
@@ -361,6 +395,7 @@ impl Job {
             updated: now(),
             mode: self.mode,
             target_revision: self.target,
+            browser_pending: self.browser_unresolved,
         }
     }
 }
@@ -508,6 +543,20 @@ async fn advance(g: &Gateway, id: Uuid, stage: Stage) {
     persist(g, id).await;
 }
 async fn finish(g: &Gateway, id: Uuid, stage: Option<Stage>) {
+    // No terminal state, and so no released slot, while a sign-in browser may
+    // still exist. Callers hold first; this is the last line of defense.
+    let unresolved = with_job(g, id, |j| {
+        let unresolved = j.browser_unresolved;
+        if unresolved {
+            j.stage = Stage::CleanupPending;
+            j.retiring = false;
+        }
+        unresolved
+    });
+    if unresolved != Some(false) {
+        persist(g, id).await;
+        return;
+    }
     let Some(mut r) = with_job(g, id, |j| {
         let mut r = j.snapshot();
         r.state = stage.unwrap_or(j.after);
@@ -537,7 +586,8 @@ async fn finish(g: &Gateway, id: Uuid, stage: Option<Stage>) {
         } else {
             Stage::CleanupPending
         };
-        j.url = None;
+        j.browser = None;
+        j.frame = None;
         j.code = None;
         j.prepared = None;
         j.retiring = false;
@@ -625,7 +675,10 @@ async fn read_lines(out: ChildStdout, tx: mpsc::Sender<Msg>) {
 }
 
 /// The helper's stdin stays open until its result and exit. Ready needs a
-/// ready result, no trailing event, output EOF and OS exit status 0.
+/// ready result, no trailing event, output EOF and OS exit status 0. The
+/// authorization URL is handed only to the sealed browser; its supervisor
+/// returns the captured code through the job's one-shot hand-over.
+#[allow(clippy::too_many_arguments)]
 async fn converse(
     g: &Gateway,
     id: Uuid,
@@ -634,6 +687,7 @@ async fn converse(
     rx: &mut mpsc::Receiver<Msg>,
     code_rx: &mut mpsc::Receiver<Zeroizing<String>>,
     cancel: &CancellationToken,
+    pump: &mut Option<browser::Pump>,
 ) -> Result<(), Stop> {
     let mut seq = Sequence::default();
     let (mut exit, mut end, mut published, mut sent) = (None, false, false, false);
@@ -642,7 +696,7 @@ async fn converse(
     loop {
         if let (Some(outcome), true, Some(status)) = (seq.finished(), end, exit) {
             let status: std::process::ExitStatus = status;
-            return if outcome == Outcome::Ready && status.success() {
+            return if outcome == Outcome::Ready && status.success() && published && sent {
                 Ok(())
             } else {
                 Err(Stop::Failed)
@@ -655,14 +709,17 @@ async fn converse(
                 Some(Msg::Line(line)) => match seq.accept(&line) {
                     Ok(Step::Url(url)) => {
                         check(g, id, cancel).await?;
-                        with_job(g, id, |j| {
-                            j.url = Some(url);
-                            j.stage = Stage::AwaitingCode;
-                        });
+                        if !protocol::browser_ready(&url) {
+                            return Err(Stop::Failed);
+                        }
+                        // Ready once the browser's first frame exists; the
+                        // supervisor then sets `awaiting_code`.
+                        *pump = Some(browser::launch(g, id, url, cancel).await?);
                         published = true;
                         persist(g, id).await;
                     }
                     Ok(Step::Result(Outcome::Ready)) => {
+                        if !published || !sent { return Err(Stop::Failed); }
                         limit.as_mut().reset(tokio::time::Instant::now() + EXIT_GRACE);
                     }
                     Ok(Step::Result(Outcome::Cancelled)) => return Err(Stop::Cancelled),
@@ -720,8 +777,30 @@ async fn login(
     };
     let (tx, mut rx) = mpsc::channel(4);
     let reader = tokio::spawn(read_lines(stdout, tx));
-    let result = converse(g, id, &mut child, &mut stdin, &mut rx, code_rx, cancel).await;
+    let mut pump = None;
+    // The independent timer also bounds browser startup and the shared admission lock.
+    let login_deadline = deadline(cancel, LOGIN_LIMIT);
+    let mut result = converse(
+        g,
+        id,
+        &mut child,
+        &mut stdin,
+        &mut rx,
+        code_rx,
+        &login_deadline.0,
+        &mut pump,
+    )
+    .await;
+    if login_deadline.0.is_cancelled() && !cancel.is_cancelled() {
+        result = Err(Stop::Failed);
+    }
     if result.is_err() {
+        // Stop frame access and dispatch before waiting for any child to be reaped.
+        cancel.cancel();
+        with_job(g, id, |j| {
+            j.browser = None;
+            j.frame = None;
+        });
         let _ = child.start_kill();
     }
     drop(stdin);
@@ -732,6 +811,11 @@ async fn login(
         let _ = timeout(EXIT_GRACE, child.wait()).await;
     }
     reader.abort();
+    // The sign-in browser is shut down with an acknowledgement before this
+    // login can end; an unconfirmed shutdown is recorded on the job.
+    if let Some(pump) = pump.take() {
+        pump.finish(g, id).await;
+    }
     result
 }
 
@@ -792,6 +876,10 @@ async fn steps(
     }
     check(g, id, cancel).await?;
     login(g, id, prepared, code_rx, cancel).await?;
+    // The browser's acknowledged shutdown precedes activation.
+    if with_job(g, id, |j| j.browser_unresolved) != Some(false) {
+        return Err(Stop::Failed);
+    }
     advance(g, id, Stage::Activating).await;
     check(g, id, cancel).await?;
     let activated = {
@@ -876,13 +964,28 @@ async fn run(
         Ok(()) => Stage::Ready,
         Err(Stop::Failed) => Stage::Failed,
         Err(Stop::Cancelled) => {
-            if with_job(&g, id, |j| j.revoked).unwrap_or(true) {
+            // A browser fault cancels the login itself: that is a failure.
+            if with_job(&g, id, |j| j.revoked || j.faulted).unwrap_or(true) {
                 Stage::Failed
             } else {
                 Stage::Cancelled
             }
         }
     };
+    // The browser is gone (acknowledged) or the job holds. It never reaches
+    // cancelled, failed-and-released or ready with an unconfirmed browser;
+    // the host state stays held for the same retry (`cancel`) as any cleanup.
+    if with_job(&g, id, |j| j.browser_unresolved) != Some(false) {
+        let prepared = held.prepared;
+        with_job(&g, id, move |j| {
+            j.after = stage;
+            j.stage = Stage::CleanupPending;
+            j.retiring = false;
+            j.prepared = prepared;
+        });
+        persist(&g, id).await;
+        return;
+    }
     if held.prepared.is_none() && !held.request {
         finish(&g, id, Some(stage)).await;
         return;
@@ -890,7 +993,8 @@ async fn run(
     with_job(&g, id, |j| {
         j.after = stage;
         j.stage = Stage::CleanupPending;
-        j.url = None;
+        j.browser = None;
+        j.frame = None;
         j.retiring = true;
     });
     persist(&g, id).await;
@@ -960,6 +1064,18 @@ async fn retire(owner: Option<Owner>, id: Uuid, held: Option<&host::Prepared>) -
 /// failed or unknown result stays `cleanup_pending`; an explicit cancel by an
 /// authenticated current session of the exact owner retries it.
 async fn cleanup(g: Gateway, id: Uuid, mut prepared: Option<host::Prepared>) {
+    // Host state is touched only once no sign-in browser can still exist.
+    if with_job(&g, id, |j| j.browser_unresolved) != Some(false) {
+        if browser::inventory_confirmed(&g).await {
+            with_job(&g, id, |j| j.browser_unresolved = false);
+        } else {
+            with_job(&g, id, |j| {
+                j.prepared = prepared;
+                j.retiring = false;
+            });
+            return;
+        }
+    }
     let owner = with_job(&g, id, |j| owner_of(&j.allocation)).flatten();
     for attempt in 1..=3u64 {
         let done = match disposition(&g, id).await {
@@ -1061,7 +1177,13 @@ pub(super) async fn handle(
         match input.op {
             Op::Start => start(&g, &a, &session, input).await,
             Op::Status => status(&g, &a, &session, input.request_id).await,
-            Op::Code => code(&g, &a, &session, input).await,
+            Op::Frame => browser::frame(&g, &a, &session, input.request_id),
+            Op::Input => {
+                let (Some(token), Some(typed)) = (input.frame_token, input.input) else {
+                    return Err(StatusCode::BAD_REQUEST);
+                };
+                browser::input(&g, &a, &session, input.request_id, token, typed).await
+            }
             Op::Cancel => cancel(&g, &a, &session, input.request_id).await,
             Op::Disconnect => lifecycle::disconnect(&g, &a, &session, input).await,
         }
@@ -1179,6 +1301,11 @@ async fn start(
         (None, None) => (),
         _ => return Err(StatusCode::CONFLICT),
     }
+    // The sign-in happens only in the sealed in-app browser. An installation
+    // without it has no login path and no external-link fallback.
+    if g.claude_browser.is_none() {
+        return Err(UNAVAILABLE);
+    }
     let (_, peer) = g.socket(&a.allocation)?;
     let owner = owner_of(&a.allocation).ok_or(UNAVAILABLE)?;
     let request = host::Request {
@@ -1249,35 +1376,6 @@ async fn status(
         .filter(|r| r.request_id == id && r.owner_is(&a.allocation))
         .map(|r| wrap(r.view(seen.relation)))
         .ok_or(StatusCode::NOT_FOUND)
-}
-async fn code(
-    g: &Gateway,
-    a: &SessionAllocation,
-    session: &str,
-    input: Input,
-) -> Result<Value, StatusCode> {
-    let code = input.code.ok_or(StatusCode::BAD_REQUEST)?;
-    if !protocol::valid_code(&code) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let (view, sent) = {
-        let mut jobs = lock(g)?;
-        let j = jobs
-            .iter_mut()
-            .find(|j| j.id == input.request_id && j.owned_by(a, session))
-            .ok_or(StatusCode::NOT_FOUND)?;
-        let sent = match j.accept_code(code) {
-            CodeStep::Sent => true,
-            CodeStep::Replay => false,
-            CodeStep::NotReady => return Err(StatusCode::CONFLICT),
-            CodeStep::Unavailable => return Err(UNAVAILABLE),
-        };
-        (j.view(true), sent)
-    };
-    if sent {
-        persist(g, input.request_id).await;
-    }
-    Ok(wrap(view))
 }
 /// Cancel a running login (exact initiating session only), retry the cleanup
 /// of a live `cleanup_pending` job, or recover an orphan receipt left by a
@@ -1362,7 +1460,10 @@ async fn orphan(
         // Unreadable or mismatching config: nothing destructive is safe.
         return Ok(wrap(r.view_as(Stage::CleanupPending)));
     }
-    let job = Job::orphan(&r, a, session);
+    let mut job = Job::orphan(&r, a, session);
+    // A crash may have left a sign-in container. The exact inventory must be
+    // confirmed empty before the host record is retired or the slot released.
+    job.browser_unresolved = !disconnect && r.browser_pending;
     let view = job.view(true);
     {
         let mut jobs = lock(g)?;

@@ -43,6 +43,7 @@ fn receipt_for(a: &Allocation, id: Uuid, state: Stage) -> Receipt {
         updated: 1,
         mode: Mode::Connect,
         target_revision: None,
+        browser_pending: false,
     }
 }
 fn config_for(a: &Allocation, id: Uuid) -> Vec<u8> {
@@ -418,13 +419,15 @@ fn request_id_is_tied_to_the_full_owner_inputs_and_replace_revision() {
 }
 
 #[test]
-fn only_the_exact_initiating_session_sees_the_url_or_controls_the_job() {
+fn only_the_exact_initiating_session_sees_a_live_browser_and_nobody_sees_a_url() {
     let a = alloc(7);
     let (mut j, _rx) = job(&a, "session-token");
     j.stage = Stage::AwaitingCode;
-    j.url = Some("https://claude.com/cai/oauth/authorize?x=y".into());
+    // No live browser: not even the initiator is told one exists.
+    assert!(j.view(true).get("browser_available").is_none());
+    j.browser = Some(mpsc::channel(1).0);
     assert!(j.owned_by(&a, "session-token"));
-    assert!(j.view(true)["authorization_url"].is_string());
+    assert_eq!(j.view(true)["browser_available"], true);
     assert!(!j.owned_by(&a, "other-session"));
     let relogin = SessionAllocation {
         allocation: a.allocation.clone(),
@@ -432,8 +435,215 @@ fn only_the_exact_initiating_session_sees_the_url_or_controls_the_job() {
     };
     assert!(!j.owned_by(&relogin, "session-token"));
     assert!(j.same_admin(&relogin) && !j.same_admin(&alloc(7)));
-    assert!(j.view(false).get("authorization_url").is_none());
-    assert!(!j.view(false).to_string().contains("session-token"));
+    assert!(j.view(false).get("browser_available").is_none());
+    for view in [j.view(true), j.view(false)] {
+        let text = view.to_string();
+        assert!(view.get("authorization_url").is_none() && view.get("url").is_none());
+        assert!(!text.contains("session-token") && !text.contains("http"));
+    }
+    // Once the login leaves `awaiting_code` the browser is no longer offered.
+    j.stage = Stage::Verifying;
+    assert!(j.view(true).get("browser_available").is_none());
+}
+
+#[tokio::test]
+async fn frame_and_input_belong_to_the_initiating_session_of_a_live_awaiting_login() {
+    let (_keep, g, _dir, _d) = gateway();
+    let a = alloc(1);
+    let (mut j, _rx) = job(&a, "initiator");
+    let id = j.id;
+    let (tx, mut commands) = mpsc::channel(1);
+    j.stage = Stage::AwaitingCode;
+    j.browser = Some(tx);
+    j.frame = Some(WorkspaceFrame {
+        png_base64: "AA==".into(),
+        width: 1,
+        height: 1,
+        url: "https://platform.claude.com/oauth/code/callback?code=synthetic-private&state=synthetic#fragment".into(),
+        frame_token: "frame-1".into(),
+    });
+    g.claude_jobs.lock().unwrap().push(j);
+    let shown = browser::frame(&g, &a, "initiator", id).unwrap();
+    assert_eq!(shown["frame"]["frame_token"], "frame-1");
+    assert_eq!(shown["frame"]["url"], "https://platform.claude.com");
+    assert!(!shown.to_string().contains("synthetic-private"));
+    assert_eq!(shown["operation"]["browser_available"], true);
+    // Another session, epoch or owner gets nothing, not even a conflict.
+    let relogin = SessionAllocation {
+        allocation: a.allocation.clone(),
+        epoch: 2,
+    };
+    for (who, session) in [
+        (&a, "other"),
+        (&relogin, "initiator"),
+        (&alloc(1), "initiator"),
+    ] {
+        assert_eq!(
+            browser::frame(&g, who, session, id).unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+        let key = WorkspaceInput::Key {
+            key: moosuri_connectors::browser::capsule::WorkspaceKey::Enter,
+        };
+        assert_eq!(
+            browser::input(&g, who, session, id, "frame-1".into(), key)
+                .await
+                .unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert!(commands.try_recv().is_err(), "foreign input never queued");
+    // An unusable token or input is refused before anything is queued.
+    let bad_key = || WorkspaceInput::InsertText {
+        text: "x".repeat(100_000),
+    };
+    for token in ["", "has space"] {
+        let ok = WorkspaceInput::Scroll {
+            delta_x: 0,
+            delta_y: 1,
+        };
+        assert_eq!(
+            browser::input(&g, &a, "initiator", id, token.into(), ok)
+                .await
+                .unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        browser::input(&g, &a, "initiator", id, "frame-1".into(), bad_key())
+            .await
+            .unwrap_err(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(commands.try_recv().is_err());
+    // The supervisor answers: stale is recoverable (conflict), uncertain is
+    // unavailable, and success returns the operation without a frame, URL or code.
+    for (answer, expected) in [
+        (Err(browser::InputError::Stale), Some(StatusCode::CONFLICT)),
+        (Err(browser::InputError::Uncertain), Some(UNAVAILABLE)),
+        (Ok(()), None),
+    ] {
+        let g2 = g.clone();
+        let a2 = SessionAllocation {
+            allocation: a.allocation.clone(),
+            epoch: a.epoch,
+        };
+        let pending = tokio::spawn(async move {
+            let click = WorkspaceInput::Click { x: 1, y: 1 };
+            browser::input(&g2, &a2, "initiator", id, "frame-1".into(), click).await
+        });
+        let Some(browser::Command::Input { reply, .. }) = commands.recv().await else {
+            panic!("input was not queued");
+        };
+        reply.send(answer).ok();
+        match (pending.await.unwrap(), expected) {
+            (Err(status), Some(want)) => assert_eq!(status, want),
+            (Ok(view), None) => {
+                assert!(view.get("frame").is_none());
+                assert!(!view.to_string().contains("http"));
+            }
+            _ => panic!("unexpected input outcome"),
+        }
+    }
+    // Not awaiting, cancelled or without a browser: conflict, nothing queued.
+    {
+        let mut jobs = g.claude_jobs.lock().unwrap();
+        jobs[0].stage = Stage::Verifying;
+    }
+    let click = WorkspaceInput::Click { x: 1, y: 1 };
+    assert_eq!(
+        browser::input(&g, &a, "initiator", id, "frame-1".into(), click)
+            .await
+            .unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        browser::frame(&g, &a, "initiator", id).unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    {
+        let mut jobs = g.claude_jobs.lock().unwrap();
+        jobs[0].stage = Stage::AwaitingCode;
+        jobs[0].cancel.cancel();
+    }
+    let click = WorkspaceInput::Click { x: 1, y: 1 };
+    assert_eq!(
+        browser::input(&g, &a, "initiator", id, "frame-1".into(), click)
+            .await
+            .unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert!(commands.try_recv().is_err());
+}
+
+#[test]
+fn browser_operations_are_strictly_shaped_and_the_public_code_operation_is_gone() {
+    let parse = |v: Value| serde_json::from_value::<Input>(v);
+    let id = Uuid::new_v4();
+    assert!(parse(json!({"op":"code","request_id":id,"code":"abcdefgh"})).is_err());
+    assert!(parse(json!({"op":"status","request_id":id,"code":"abcdefgh"})).is_err());
+    assert!(
+        parse(json!({"op":"frame","request_id":id}))
+            .unwrap()
+            .well_formed()
+    );
+    let with_token = parse(json!({"op":"frame","request_id":id,"frame_token":"t"})).unwrap();
+    assert!(!with_token.well_formed());
+    let key = json!({"kind":"key","key":"enter"});
+    let ok = parse(json!({"op":"input","request_id":id,"frame_token":"t","input":key})).unwrap();
+    assert!(ok.well_formed());
+    for missing in [
+        json!({"op":"input","request_id":id,"input":key}),
+        json!({"op":"input","request_id":id,"frame_token":"t"}),
+    ] {
+        assert!(!parse(missing).unwrap().well_formed());
+    }
+    // A raw URL, script or arbitrary kind is not an input.
+    for bad in [
+        json!({"op":"input","request_id":id,"frame_token":"t","input":{"kind":"navigate","url":"https://example.test"}}),
+        json!({"op":"input","request_id":id,"frame_token":"t","input":{"kind":"script","source":"1"}}),
+        json!({"op":"input","request_id":id,"frame_token":"t","input":key,"url":"https://example.test"}),
+    ] {
+        assert!(parse(bad).is_err());
+    }
+}
+
+#[tokio::test]
+async fn start_needs_the_in_app_browser_and_never_falls_back_to_a_link() {
+    let (_keep, g, _dir, d) = gateway();
+    assert!(g.claude_browser.is_none());
+    assert_eq!(
+        start(&g, &alloc(1), "s", start_input(Uuid::new_v4(), None))
+            .await
+            .unwrap_err(),
+        UNAVAILABLE
+    );
+    assert!(g.claude_jobs.lock().unwrap().is_empty());
+    assert!(receipt::read_receipt(&d).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn an_unconfirmed_browser_never_reaches_a_terminal_state_or_releases_the_slot() {
+    let (_keep, g, _dir, d) = gateway();
+    let a = alloc(1);
+    let (mut j, _rx) = job(&a, "s");
+    j.stage = Stage::Verifying;
+    j.browser_unresolved = true;
+    let id = j.id;
+    g.claude_jobs.lock().unwrap().push(j);
+    for outcome in [Stage::Ready, Stage::Cancelled, Stage::Failed] {
+        finish(&g, id, Some(outcome)).await;
+        let jobs = g.claude_jobs.lock().unwrap();
+        assert_eq!(jobs[0].stage, Stage::CleanupPending);
+        assert!(!jobs[0].stage.terminal());
+        drop(jobs);
+        assert!(unfinished(&d), "{outcome:?} must not settle the receipt");
+    }
+    // Once the browser is confirmed gone the same job can finish normally.
+    g.claude_jobs.lock().unwrap()[0].browser_unresolved = false;
+    finish(&g, id, Some(Stage::Cancelled)).await;
+    assert_eq!(g.claude_jobs.lock().unwrap()[0].stage, Stage::Cancelled);
+    assert!(!unfinished(&d));
 }
 
 #[test]
@@ -481,10 +691,8 @@ fn input_shape_and_terms_are_strict() {
     let parse = |v: Value| serde_json::from_value::<Input>(v);
     let id = Uuid::new_v4();
     assert!(parse(json!({"op":"status","request_id":id,"extra":1})).is_err());
-    let status = parse(json!({"op":"status","request_id":id,"code":"abcdefgh"})).unwrap();
+    let status = parse(json!({"op":"status","request_id":id,"email":"a@b.co"})).unwrap();
     assert!(!status.well_formed());
-    let code = parse(json!({"op":"code","request_id":id,"code":"abcdefgh"})).unwrap();
-    assert!(code.well_formed());
     let start = parse(json!({"op":"start","request_id":id,"email":"a@b.co","model":"claude-x","hosting_terms_accepted":true})).unwrap();
     assert!(start.well_formed() && valid_email("a@b.co") && !valid_email("a b@c.co"));
     assert!(!valid_model("gpt-5") && !valid_effort("xhigh"));
@@ -499,7 +707,8 @@ fn start_input(id: Uuid, replace: Option<Uuid>) -> Input {
         effort: Some("medium".into()),
         hosting_terms_accepted: Some(true),
         replace_revision: replace,
-        code: None,
+        frame_token: None,
+        input: None,
     }
 }
 fn digest_for(a: &SessionAllocation, replace: Option<Uuid>) -> String {
@@ -970,7 +1179,8 @@ fn disconnect_input(id: Uuid, target: Uuid) -> Input {
         effort: None,
         hosting_terms_accepted: None,
         replace_revision: Some(target),
-        code: None,
+        frame_token: None,
+        input: None,
     }
 }
 
@@ -1479,7 +1689,7 @@ fn input_shape_for_disconnect_takes_only_the_operation_and_target() {
     );
     assert!(!parse(json!({"op":"disconnect","request_id":id})).well_formed());
     assert!(!parse(json!({"op":"disconnect","request_id":id,"replace_revision":Uuid::new_v4(),"email":"a@b.co"})).well_formed());
-    assert!(!parse(json!({"op":"disconnect","request_id":id,"replace_revision":Uuid::new_v4(),"code":"abcdefgh"})).well_formed());
+    assert!(serde_json::from_value::<Input>(json!({"op":"disconnect","request_id":id,"replace_revision":Uuid::new_v4(),"code":"abcdefgh"})).is_err());
 }
 
 #[test]
@@ -1513,4 +1723,21 @@ fn api_replacement_cannot_abandon_a_published_subscription_worker() {
     );
     assert_eq!(&*read(&d, CONFIG_FILE).unwrap().unwrap(), &current);
     assert!(!dir.join(i.key_name()).exists());
+}
+
+#[test]
+fn durable_browser_intent_cannot_become_terminal_until_cleared() {
+    let (_tmp, _path, dir) = private_dir();
+    let allocation = alloc(1).allocation;
+    let mut r = receipt_for(&allocation, Uuid::new_v4(), Stage::Preparing);
+    r.browser_pending = true;
+    receipt::write_receipt(&dir, &r).unwrap();
+    let stored = receipt::read_receipt(&dir).unwrap().unwrap();
+    assert_eq!(stored.version, 4);
+    assert!(stored.browser_pending);
+    r.state = Stage::Cancelled;
+    assert!(receipt::write_receipt(&dir, &r).is_err());
+    r.browser_pending = false;
+    receipt::write_receipt(&dir, &r).unwrap();
+    assert_eq!(receipt::read_receipt(&dir).unwrap().unwrap().version, 2);
 }

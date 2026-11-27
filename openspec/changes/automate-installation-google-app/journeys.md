@@ -100,6 +100,11 @@ tracks J22-01–J22-06: native allocator defaults, private rootless setup, refus
 capacity/isolation and reboot. This is credential-free upgrade evidence; it does
 not close real Claude authentication/inference or the final-source installer gate.
 
+The [SS01–SS06 SSO-window journeys](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
+expand M05's actual Google-button failure: related-window input, return, background
+completion, stale input, foreign/callback refusal and cleanup. They remain open
+until their stated Linux Chrome and provider evidence is recorded.
+
 ## Vault account selection — 6 journeys
 
 | ID | Starting condition and action | Observable acceptance | Current result |

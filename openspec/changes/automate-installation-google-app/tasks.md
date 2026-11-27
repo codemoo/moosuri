@@ -14,6 +14,11 @@ selected; its cause and authentication acceptance remain open.
 Actual authentication/inference, automatic OAuth setup and two real member
 consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 
+The bounded SSO follow-up confirmed that Google's new page has the original
+Claude page as opener but remains unattached. No credentials were submitted;
+product cancellation removed the auth container. [Six related-window journeys](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
+now track the correction, with Linux real-Chrome evidence still pending.
+
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
 - [x] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing; corrected source installation and two-member reboot accepted below.
 - [ ] Observe official Console steps in fresh Kiri and identify provider prerequisites.

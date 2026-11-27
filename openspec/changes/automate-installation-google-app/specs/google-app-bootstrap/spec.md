@@ -433,6 +433,16 @@ owner and initiating session. Uncertain input SHALL NOT be replayed.
 - **THEN** the browser and official child are cleaned before the setup slot is released
 - **AND** unconfirmed cleanup remains recoverable rather than being reported as completed
 
+#### Scenario: Official sign-in opens a related provider window
+- **WHEN** proof-validated input in the initiating login opens a related provider window
+- **THEN** the same private Kiri screen follows that window without replaying its navigation or borrowing another profile
+- **AND** returning to the original window invalidates the previous frame's input authority
+
+#### Scenario: A provider window closes or the original window completes
+- **WHEN** the related window closes or the original bound document reaches its callback while in the background
+- **THEN** the controller returns to the original screen or delivers its exact callback once
+- **AND** unrelated windows, popup callbacks and stale frame input cannot complete or control that authentication
+
 
 ### Requirement: Existing subscription replacement and preflight recovery
 An externally managed subscription SHALL remain published until a verified new

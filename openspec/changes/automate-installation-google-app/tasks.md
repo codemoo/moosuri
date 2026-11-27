@@ -19,6 +19,11 @@ items and was stored once. Reload displayed three saved receipts without an
 inbox request; a foreign asserted member received401. Actual natural-language UI
 returned model-unavailable422, retained the draft and made zero inbox requests.
 R06's prior live member restart/recovery remains valid and is recorded separately.
+C04 additionally passed actual CDP response loss after a real200 response and
+same-request replay with the GWS relay stopped/member networking isolated. The
+identical receipt returned200 without provider access or a duplicate. Relay and
+protected state were restored; actual reload showed four receipts, zero inbox/
+interpret requests and the prior draft. This is the supported API boundary, not C01.
 
 The earlier e29 resource observation reached260 PIDs/818954240 bytes with zero
 PID-limit/OOM events; official email continuation still did not complete provider

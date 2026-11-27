@@ -276,3 +276,28 @@ The draft remained; there were zero inbox requests and no additional receipt.
 This is an observed remaining authentication/model gate, not a completed
 natural-language Gmail journey. The provider security check needs resolution
 before real Claude inference; no fallback or borrowed authentication was used.
+
+
+### C04 real response loss and recovery without provider access
+
+A later real request used the same deployed e503 member and existing Google
+grant. Kiri CDP intercepted only that inbox endpoint at the response stage and
+observed HTTP200, then failed delivery with `ConnectionClosed` before the
+browser received the body. No response body or mail contents were exported.
+The normal history API already contained exactly one completed five-item receipt.
+
+The sole installation GWS relay was stopped temporarily with a root restore timer
+armed. The member remained running with `NetworkMode=none`; the gateway and
+lifecycle stayed active. Replaying the exact thread/request/connection/epoch
+returned HTTP200 and the identical complete receipt while provider transport was
+unavailable. History still contained that request once, proving recovery did not
+need another provider read. The GWS relay was immediately restored with the same
+binary; member identity/image and protected keys/configuration were unchanged.
+The restore timer was then stopped.
+
+Actual Kiri reload displayed four saved receipts with five rows each, made zero
+inbox or work-interpret requests and retained the prior model-unavailable draft.
+Temporary test state was cleared. Sanitized evidence is retained separately from
+the original deployment receipt. This closes the supported read API's real
+response-loss/replay boundary; it does not claim natural-language initiation or
+new Google consent, which remain C01 and the provider journeys.

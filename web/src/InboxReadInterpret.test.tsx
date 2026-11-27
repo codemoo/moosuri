@@ -41,6 +41,10 @@ beforeEach(() => {
     if (path === "/auth/session") return json(who);
     if (path === "/text-preview") return json({ enabled: true, capability: "text_only_preview", tools: false, automatic_retry: false, work_interpret: true });
     if (path === "/threads" && method === "GET") return json({ threads });
+    if (path === "/threads" && method === "POST") {
+      const created={id:body.request_id,title:body.title,created_at:2,updated_at:2};
+      threads.push(created);return json(created,201);
+    }
     if (/^\/threads\/[^/]+\/messages/.test(path)) return json({ thread_id: path.split("/")[2], cursor: 0, turns: [], next_before: null });
     if (/^\/threads\/[^/]+\/browser/.test(path)) return json({ code: "not_found" }, 404);
     if (/^\/threads\/[^/]+\/work-interpret$/.test(path)) {
@@ -290,4 +294,30 @@ it("an unsupported read scope reports the supported scope and keeps the input wi
   expect(screen.queryByText(EMPTY)).toBeNull();
   expect(post("/personal/google/inbox")).toHaveLength(0);
   expect(post(`/threads/${tid}/text-preview`)).toHaveLength(0);
+});
+
+it.each([null,"A newer draft",ASK])("first conversation preserves the live request and newer draft: %s", async newer => {
+  threads=[];connection=newer===null?conn:null;
+  script.push(()=>Response.json(inboxReply({thread_id:threads[0].id})));
+  const first=mount(),user=await say(ASK);
+  if(newer===null)await screen.findByText(EMPTY);
+  else await screen.findByRole("button",{name:"Google 연결하고 메일 확인"});
+  expect(post("/threads")).toHaveLength(1);
+  const thread=threads[0].id;
+  const interpreted=post(`/threads/${thread}/work-interpret`);
+  expect(interpreted).toHaveLength(1);
+  const expected={thread_id:thread,request_id:interpreted[0].body.request_id};
+  if(newer!==null) {
+    expect(inboxReads()).toEqual([]);
+    await user.click(screen.getByRole("button",{name:"뒤로"}));
+    const draft=await composer();await user.clear(draft);await user.type(draft,newer);
+    first.unmount();connection=conn;mount();
+    const resume=await screen.findByRole("button",{name:"메일 확인 계속하기"});
+    expect(inboxReads()).toEqual([]); // A reload never authorizes a new read.
+    expect(await composer()).toHaveValue(newer);
+    await user.click(resume);await screen.findByText(EMPTY);
+    expect(await composer()).toHaveValue(newer);
+  } else expect(await composer()).toHaveValue("");
+  expect(inboxReads()).toEqual([expected]);
+  expect(post(`/threads/${thread}/work-interpret`)).toHaveLength(1);
 });

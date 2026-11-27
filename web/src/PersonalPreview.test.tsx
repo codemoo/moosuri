@@ -1419,9 +1419,9 @@ it("clears only the exact original first-message draft after a mail result", asy
   await screen.findByText("확인한 페이지에 받은 메일이 없습니다.");
   expect(await composer()).toHaveValue("");
   expect(threads).toHaveLength(1);
-  expect(
-    calls.find((c) => c.path === "/personal/google/inbox")?.body.read.thread_id,
-  ).toBe(threads[0].id);
+  const reads=calls.filter(c=>c.path==="/personal/google/inbox");
+  expect(reads).toHaveLength(1);
+  expect(reads[0].body.read).toEqual({thread_id:threads[0].id,request_id:chatPosts()[0].body.request_id});
   expect(paid.size).toBe(0);
 });
 it.each(["separate draft", "Check mail"])("recovers an abandoned Gmail handoff by its original receipt after reload and preserves the next draft (%s)", async next => {

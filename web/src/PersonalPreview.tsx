@@ -1169,6 +1169,7 @@ function Workspace({
         ...current.filter((t) => t.id !== created.id),
       ]);
       change((m) => moveNewDraft(m, created.id));
+      selectedRef.current = created.id;
       setSelected(created.id);
       return created.id;
     } catch (e) {

@@ -159,6 +159,11 @@ readback. User consent still grants only the selected service's minimum scope.
 | C05 | “메일은 읽지 마”, a quoted instruction, or a how-to question | No Google read; ordinary response or clarification; no invented result | Positive grammar tested; six real Sonnet 5.5/medium classifier calls matched on Linux; full member-route journey open |
 | C06 | Permission revoked/account switched while read is pending | No stale result exposed; connection error explained; old-account history withdrawn as defined | Synthetic stale-thread and new-account UI cases pass; actual revoked provider journey open |
 
+[FM01–FM03 first-conversation UI journeys](../../../docs/reviews/2026-11-27-first-conversation-mail.md)
+passed on the installed Linux candidate: one original read, explicit reload resume
+and preservation of a newer different or identical draft. Gmail and interpretation
+were synthetic; C01 real model and C02 real connection acceptance remain open.
+
 The live API read on 2026-11-27 returned HTTP 200, `completed`, five metadata
 items, matching mailbox, `one_inbox_page_metadata_only`, and `has_more=true`.
 Reload displayed one saved receipt and five mail rows. This proves the existing

@@ -1526,4 +1526,14 @@ Reentry implemented in the existing UI/status protocol. Linux focused64 checks,
 web/typecheck/native build, actual installed RE01–RE05 and explicit cleanup passed.
 Official Claude13/5-turn reviews resolved completion-loss and cancel-message
 findings; real provider paths stay open. A distinct first-thread mailbox race was
-reproduced on unchangedpublicabc37d1c and remains the next bounded unit.
+reproduced on unchanged public abc37d1c; the next entry records its correction.
+
+### First-conversation mail request — verified candidate
+
+The selected thread reference now updates immediately with thread creation.
+FM01–FM03 passed in actual installed Linux Chromium with explicitly synthetic
+interpretation/Gmail responses; the original request runs once and a newer draft
+survives reload/resume even when its text is identical. Focused79 UI checks and
+web/native builds passed; independent official Claude Sonnet5.5/medium static
+review found no material defect. [Evidence and limits](../../../docs/reviews/2026-11-27-first-conversation-mail.md).
+No real provider acceptance or production deployment is claimed.

@@ -52,8 +52,8 @@ Linux focused64 UI checks passed, including original-vs-current conversation,
 late handoff, uncertainStart and explicitcancel while initialStatus is pending.
 Typecheck/web build and embedded native build passed. An earlier broader126-case run passed125 and retained one preexisting first-message Gmail draft failure: it was reproduced on the
 unchanged publicabc37d1c. The diagnostic and a separate21-turn read-only Claude
-investigation traced a first-thread selection-ref race. That next unit remains
-open; it is not hidden or counted as a reentry pass.
+investigation traced a first-thread selection-ref race. The [subsequent unit](2026-11-27-first-conversation-mail.md) corrected it and
+passed its focused UI journeys; it is not counted as a reentry pass.
 
 ## Environment and evidence limits
 

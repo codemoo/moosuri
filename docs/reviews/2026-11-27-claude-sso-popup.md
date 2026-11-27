@@ -260,7 +260,7 @@ unlimited workaround. Other Claude inference-worker limits are unchanged.
 | MB02 | Ordinary member browses while auth uses its larger budget | Native command/kernel checks retain768MiB; generic mode refuses auth-sized memory |
 | MB03 | Runtime supplies unlimited memory, excessive CPU/PIDs or swap | Native refusal passes;0926adc2 actual guest/production admission, zero swap, CPU1, PID256 and read-only root verified |
 | MB04 | Authentication fails and owner returns to setup | Actual51c fault and0926adc2 guest/production cancellation all removed the owned capsule; no authenticated binding |
-| MB05 | Provider verification uses many renderer threads | Actual0926adc2 auth capsule hit256 PID limit4 times; widget visibly crashed while memory/storage had headroom;512 auth-only PID correction under verification |
+| MB05 | Provider verification uses many renderer threads | Actual0926adc2 hit256 PID limit4 times. Deployed e29a4ee4 uses512:152 live samples peaked at260 PIDs/781MiB with zero PID/OOM events; widget remained visible but provider verification did not complete |
 
 Linux browser tests passed189 with3 ignored. Independent official Claude
 Sonnet5.5/medium found no blocking memory-change defect. Its concern about swap
@@ -299,5 +299,39 @@ unchanged. Two auth slots can use at most1024 PIDs and3GiB. It does not change
 Chrome flags or bypass provider verification. Linux native browser tests passed189 with3 ignored. Independent official
 Claude Sonnet5.5/medium found no blocking defect. It requested actual PID peak,
 limit-hit and cleanup observations and a check for another launch limit. The
-launcher uses one shared mode function; other lower-PID containers are SDK,
-inference or member workers. Installed/live acceptance remains pending.
+launcher uses one shared mode function; other lower-PID containers are proxy,
+inference or member workers.
+
+### Installed and production PID correction
+
+The e29a4ee4 build matched all2690 source files. Actual guest admission,512-PID
+kernel inspection, official Claude→Google identifier display and cancellation
+passed with both members and existing data preserved. Prior authority checks
+were inherited rather than rerun. Candidate receipt SHA256:
+`19d94bc4937c2812c8f8c00ced9bc13aa189c1629a66bdc1a1a38cd806accda5`.
+The exact image
+`sha256:f6704de4394dff0da0a70b2e09f2a998b820ec5cde96e9c38789e8579b0319ea`
+and matched gateway/Google handler were deployed with original member, Vault,
+keys, grants, model settings, peer services and confinement preserved.
+
+One fresh production attempt reached the official login form, accepted the
+owner's email and displayed the security verification checkbox. One visible
+selection returned to verification without completing authentication. Over152
+samples, actual pids.current peaked at260 (above the former256 cap) and memory
+at818954240 bytes; pids.events max, OOM and OOM-kill all stayed0. Parent PID
+budgets permit at least1024, while CPU1, swap0 and read-only root were retained.
+Product cancellation completed; the capsule was absent and its cgroup removed
+or empty. Only the fixed terminal-cancelled diagnostic was recorded.
+
+This verifies the resource correction for the observed flow, not successful
+provider verification, account binding or inference. No password, authentication
+code or mail content was handled in this attempt. Further identical login
+retries are not part of this acceptance.
+
+Separately, R06 used the actual existing Gmail grant after gateway deployment
+and a controlled member-container stop. The installed lifecycle worker restarted
+the same container with a new process; image, mounts, policy, protected keys and
+shared app stayed unchanged. Its connection ID/epoch/mailbox matched, a saved
+request replayed, and one new explicit metadata-page read returned5 items. Each
+request appeared once in history. This is actual restart/read evidence and does
+not close natural-language C01 or two-member S02.

@@ -22,8 +22,15 @@ exact768MiB auth container. The0926adc2 auth-only1536MiB correction and first-se
 UI entry correction passed installed resource/popup/cancel checks and matched
 production deployment with preserved data. A fresh production login remained at
 provider security verification: no OOM over21 samples, but the same capsule's
-PID limit was hit4 times. The auth-only512-PID follow-up is under verification.
-Actual authentication remains open.
+PID limit was hit4 times. The e29a4ee4 auth-only512-PID follow-up passed native
+and independent review, installed actual kernel/popup/cancel checks and matched
+production deployment. Its live152-sample run peaked at260 PIDs/818954240 bytes,
+with zero PID-limit/OOM events; official email continuation reached security
+verification, which did not complete after one visible checkbox selection.
+Cancellation removed the capsule and cgroup. Actual authentication remains open.
+R06 now passes on current production: actual member stop/automatic recovery,
+unchanged grant/key/app identity, saved replay and fresh five-item GWS read.
+Natural-language interpretation and two-member consent remain separate gates.
 Actual authentication/inference, automatic OAuth setup and two real member
 consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 

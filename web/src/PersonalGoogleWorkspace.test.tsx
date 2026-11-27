@@ -213,6 +213,35 @@ it("links the installation administrator to Google web sign-in setup when unavai
   expect(await screen.findByRole("heading", { name: "Google Slides" })).toBeVisible();
 });
 
+it("returns an unconfigured admin to the selected Drive service without claiming configuration or starting consent", async () => {
+  const calls = setup({ workspaceStatus: 404, configured: false });
+  mount(true);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Google Drive/ }));
+  await user.click(await screen.findByRole("button", { name: "Google Workspace 설정" }));
+  await user.click(await screen.findByRole("button", { name: "Google Drive 연결로 이동" }));
+  expect(await screen.findByRole("heading", { name: "Google Drive" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Google 연결" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "뒤로" }));
+  expect(await screen.findByRole("button", { name: /Google Drive .*설치 설정 필요/ })).toBeVisible();
+  expect(connectInKiri).not.toHaveBeenCalled();
+  expect(calls.every(({ method }) => method === "GET")).toBe(true);
+});
+
+it("opens the service chooser from root settings without default Gmail consent or read", async () => {
+  const calls = setup({ workspaceStatus: 404, configured: false });
+  mount(true);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Google Workspace 설정" }));
+  await user.click(await screen.findByRole("button", { name: "서비스 선택하고 계속" }));
+  expect(await screen.findByRole("button", { name: /Gmail/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Google Drive/ })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Gmail" })).not.toBeInTheDocument();
+  expect(connectInKiri).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem(gmailKey)).toBeNull();
+  expect(calls.every(({ method }) => method === "GET")).toBe(true);
+});
+
 it("keeps an unregistered installation distinct from each member connection and restores focus from details", async () => {
   const calls = setup({ workspaceStatus: 404, configured: false });
   mount(true);

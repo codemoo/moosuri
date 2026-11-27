@@ -19,7 +19,7 @@ pub(super) fn ephemeral_auth_storage() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn enforced() -> bool {
+pub(super) fn enforced(google_auth: bool) -> bool {
     use std::{ffi::CStr, mem::MaybeUninit};
     fn mounted_with(path: &CStr, required: libc::c_ulong) -> bool {
         let mut stat = MaybeUninit::<libc::statvfs>::uninit();
@@ -47,25 +47,35 @@ pub(super) fn enforced() -> bool {
     }
     let read = |name| std::fs::read_to_string(format!("/sys/fs/cgroup/{name}")).ok();
     match (read("memory.max"), read("pids.max"), read("cpu.max")) {
-        (Some(memory), Some(pids), Some(cpu)) => limits(&memory, &pids, &cpu),
+        (Some(memory), Some(pids), Some(cpu)) => limits(&memory, &pids, &cpu, google_auth),
         _ => false,
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(super) fn enforced() -> bool {
+pub(super) fn enforced(_google_auth: bool) -> bool {
     false
 }
 
+// Authentication can hold an opener and a provider/verification page at once.
+// Keep ordinary browsing at its existing bound and auth finite with no swap.
+pub(super) const fn memory_limit_bytes(google_auth: bool) -> u64 {
+    if google_auth {
+        1536 * 1024 * 1024
+    } else {
+        768 * 1024 * 1024
+    }
+}
+
 #[cfg(any(target_os = "linux", test))]
-fn limits(memory: &str, pids: &str, cpu: &str) -> bool {
+fn limits(memory: &str, pids: &str, cpu: &str, google_auth: bool) -> bool {
     let bounded = |raw: &str, maximum| {
         raw.trim()
             .parse::<u64>()
             .is_ok_and(|v| v > 0 && v <= maximum)
     };
     let parts: Vec<_> = cpu.split_whitespace().collect();
-    bounded(memory, 768 * 1024 * 1024)
+    bounded(memory, memory_limit_bytes(google_auth))
         && bounded(pids, 256)
         && parts.len() == 2
         && parts[1]
@@ -77,9 +87,25 @@ fn limits(memory: &str, pids: &str, cpu: &str) -> bool {
 mod tests {
     use super::*;
     #[test]
+    fn auth_memory_is_bounded_without_relaxing_other_kernel_limits() {
+        assert!(limits("1610612736", "256", "100000 100000", true));
+        assert!(!limits("1610612736", "256", "100000 100000", false));
+        for (memory, pids, cpu) in [
+            ("1610612737", "256", "100000 100000"),
+            ("max", "256", "100000 100000"),
+            ("0", "256", "100000 100000"),
+            ("1610612736", "257", "100000 100000"),
+            ("1610612736", "max", "100000 100000"),
+            ("1610612736", "256", "100001 100000"),
+            ("1610612736", "256", "max 100000"),
+        ] {
+            assert!(!limits(memory, pids, cpu, true));
+        }
+    }
+    #[test]
     fn missing_unlimited_or_excessive_kernel_limits_are_refused() {
-        assert!(limits("805306368\n", "256\n", "100000 100000\n"));
-        assert!(limits("268435456", "64", "50000 100000"));
+        assert!(limits("805306368\n", "256\n", "100000 100000\n", false));
+        assert!(limits("268435456", "64", "50000 100000", false));
         for (memory, pids, cpu) in [
             ("max", "256", "100000 100000"),
             ("805306369", "256", "100000 100000"),
@@ -91,7 +117,7 @@ mod tests {
             ("805306368", "256", "0 0"),
             ("805306368", "256", "100000 100000 extra"),
         ] {
-            assert!(!limits(memory, pids, cpu));
+            assert!(!limits(memory, pids, cpu, false));
         }
     }
 }

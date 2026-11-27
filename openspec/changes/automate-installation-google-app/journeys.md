@@ -15,8 +15,10 @@ journey. The latest untouched public `c3d18bd9` installation passed actual termi
 setup, public second-member admission, both encrypted Vault/browser sessions,
 real reboot, confinement, Claude U01–U03, FM01–FM03 and LR01–LR06 in one run.
 Real Google/model authentication and ACME were not run. The same bundle is deployed with the existing account/Vault/keys/grants
-preserved and a successful existing GWS read. Real Claude SSO lost its screen
-after Google was selected and remains open. Earlier installation failures remain preserved in
+preserved and a successful existing GWS read. The first real Claude SSO attempts lost their screen after Google was selected.
+The later51c98a7f diagnostic deployment reached identifier input, then Google
+rejected the browser; cancellation cleaned it. The earlier intermittent failure
+was not reproduced, and actual authentication remains open. Earlier installation failures remain preserved in
 [the current-source report](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 The previous production baseline is in the
 [final entry report](../../../docs/reviews/2026-11-27-final-entry-production.md).
@@ -61,7 +63,7 @@ member's password; that is partial infrastructure evidence, not web admission.
 | M02 | Invite another member during an existing member's model request | New socket appears; existing request is not cancelled or charged twice | Dynamic socket isolation passed; full install journey open |
 | M03 | Wrong/revoked key, unsupported model or invalid effort | Show the actual unavailable state; preserve an existing connection until the replacement is valid | Installed candidate0b5e8fa Chromium UI rejected one synthetic invalid-key catalog request, cleared input, stayed unconfigured after reload and hid setup from a second member; valid replacement and inference remain open |
 | M04 | Lose API-setup reply, then another administrator changes the connection | Reconcile this request's revision; never attribute another administrator's save to this request | Candidate UI attribution and atomic-save tests passed |
-| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Final-source installation and production transition passed; the real owner reached official Claude login after correcting legacy host egress. Selecting Google then lost the frame and ended failed before account input; real authentication/inference and member enrollment remain open |
+| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Final-source installation and production transition passed; the real owner reached official Claude login after correcting legacy host egress. First Google attempts lost the frame. Diagnostic51c98a7f then displayed Google and accepted identifier input, but Google refused the browser; cancel/cleanup passed. Official Claude email login reached security verification and its768MiB auth capsule suffered a correlated Chrome OOM;1536MiB candidate native checks passed, live rerun pending. Real authentication/inference and member enrollment remain open |
 | M06 | Worker is missing/restarted, member generation changes, or server reboots | No borrowed member login, no fallback model, no new charge before dispatch; truthful recovery | Socket isolation/replay boundaries passed; fresh subscription/reboot journey open |
 
 Shared model credentials use the installation API route. The existing official
@@ -106,7 +108,10 @@ completion, stale input, foreign/callback refusal and cleanup. Corrected Linux
 Chrome synthetic journeys and independent review passed in the linked scope;
 the matched gateway/Google-handler/worker patch is deployed. Installed official
 Google-window display and cancellation passed, but the subsequent production UI
-attempt failed before account input. Actual provider acceptance remains open.
+attempt failed before account input. A later diagnostic build displayed the
+Google identifier page and accepted input, then Google refused the browser;
+explicit cancel/cleanup passed. The prior failure remains unreproduced and actual
+provider authentication remains open.
 
 ## Vault account selection — 6 journeys
 
@@ -408,3 +413,13 @@ login results are recorded in [the production log](../../../docs/reviews/2026-11
 수동 등록 연결, 모바일·다른 회원, 오래된 화면, 관리 기록 누락, 해제 전후
 중단을 나눈다. 실제 설치된 게이트웨이와 Linux 브라우저에서 합성 설정으로
 검증하며, 실제 계정 인증·추론 완료를 대신하지 않는다.
+
+
+### First settings entry and observed authentication resource failure
+
+[GE01–GE05](../../../docs/reviews/2026-11-27-google-setup-entry.md) cover the
+first-installer automatic entry, selected service, chooser, secondary import and
+account/role boundaries. [MB01–MB04](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
+cover the actual auth-container Chrome OOM, ordinary-browser budget, invalid
+resource refusal and cleanup. These supporting checks do not increase the61
+primary journeys or turn provider-limited rows into passes.

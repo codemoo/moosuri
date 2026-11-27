@@ -94,6 +94,7 @@ class World:
                            host_default=self.choices[0], choices=self.choices, default_choice=None,
                            default_stale=False)
         self.google_configured = True
+        self.screenshot_dir = None
         self.google_grants = {}
         self.mail_reads = []
         self.vault = dict(state="setup_required", site_origin=VAULT)
@@ -425,6 +426,8 @@ class World:
 
     def google(self, method, path, body):
         parts = path.removeprefix("/personal/google").strip("/").split("/")
+        if not self.google_configured and parts in ([""], ["workspace"]):
+            return 404, {"code": "google_setup_required"}
         if parts == [""]:
             return 200, dict(connection=self.google_grants.get("gmail"))
         if parts == ["workspace"]:
@@ -897,7 +900,7 @@ def google_setup(page, world):
     nav(page, "관리").click()
     button(page, "Google Workspace 설정 열기").click()
     expect(heading(page, "Google Workspace 설정")).to_be_visible()
-    button(page, "이미 받은 JSON 가져오기").click()
+    page.locator("summary").filter(has_text="기존 Google 웹 클라이언트 JSON").click()
     callback = page.get_by_label("이 설치의 콜백 주소", exact=True).input_value()
     upload = page.get_by_label("Google 웹 클라이언트 JSON", exact=True)
     for redirect in ("https://different.example.test/oauth/google/callback", callback):
@@ -910,6 +913,43 @@ def google_setup(page, world):
     button(page, "뒤로").click()
     expect(heading(page, "회원 관리")).to_be_visible()
     assert world.google_configured
+
+
+def google_setup_entry(page, world, selected=False):
+    world.google_configured = False
+    world.vault = dict(state="ready", site_origin=VAULT)
+    nav(page, "연결").click()
+    if selected:
+        button(page, re.compile(r"^Google Drive")).click()
+    button(page, "Google Workspace 설정").click()
+    expect(heading(page, "설치용 Google 앱 준비")).to_be_visible()
+    expect(page.locator("details")).not_to_have_attribute("open", "")
+    if world.screenshot_dir:
+        page.screenshot(path=str(world.screenshot_dir / f"google-setup-{selected}-{page.viewport_size['width']}.png"), full_page=True)
+    button(page, "Google Drive 연결로 이동" if selected else "서비스 선택하고 계속").click()
+    if selected:
+        expect(heading(page, "Google Drive")).to_be_visible()
+        expect(button(page, "Google 연결")).to_be_enabled()
+        page.reload()
+        expect(heading(page, "Google Drive")).to_be_visible()
+        expect(button(page, "Google 연결")).to_be_enabled()
+    else:
+        expect(heading(page, "커넥터")).to_be_visible()
+        expect(button(page, re.compile(r"^Google Drive"))).to_be_visible()
+        expect(button(page, re.compile(r"^Gmail"))).to_be_visible()
+    assert not world.google_configured
+    assert not any(method == "POST" and path.startswith("/personal/google") for method, path, _ in world.calls)
+    assert not posts(world, "/personal/admin/google-setup")
+
+
+def google_setup_member_hidden(page, world):
+    nav(page, "연결").click()
+    expect(heading(page, "커넥터")).to_be_visible()
+    expect(button(page, "Google Workspace 설정")).to_have_count(0)
+    button(page, re.compile(r"^Google Drive")).click()
+    expect(heading(page, "Google Drive")).to_be_visible()
+    expect(button(page, "Google Workspace 설정")).to_have_count(0)
+    assert not any(path.startswith("/personal/admin/") for _, path, _ in world.calls)
 
 
 def google_from_chat(page, world):
@@ -1151,6 +1191,9 @@ SCENARIOS = {
     "B-GWS-02": (True, google_setup_to_catalog),
     "B-GWS-03": (True, google_setup_from_connector),
     "B-GWS-04": (True, google_from_chat),
+    "B-GWS-05": (True, google_setup_entry),
+    "B-GWS-06": (True, partial(google_setup_entry, selected=True)),
+    "B-GWS-07": (False, google_setup_member_hidden),
     "B-ENG-01": (True, engine),
     "B-ENG-02": (True, read_openrouter_quota),
     "B-ENG-03": (True, retry_stale_openrouter_quota),
@@ -1172,7 +1215,10 @@ def main():
     parser.add_argument("--width", type=int, choices=(360, 390, 1440), action="append")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), action="append")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
+    if args.output_dir:
+        args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not (args.dist / "personal.html").is_file():
         parser.error("the dist directory must contain the built personal.html entry")
     server = ThreadingHTTPServer(("127.0.0.1", 0), partial(StaticFiles, directory=str(args.dist.resolve())))
@@ -1192,6 +1238,7 @@ def main():
                 admin, run = SCENARIOS[scenario]
                 for width in args.width or heights:
                     world = World(base, admin=admin, signed_in=scenario not in ("B-AUTH-01", "B-DEMO-01", "B-DEMO-02"))
+                    world.screenshot_dir = args.output_dir
                     if scenario == "B-TASK-01":
                         world.seed_conversation()
                         world.tasks_visible = True

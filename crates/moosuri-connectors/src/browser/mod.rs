@@ -784,7 +784,7 @@ fn capsule_health_mode(config: &BrowserConfig, google_auth: bool) -> Result<(), 
     }
     let status = std::fs::read_to_string("/proc/self/status")
         .map_err(|_| BrowserError::IsolationRequired)?;
-    if !capsule_status_confined(&status) || !confinement::enforced() {
+    if !capsule_status_confined(&status) || !confinement::enforced(google_auth) {
         return Err(BrowserError::IsolationRequired);
     }
     // Entrypoint writes this root-owned marker only after installing namespace firewall.

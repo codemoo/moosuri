@@ -8,13 +8,13 @@ import "./personal-google-setup.css";
 export const installationGoogleSetupPath = "/personal/admin/google-setup";
 const maximumFileBytes = 16 * 1024;
 type Status = { configured: boolean; redirect_uri: string };
-type Props = { account: string; expired: () => void; unavailable: () => void; onConnect: () => void; returnLabel?: string; onBack?: () => void };
+type Props = { account: string; expired: () => void; unavailable: () => void; onConnect: () => void; onStart: () => void; returnLabel?: string; startLabel?: string; onBack?: () => void };
 
 export function PersonalGoogleSetup(props: Props) {
   return <Setup key={props.account} {...props} />;
 }
 
-function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }: Props) {
+function Setup({ account, expired, unavailable, onConnect, onStart, returnLabel, startLabel, onBack }: Props) {
   const scope = useScope(account, "installation-google-setup");
   const storageKey = "moosuri.personal.google-setup.v1." + account;
   const [status, setStatus] = useState<Status | null>(null);
@@ -180,8 +180,14 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
       )}
       {!checking && status && !status.configured && (
         <section className="member-page-list google-setup-panel">
-          <h2>설치용 Google 앱 등록</h2>
-          <p>이 설치에서 사용할 Google 웹 클라이언트의 JSON 파일을 등록하세요. 승인된 리디렉션 URI에 아래 주소가 있어야 합니다.</p>
+          <h2>설치용 Google 앱 준비</h2>
+          <p>먼저 사용할 서비스를 고르고 Google 계정으로 연결하세요. 볼트 계정 확인과 로그인 뒤 설치용 Google 앱을 준비합니다. 이후 각 회원이 자신의 계정으로 따로 동의합니다. Google이 추가 확인을 요청하면 화면에서 안내합니다.</p>
+          <div className="google-setup-buttons">
+            <button type="button" className="member-page-action management-primary" onClick={onStart}>{startLabel ?? "서비스 선택하고 계속"}</button>
+          </div>
+          <details className="google-setup-advanced">
+          <summary>고급: 기존 Google 웹 클라이언트 JSON 직접 등록</summary>
+          <p>이미 만든 Google 웹 클라이언트가 있다면 JSON 파일을 등록할 수 있습니다. 승인된 리디렉션 URI에 아래 주소가 있어야 합니다.</p>
           {callbackField}
           {copyButton}
           {copyNotice}
@@ -204,6 +210,7 @@ function Setup({ account, expired, unavailable, onConnect, returnLabel, onBack }
                   </div>
                   {busy && <p className="management-note" role="status">Google 앱 설정을 저장하고 있습니다…</p>}
           </form>
+          </details>
         </section>
       )}
     </section>

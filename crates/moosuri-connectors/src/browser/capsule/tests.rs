@@ -461,3 +461,52 @@ async fn bootstrap_cleanup_requires_graceful_zero_exit_and_still_reaps_failures(
         assert!(child.try_wait().unwrap().is_some());
     }
 }
+
+#[test]
+fn authentication_memory_is_finite_and_swap_stays_disabled() {
+    let reader = CapsuleReader::new(config()).unwrap();
+    for auth in [false, true] {
+        let command = reader.worker_command_mode(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "bounded-worker",
+            None,
+            auth,
+        );
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|x| x.to_string_lossy().into_owned())
+            .collect();
+        let memory = if auth {
+            "--memory=1610612736"
+        } else {
+            "--memory=805306368"
+        };
+        assert_eq!(
+            args.iter()
+                .filter(|x| x.starts_with("--memory="))
+                .collect::<Vec<_>>(),
+            vec![memory]
+        );
+        assert_eq!(
+            args.iter()
+                .filter(|x| x.starts_with("--memory-swap="))
+                .collect::<Vec<_>>(),
+            if auth {
+                vec!["--memory-swap=1610612736"]
+            } else {
+                vec![]
+            }
+        );
+        for flag in [
+            "--read-only",
+            "--pids-limit=256",
+            "--cpus=1",
+            "--security-opt=no-new-privileges:true",
+        ] {
+            assert!(args.iter().any(|x| x == flag));
+        }
+        assert!(!args.iter().any(|x| x.starts_with("--mount=")));
+    }
+}

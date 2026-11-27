@@ -12,7 +12,15 @@ preserved. Existing GWS read and saved history passed; a legacy gateway egress
 rule was corrected. Real Claude SSO screen transition failed after Google was
 selected. The subsequent3fd8e586 popup patch is deployed, with installed official
 Google-window display, ownership and cleanup passing; one production UI retry
-still failed before account input. Its post-start cause and authentication remain open.
+still failed before account input. The later51c98a7f diagnostic patch passed the
+installed two-member preservation/popup/cancel checks and was deployed. Its
+production UI reached Google identifier entry, then Google rejected the browser;
+explicit cancellation cleaned the capsule. The earlier intermittent crash was
+not reproduced. A separate official Claude email path reached a provider security
+verification pause, then a polling failure correlated to Chrome OOM in the
+exact768MiB auth container. A bounded1536MiB auth-only correction and first-setup
+UI entry correction passed native/UI checks; installed acceptance is pending.
+Actual authentication remains open.
 Actual authentication/inference, automatic OAuth setup and two real member
 consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 

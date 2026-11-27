@@ -164,11 +164,12 @@ Gmail, new OAuth registration and two real member consents remain open.
 
 These expand M05/K05; they do not create completed primary journeys. The private
 fixed-code implementation passed the Linux checks and independent review described below.
-No diagnostic build or new authentication attempt is deployed yet.
+The diagnostic build is now deployed; the later observation below supersedes
+the deployment status at this checkpoint.
 
 | ID | User journey / injected failure | Required evidence | Status |
 | --- | --- | --- | --- |
-| DF01 | Owner clicks or watches the login screen and the browser exchange fails | Fixed input/poll/watch classification, no raw output; same authority, uncertain-input handling and confirmed cleanup | Linux classified worker/actor failures passed; production cause still unknown |
+| DF01 | Owner clicks or watches the login screen and the browser exchange fails | Fixed input/poll/watch classification, no raw output; same authority, uncertain-input handling and confirmed cleanup | Linux classified failures passed; actual email-screen polling failure correlated to owned-container Chrome OOM; earlier popup failure not reproduced |
 | DF02 | Official CLI exits or its result/stream/deadline fails while login is open | Distinct fixed CLI cause; no activation or replay; browser/child cleanup and original connection preserved | Linux gateway lifecycle suite passed; actual CLI failure cause still pending |
 | DF03 | Worker returns an unknown error, malformed reply or cancellation-looking failure | Fail closed; no private value appears in logs; worker cancellation remains a fault | Linux strict protocol and stale-cause regressions passed |
 
@@ -191,5 +192,77 @@ stderr errors. Only the four owned Rust files were formatted.
 A mid-request EOF remains the coarse `host_stream_failed` classification; it
 cannot establish whether the worker crashed. No raw worker stderr is enabled.
 These checks establish the diagnostic and existing control boundaries, not a fix
-for the production authentication failure. Matched diagnostic deployment and one
-instrumented production observation remain the next acceptance step.
+for the production authentication failure. At that checkpoint, matched diagnostic deployment and one
+instrumented production observation were the next acceptance step.
+
+## Diagnostic deployment and actual provider boundary
+
+Public `51c98a7f` built successfully on Linux. All2689 tracked files matched the
+canonical source and the release used the58 verified web assets. The worker-only
+image derives from the accepted3fd8 image. Its ID is
+`sha256:ecffb3e46ed8a38d46966abeeaff85d7c5f04d1dac253d8938d83b932c1ba8a2`;
+gateway SHA256 is `db96ac698fc2e7f0d306eb3ea2679a1e6e5e2ddd6d44a85ed33dadb7824bf405`.
+
+The existing two-member Ubuntu24 fixture passed the exact binary/image switch,
+stable HTTPS, unchanged data/keys/member identity and confinement. Its installed
+API opened official Claude, accepted one observed Google-button click, displayed
+the actual Google identifier screen, and cancelled with the owned capsule absent.
+Earlier six authority/recovery cases remain explicitly inherited evidence; they
+were not rerun. This is a patch on the accepted installation, not a new-source
+installer receipt. The measured candidate receipt SHA256 is
+`ac4b41e72961dbdf385e068c66b47a5b61f53ae0f8a25c30a77e1e394a75186f`.
+
+Independent official Claude Sonnet5.5/medium reviewed the scoped transition
+adaptation without a material finding. Main checked the rendered exact pins,
+receipt and helper and added explicit fixture configuration-file preservation.
+Production then passed the matched gateway/handler/worker switch, stable HTTPS,
+preserved member/Vault/keys/Google grants/model configuration, unchanged unrelated
+processes and confinement. No production member or Vault reset occurred.
+
+One instrumented production UI journey displayed the official Google identifier
+page inside Moosuri. Email input and Next reached Google's actual
+"This browser or app may not be secure" refusal. There were no worker/CLI failure
+labels during that journey. Product cancellation produced only
+`claude_login_terminal_cancelled`, retired the browser and confirmed the owned
+capsule absent. No password, code or phone approval occurred. The previous
+post-Google-button failure was **not reproduced**, so its cause remains unknown;
+the diagnostic change is not claimed to fix it. Do not repeat the rejected
+Google login without a changed provider condition or use another browser/profile.
+
+A separate official Claude email-login attempt reached the provider's security
+verification screen and did not advance after one visible verification selection.
+No email code was requested/read and no authentication was completed. Keep this
+provider pause separate from a worker crash and from successful account binding.
+
+
+## Observed authentication memory failure and candidate correction
+
+The separate email-login journey subsequently failed during screen polling:
+`claude_browser_poll_worker_protocol` followed by
+`claude_login_terminal_browser_fault`. The host kernel recorded a memcg OOM kill
+of Chrome. Its exact cgroup/container ID matched retained Kiri create events for
+this owned authentication capsule and the51c diagnostic image. The root private
+`memory-observation.json` contains only this resource/event correlation, not
+provider contents. It does not retroactively establish the cause of earlier
+unreproduced failures. Cleanup completed and the auth capsule was absent.
+
+The candidate gives only Google/Claude authentication a1536MiB memory budget;
+ordinary browsing stays at768MiB. Launcher and in-container admission use the
+same limit function. Auth memory-swap equals its memory limit, and the existing
+`ephemeral_auth_storage` check still requires kernel `memory.swap.max` to be0.
+CPU1, PID256, tmpfs/mount/capability/network rules and two-slot admission remain.
+The maximum two auth capsules therefore reserve up to3GiB, rather than an
+unlimited workaround. Other Claude inference-worker limits are unchanged.
+
+| ID | User journey or resource boundary | Candidate result |
+| --- | --- | --- |
+| MB01 | Owner reaches a provider verification page inside the login flow | Actual768MiB OOM correlated;1536MiB installed reproduction remains pending |
+| MB02 | Ordinary member browses while auth uses its larger budget | Native command/kernel checks retain768MiB; generic mode refuses auth-sized memory |
+| MB03 | Runtime supplies unlimited memory, excessive CPU/PIDs or swap | Native memory/CPU/PID refusal passes; auth zero-swap kernel gate retained; actual admission probe pending |
+| MB04 | Authentication fails and owner returns to setup | Actual51c worker fault cleaned its capsule; candidate installed cancellation/recovery remains pending |
+
+Linux browser tests passed189 with3 ignored. Independent official Claude
+Sonnet5.5/medium found no blocking memory-change defect. Its concern about swap
+was checked against the existing kernel gate above; its remaining requirement
+is actual installed reproduction at the new cap. These results do not establish
+provider authentication or adequate memory for every future provider page.

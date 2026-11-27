@@ -25,8 +25,14 @@ function setup({ configured = false, failure = "", status = 400 } = {}) {
 }
 
 function mount() {
-  const props = { account, expired: vi.fn(), unavailable: vi.fn(), onConnect: vi.fn() };
+  const props = { account, expired: vi.fn(), unavailable: vi.fn(), onConnect: vi.fn(), onStart: vi.fn() };
   return { props, ...render(<PersonalGoogleSetup {...props} />) };
+}
+
+async function openManual(user: ReturnType<typeof userEvent.setup>) {
+  const summary = await screen.findByText(/고급: 기존 Google 웹 클라이언트 JSON/);
+  await user.click(summary);
+  expect(summary.closest("details")).toHaveAttribute("open");
 }
 
 function jsonFile(text: string | Promise<string>) {
@@ -41,12 +47,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("opens the installation registration form directly even with an old Cloud Shell draft", async () => {
-  setup();
+it("lets a first installer continue to Google connection without any JSON, upload, or configured claim", async () => {
+  const requests = setup();
+  const user = userEvent.setup();
   localStorage.setItem(draftKey, JSON.stringify({project:"example",step:1,method:"shell"}));
-  mount();
-  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  const { props } = mount();
+  const start = await screen.findByRole("button", { name: "서비스 선택하고 계속" });
+  expect(screen.getByText(/각 회원이 자신의 계정으로 따로 동의/)).toBeVisible();
+  expect(screen.getByText(/Google이 추가 확인을 요청하면/)).toBeVisible();
+  expect(screen.getByText(/고급: 기존 Google 웹 클라이언트 JSON/).closest("details")).not.toHaveAttribute("open");
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  await user.click(start);
+  expect(props.onStart).toHaveBeenCalledOnce();
+  expect(props.onConnect).not.toHaveBeenCalled();
+  expect(requests).toEqual([{ method: "GET", account }]);
   expect(localStorage.getItem(draftKey)).toBeNull();
 });
 
@@ -55,7 +69,7 @@ it("copies the callback and imports an existing JSON through the account-scoped 
   const user = userEvent.setup();
   const writeText = vi.spyOn(navigator.clipboard, "writeText");
   const { props } = mount();
-  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  await openManual(user);
   const callback = screen.getByRole("textbox", { name: "이 설치의 콜백 주소" });
   expect(callback).toHaveAttribute("readonly");
   expect(callback).toHaveValue(redirect_uri);
@@ -77,7 +91,7 @@ it("shows a repair message without rendering provider details when the callback 
   const requests = setup({ failure: "google_redirect_uri_mismatch" });
   const user = userEvent.setup();
   mount();
-  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  await openManual(user);
   const file = screen.getByLabelText("Google 웹 클라이언트 JSON");
   await user.upload(file, jsonFile("x".repeat(16385)));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
@@ -99,7 +113,7 @@ it.each([
   const requests = setup();
   const user = userEvent.setup();
   mount();
-  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  await openManual(user);
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), jsonFile(JSON.stringify(invalid)));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(String(message));
@@ -113,7 +127,7 @@ it("does not transmit a pending file read after an account switch", async () => 
   let release: (value: string) => void = () => {};
   const pending = new Promise<string>(resolve => { release = resolve; });
   const view = mount();
-  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  await openManual(user);
   const file = jsonFile(pending);
   const read = vi.spyOn(file, "text");
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), file);
@@ -134,7 +148,7 @@ it("uses the stored status to resolve a conflicting upload", async () => {
   });
   const user = userEvent.setup();
   mount();
-  await screen.findByLabelText("Google 웹 클라이언트 JSON");
+  await openManual(user);
   await user.upload(screen.getByLabelText("Google 웹 클라이언트 JSON"), jsonFile(client));
   await user.click(screen.getByRole("button", { name: "이 설치에 저장" }));
   await screen.findByText("Google 앱 설정이 등록되어 있습니다.");

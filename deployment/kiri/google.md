@@ -1,15 +1,39 @@
 # 회원별 Google Workspace 커넥터 연결
 
-## 관리자가 한 번 설정하기
+## 처음 Google 연결하기
 
-Linux Kiri의 **연결 → 커넥터 → Google Workspace 설정**에서 시작한다. 설치 전체에 웹 OAuth 앱 하나를 등록하고, 메일함·파일 접근 권한은 회원이 자기 Google 계정으로 승인한다.
+Linux Kiri에서 **연결 → Gmail 또는 사용할 서비스 → Google 연결**로 시작한다.
+처음 설치한 관리자도 같은 경로를 사용한다. 별도 Cloud Shell이나 개발자의
+컴퓨터 설정은 필요하지 않다. 아래 자동 설정은 개발판에 구현되어 있으며,
+새 앱 발급부터 두 실계정 동의까지의 전체 수락은 아직 완료되지 않았다.
+[확인한 범위와 공급자 제한](../../docs/status.md) ·
+[사용자 여정별 결과](../../openspec/changes/automate-installation-google-app/journeys.md)
 
-1. Cloud Shell은 사용 흐름에 포함하지 않는다. 기존 설치용 웹 OAuth 클라이언트가 있으면 정확한 HTTPS 콜백을 확인해 재사용한다. 새 클라이언트의 최초 발급은 Google 공식 콘솔에서 프로젝트·동의 화면을 설정해야 한다. Google은 클라이언트의 프로그램 자동 생성·변경을 제한한다. [Google의 최초 등록 조건](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation)
-2. Google에서 동의 화면의 앱 정보와 사용 대상을 확인한다. 외부 앱을 테스트 모드로 운영하면 사용할 계정을 테스트 사용자에 추가한다. 웹 애플리케이션 유형의 OAuth 클라이언트를 만들고 마법사가 제시하는 HTTPS 콜백 주소를 붙여 넣는다. 설치에 맞게 발급한 웹 클라이언트 JSON이 이미 있으면 프로젝트 준비를 건너뛴다. [Google 웹 서버 OAuth](https://developers.google.com/identity/protocols/oauth2/web-server#creatingcred)
-3. **연결 → 커넥터 → Google Workspace 설정**에 JSON 파일을 등록한다. 서버가 설치에 설정된 공개 주소와 콜백 경로를 대조한다. 같은 클라이언트는 다시 제출할 수 있다. 다른 클라이언트로 기존 등록을 덮어쓰려 하면 충돌을 표시한다. 공개 주소를 변경하거나 인증 정보를 교체할 때는 기존 동의와 회원 프로필을 확인한다.
-4. 회원은 **연결 → Gmail 또는 Drive 등 → Google 연결**에서 볼트 계정을 먼저 확인한다. Google 로그인 항목이 없으면 이메일과 비밀번호를 입력해 암호화 저장하고, 하나면 자동 선택하며, 여러 개면 표시된 이메일 중 하나를 고른다. Google 이메일은 무수리 가입 이메일과 달라도 된다. 선택·암호문 검증 뒤 전용 Kiri에서 로그인한다. 설치 앱이 없는 관리자의 연결 버튼도 볼트 확인까지 열리지만, OAuth 앱 등록 전에는 서비스 연결 완료로 표시하지 않는다. 연결 메뉴에서 Gmail을 선택하면 연결만 하고, 채팅에서 명시적으로 요청한 조회는 그 대화로 돌아가 이어간다.
+1. 먼저 회원 볼트가 열린다. Google 로그인 항목이 없으면 이메일과 비밀번호를
+   받아 암호화 저장한다. 하나면 재사용하고 여러 개면 사용할 계정을 고른다.
+   Google 이메일은 무수리 가입 이메일과 달라도 된다.
+2. 선택한 계정으로 Linux Kiri의 새 프로필에서 로그인한다. 비밀번호는 볼트가
+   해당 로그인 작업의 수신자에게 암호화해서 전달한다. 기기 확인 등 Google이
+   요구하는 확인은 그 계정의 기기에서 진행한다.
+3. 설치용 앱이 없는 관리자는 같은 Kiri에서 새 무과금 프로젝트와 설치 공용
+   OAuth 앱을 준비한다. 기존 앱이 있으면 재사용한다. 약관·조직 정책·공개 심사
+   등 Google의 선행 조건이 충족되지 않으면 해당 단계에서 멈춘다. 앱 생성이나
+   저장의 결과가 불확실하면 같은 기록을 확인하며 새 앱을 반복 생성하지 않는다.
+4. 앱 준비 뒤 각 회원은 자신의 Google 계정으로 서비스 접근에 따로 동의한다.
+   공용 앱 등록은 회원의 Gmail 권한을 공유하지 않는다. 연결 메뉴에서 시작했다면
+   연결만 완료한다. 대화에서 메일 조회를 요청했다면 그 대화의 요청을 이어간다.
 
-Google 로그인, 동의, 클라이언트 파일 처리는 공식 Google 탭과 관리자 파일 입력에서 진행한다. 채팅 브라우저는 읽은 페이지를 모델에 전달하므로 관리자 비밀번호·인증 코드·클라이언트 파일을 넣지 않는다. 설치 단계에서 관리자 메일에 대한 읽기·발송 권한은 요청하지 않는다. [Google OAuth 정책](https://developers.google.com/identity/protocols/oauth2/policies)
+**Google Workspace 설정**은 설치 앱의 상태를 확인하고 기존 웹 클라이언트
+JSON을 가져오는 경로다. 새 설치의 일반 연결에서 JSON 파일을 먼저 준비해야
+하는 것은 아니다. 기존 JSON을 등록할 때는 설치의 정확한 HTTPS 콜백을 대조한다.
+동일한 등록은 재사용하고 다른 앱과의 충돌은 기존 등록을 보존한다. Google의
+최초 등록·동의 정책은 계속 적용된다.
+[Google 웹 서버 OAuth](https://developers.google.com/identity/protocols/oauth2/web-server#creatingcred) ·
+[Google OAuth 정책](https://developers.google.com/identity/protocols/oauth2/policies)
+
+로그인 비밀번호·인증 코드·클라이언트 파일은 대화나 모델에 넣지 않는다.
+Google이 현재 브라우저를 거절하면 그 상태를 알리고 해당 시도를 종료한다.
+다른 프로필의 쿠키를 복사하거나 확인되지 않은 연결을 성공으로 표시하지 않는다.
 
 ## Linux 호스트에서 회원 자동 등록 켜기
 
@@ -60,7 +84,7 @@ docker --host unix:///run/kiri/docker.sock exec -i --user "$MEMBER_UID:$MEMBER_U
 
 ## 회원이 보는 흐름
 
-대화에 **구글 로그인하고 GWS까지 등록해줘**라고 쓰면 사용할 서비스를 고르는 화면이 열린다. **지메일 연결해줘**처럼 서비스를 지정하면 해당 서비스로 바로 간다. 처음 준비하는 관리자는 이 화면에서 Google Workspace 설정을 연다. Google은 웹 OAuth 클라이언트 최초 발급을 Cloud 콘솔에서 진행하도록 한다. [Google의 클라이언트 등록 안내](https://developers.google.com/identity/protocols/oauth2/resources/best-practices#manual-client-creation)
+대화에 **구글 로그인하고 GWS까지 등록해줘**라고 쓰면 사용할 서비스를 고르는 화면이 열린다. **지메일 연결해줘**처럼 서비스를 지정하면 해당 서비스로 바로 간다. 처음 준비하는 관리자도 같은 Google 연결을 사용한다. 설치 앱이 없으면 볼트 계정 확인과 로그인 뒤 같은 Kiri에서 설치 준비로 이어진다. 기존 앱을 가져오거나 상태를 확인할 때 Google Workspace 설정을 연다.
 
 **Google 연결**을 누르면 먼저 회원 볼트가 열린다. 잠금을 해제하면 `https://accounts.google.com`의 Google 로그인 항목을 확인한다. 항목이 없으면 이메일과 비밀번호를 받아 암호화 저장하고, 하나면 재사용하며, 여러 개면 이메일을 보고 선택한다. 선택한 이메일은 무수리 가입 이메일과 달라도 된다. 그 뒤 Linux Kiri의 새 프로필에서 로그인하고 같은 프로필에서 서비스 권한을 연결한다. 비밀번호는 볼트가 Kiri 수신자에게 암호화해서 전달하며 대화나 모델에는 전달하지 않는다. Google이 기기 승인을 요구하면 해당 기기에서 승인해야 한다. [Kiri 브라우저](browser.md)
 

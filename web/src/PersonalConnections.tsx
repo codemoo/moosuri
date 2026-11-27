@@ -167,6 +167,8 @@ export function PersonalConnections({
       unavailable={() => { backFromSetup(); onAdminUnavailable?.(); }}
       onBack={() => !selected && setupOpenedFromAdmin(props.session) ? onBack() : backFromSetup()}
       onConnect={() => backFromSetup(true)}
+      onStart={() => backFromSetup()}
+      startLabel={selected ? selected.name + " 연결로 이동" : "서비스 선택하고 계속"}
       returnLabel={selected ? selected.name + " 연결로 돌아가기" : "커넥터 열기"} />;
   }
 

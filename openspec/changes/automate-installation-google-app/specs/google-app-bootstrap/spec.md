@@ -80,6 +80,25 @@ accounts SHALL NOT alone prevent Workspace setup.
 - **WHEN** project creation was attempted with a recorded billing decision and the reply is lost
 - **THEN** retry retains that decision and reconciles the original project before changing it or creating another project
 
+### Requirement: First setup leads to the existing Vault-first connection
+An unconfigured installation administrator SHALL be offered the existing Google
+connection entry before manual client-file import. Navigation SHALL preserve the
+chosen service and conversation intent without asserting that setup is complete
+or starting provider consent/read. Manual import SHALL remain secondary and use
+the existing account-scoped validation and secret clearing.
+
+#### Scenario: Open setup without a selected service
+- **WHEN** the first administrator continues from unconfigured installation settings
+- **THEN** the service chooser is shown without choosing Gmail or starting a provider operation
+
+#### Scenario: Return to the selected service
+- **WHEN** an unconfigured administrator continues from that service's settings
+- **THEN** the same service offers Google connection while installation readiness stays unconfirmed until verified
+
+#### Scenario: Import an existing client or use an ordinary member
+- **WHEN** an administrator opens the secondary import or a non-admin opens Connections
+- **THEN** import retains its validation and account fence, and the ordinary member is not offered installation administration
+
 ### Requirement: Administrator connection prepares the installation app
 The system SHALL continue a missing-app administrator connection in the same
 isolated Kiri browser through official Google Console setup, register the web
@@ -487,3 +506,21 @@ A saved intent SHALL survive lost acknowledgements and delayed fallback writes.
 #### Scenario: A page displays an older connection revision
 - **WHEN** another administrator changes the connection before the page submits or rechecks it
 - **THEN** stale mutations are refused and rechecking refreshes the parent connection view
+
+### Requirement: Authentication browsing has a bounded distinct memory budget
+Google and Claude authentication capsules SHALL use at most1536MiB memory with
+zero swap. Ordinary read/workspace capsules SHALL retain their768MiB bound.
+The launcher and in-container kernel checks SHALL agree on the selected mode,
+while existing CPU, PID, mount, capability, network and admission limits remain.
+
+#### Scenario: Provider login opens a verification page
+- **WHEN** the authentication flow holds an opener and a provider verification page
+- **THEN** the auth memory budget applies, with kernel-enforced zero swap and existing isolation verified before browser launch
+
+#### Scenario: A generic browser runs with authentication-sized limits
+- **WHEN** a generic browser receives a limit above its ordinary budget
+- **THEN** its kernel admission check refuses the environment
+
+#### Scenario: An authentication capsule has unlimited or excessive resources
+- **WHEN** memory is unlimited/above the auth ceiling, swap is enabled or CPU/PID limits are excessive
+- **THEN** authentication admission fails without starting a browser or persisting credentials

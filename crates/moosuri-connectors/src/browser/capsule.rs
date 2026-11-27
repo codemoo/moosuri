@@ -367,9 +367,12 @@ impl CapsuleReader {
             "/run:rw,noexec,nosuid,size=1m,mode=0755",
             "--shm-size=256m",
             "--pids-limit=256",
-            "--memory=768m",
             "--cpus=1",
         ])
+        .arg(format!(
+            "--memory={}",
+            super::confinement::memory_limit_bytes(google_auth)
+        ))
         .arg(format!("--label={OWNER}={}", self.config.owner))
         .arg(format!("--label={READ}={read}"))
         .arg(format!("--label={PROJECT}={}", self.config.project))
@@ -397,7 +400,10 @@ impl CapsuleReader {
             .arg("--label=io.moosuri.browser.kind=bounded-profile-v1");
         }
         if google_auth {
-            c.arg("--memory-swap=768m");
+            c.arg(format!(
+                "--memory-swap={}",
+                super::confinement::memory_limit_bytes(true)
+            ));
         }
         c.arg(&self.config.image_id);
         c

@@ -270,3 +270,32 @@ The separate local standard preview SHALL remain explicitly labelled.
 - **WHEN** a required public input is missing under `--password-stdin` or without a terminal
 - **THEN** setup fails with an input requirement without consuming the password as public input
 - **AND** complete scripted options continue to use the existing installation/replay path
+
+
+### Requirement: Owner-bound Claude login uses a private cancellable child
+The system SHALL reuse the protected worker configuration, owner tuple/revision,
+profile, expected account and all configured model/effort choices for an official
+Claude login child. The child SHALL use bounded private pipes, never infer or
+publish an installation model binding, and SHALL reject an engine without the
+rootless systemd/cgroup2 memory/CPU/PIDs resource contract.
+
+#### Scenario: An owner completes the current official login
+- **WHEN** one code arrives after the validated official authorization URL
+- **THEN** only that original process receives it, account/catalog checks gate readiness, and no inference or binding write occurs
+
+#### Scenario: The owner cancels or the parent connection disappears
+- **WHEN** cancellation, EOF, partial EOF or a deadline occurs
+- **THEN** the pending attempt is cancelled and its current login cleanup completes before reporting failure
+- **AND** cancellable preflight cannot wait through another environment lock timeout after parent loss
+
+#### Scenario: A code is invalid or repeated
+- **WHEN** malformed, oversized, duplicate or out-of-order input arrives
+- **THEN** the child reports a fixed failure without replaying a login or exposing raw authentication output
+
+#### Scenario: Configuration or advertised models no longer match
+- **WHEN** the profile, owner/revision, private-file policy, expected account or any configured model/effort is invalid
+- **THEN** no ready binding is published and early setup failure without a result is treated as failure by the parent
+
+#### Scenario: The parent leaves its input open after completion
+- **WHEN** the child has emitted its terminal result
+- **THEN** it exits without waiting for another blocking stdin read, and regular files or terminals cannot serve as its protocol channels

@@ -92,6 +92,9 @@ enum Command {
     EngineLoginWorker(engine_login::Options),
     /// Enroll the official Claude Code account for a host model worker.
     ClaudeEngineLogin(engine_login::claude::LoginOptions),
+    /// Private child protocol for a fresh owner-bound Claude subscription login.
+    #[command(hide = true)]
+    ClaudeEngineLoginBridge(engine_login::claude::LoginBridgeOptions),
     /// Inspect an enrolled host-side ChatGPT engine connection.
     EngineChatgptInspect(engine_login::ChatGptInspectOptions),
     /// Make one text call using the member broker socket and private standard input.
@@ -476,6 +479,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::ClaudeEngineLogin(options) = &cli.command {
         return engine_login::claude::login(options).await;
     }
+    if let Command::ClaudeEngineLoginBridge(options) = &cli.command {
+        return engine_login::claude::login_bridge(options).await;
+    }
     if let Command::RuntimeModel(options) = &cli.command {
         return runtime_model::run(options).await;
     }
@@ -662,6 +668,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::RuntimeGoogleCall(_)
         | Command::EngineLoginWorker(_)
         | Command::ClaudeEngineLogin(_)
+        | Command::ClaudeEngineLoginBridge(_)
         | Command::EngineChatgptInspect(_)
         | Command::RuntimeModel(_)
         | Command::RuntimeModelCall(_)

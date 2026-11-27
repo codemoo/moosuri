@@ -7,7 +7,10 @@ assert a[0]=='--host' and a[1].startswith('unix://')
 assert os.environ.get('DOCKER_CONFIG')==str(root/'scratch'/'engine-empty')
 assert 'ANTHROPIC_API_KEY' not in os.environ and 'CLAUDE_CODE_OAUTH_TOKEN' not in os.environ
 if 'info' in a:
- print('["name=rootless"]');sys.exit(0)
+ assert a[a.index('--format')+1]=='{{json .}}'
+ if (root/'engine-info').exists():print((root/'engine-info').read_text())
+ else:print(json.dumps({'SecurityOptions':['name=seccomp,profile=builtin','name=rootless','name=cgroupns'],'CgroupDriver':'systemd','CgroupVersion':'2','MemoryLimit':True,'CpuCfsPeriod':True,'CpuCfsQuota':True,'PidsLimit':True,'ServerVersion':'29.1.3'}))
+ sys.exit(0)
 if 'ps' in a:
  assert '--no-trunc' in a
  if (root/'stale').exists():print('a'*64)
@@ -28,13 +31,14 @@ with (root/'launches').open('a') as f:f.write('run\n')
 index=a.index('internal-claude-run');mode=a[index+1]
 if mode=='login':
  behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
- if behavior.startswith('web-login'):
+ if behavior.startswith('web-login') or behavior=='bridge-login':
   assert '-i' in a and '-it' not in a
   origin='https://untrusted.example' if behavior=='web-login-untrusted' else 'https://claude.com'
   print(origin+'/cai/oauth/authorize?state=synthetic&code_challenge=synthetic',flush=True)
   print('Paste code here if prompted > ',end='',flush=True)
   code=sys.stdin.readline().rstrip('\n')
   if code!='synthetic-code#state':sys.exit(2)
+  if behavior=='bridge-login':(root/'synthetic-login-complete').write_text('complete')
   print('Login successful',flush=True)
   sys.exit(2 if behavior=='web-login-nonzero' else 0)
  (root/'entered').write_text('entered');time.sleep(120);sys.exit(2)
@@ -47,6 +51,7 @@ assert settings['disableAllHooks'] is True and settings['autoMemoryEnabled'] is 
 with (root/'settings-history').open('a') as f:f.write(json.dumps(settings)+'\n')
 v=json.loads(sys.stdin.buffer.readline())
 behavior=(root/'behavior').read_text() if (root/'behavior').exists() else 'ok'
+if behavior=='bridge-login' and not (root/'synthetic-login-complete').exists():behavior='logged-out'
 if v.get('type')=='control_request':
  assert (model=='default' or bound_token_limit) and v['request']=={'subtype':'initialize'}
  print(json.dumps({'type':'system','subtype':'ui_invalidate'}),flush=True)

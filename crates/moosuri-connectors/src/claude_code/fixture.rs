@@ -49,6 +49,10 @@ impl Fixture {
     pub fn behavior(&self, value: &str) {
         std::fs::write(self.directory.path().join("behavior"), value).unwrap();
     }
+    /// Replaces the synthetic engine `info` output with exact raw text.
+    pub fn engine_info(&self, raw: &str) {
+        std::fs::write(self.directory.path().join("engine-info"), raw).unwrap();
+    }
     pub fn launches(&self) -> usize {
         std::fs::read_to_string(self.directory.path().join("launches"))
             .unwrap_or_default()

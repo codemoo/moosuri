@@ -20,7 +20,7 @@ semver = "1"
 png = "=0.18.1"
 serde.workspace = true
 uuid.workspace = true
-zeroize = "1.8"
+zeroize = { version = "1.8", features = ["serde"] }
 fs2 = "0.4"
 base64 = "0.23"
 moosuri-documents = { path = "../../crates/moosuri-documents" }

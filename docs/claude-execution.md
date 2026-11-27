@@ -10,8 +10,11 @@ The implemented acceptance tests use synthetic child processes and accounts.
 Actual Linux rootless-container isolation, the pinned official artifact, official
 login and real account/model eligibility remain separate deployment acceptance.
 A configured profile is not evidence that these live checks have passed. The
-available acceptance host currently has rootful Docker and no rootless Podman;
-this profile intentionally rejects it. Do not change host services to bypass this.
+production host's rootful Docker is not an eligible engine for this profile.
+A separate disposable Linux guest now passed credential-free rootless resource/
+isolation checks and official authorization-URL/cancellation checks. This is not
+provider login, inference or accepted product provisioning.
+[Dated scope and remaining work](reviews/2026-11-27-claude-subscription-bridge.md).
 
 ## Supported boundary
 

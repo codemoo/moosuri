@@ -53,13 +53,33 @@ member's password; that is partial infrastructure evidence, not web admission.
 | M02 | Invite another member during an existing member's model request | New socket appears; existing request is not cancelled or charged twice | Dynamic socket isolation passed; full install journey open |
 | M03 | Wrong/revoked key, unsupported model or invalid effort | Show the actual unavailable state; preserve an existing connection until the replacement is valid | Installed candidate0b5e8fa Chromium UI rejected one synthetic invalid-key catalog request, cleared input, stayed unconfigured after reload and hid setup from a second member; valid replacement and inference remain open |
 | M04 | Lose API-setup reply, then another administrator changes the connection | Reconcile this request's revision; never attribute another administrator's save to this request | Candidate UI attribution and atomic-save tests passed |
-| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Missing production worker and public provisioning automation remain open; CLI prerequisites traced independently |
+| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Private child login and credential-free Linux confinement/official-URL cancellation checks passed; production worker and public provisioning/UI remain open |
 | M06 | Worker is missing/restarted, member generation changes, or server reboots | No borrowed member login, no fallback model, no new charge before dispatch; truthful recovery | Socket isolation/replay boundaries passed; fresh subscription/reboot journey open |
 
 Shared model credentials use the installation API route. The existing official
 Claude subscription worker is pinned to one member and authenticated principal;
 it cannot serve a second member by copying its binding or credentials. Source
 inspection is not evidence of successful fresh provider login or inference.
+
+### M05/M06 subscription connection checkpoints — 8 supporting journeys
+
+These expand the existing model journeys, not the 61 end-to-end acceptance rows.
+A passed child-process check does not complete its Kiri UI or provider journey.
+The installed setup must still prepare the service and bind it to the current
+member; the user must not have to create Linux users or private JSON by hand.
+
+| ID | User action or interruption | Observable acceptance | Current scope |
+| --- | --- | --- | --- |
+| M05-A | Administrator chooses a fresh subscription on an empty server | Product prepares verified artifacts, bounded storage and a dedicated worker, then opens official authentication in that member's Kiri | Credential-free rootless/artifact/isolation feasibility passed; automatic preparation and UI remain open |
+| M05-B | Owner completes official authentication | One original login process receives one code; account and every configured model/effort verify before readiness; binding then rechecks current owner/session/revision | Private child synthetic and real-process checks passed; real account authentication/binding open |
+| M05-C | Owner reopens a setup with an already verified account | Verify the same account/catalog without a second login or inference; preserve the active binding | Synthetic catalog/skip-login check passed; installed UI recovery open |
+| M05-D | Owner cancels, closes the page, or loses the connection while entering the code | Cancel and clean up the original process, including partial input; never save a ready binding | Synthetic and actual-binary cancellation/EOF checks passed; official CLI URL/cancel/cleanup passed; installed page check open |
+| M05-E | Owner double-submits, pastes a malformed code, or submits before the login step | Reject without retrying authentication or executing a second login | Synthetic malformed/order/duplicate checks passed; installed UI open |
+| M05-F | Owner signs into a different account, lacks a subscription, or loses a selected model/effort | Fixed unavailable status; no inference, fallback model or binding replacement | Synthetic identity/catalog checks passed; real provider cases open |
+| M05-G | Login stalls, output disappears, or its result is lost | Bounded cleanup; do not claim ready from a missing result or replay a one-time code | Synthetic deadline/output-loss checks passed; installed response-loss/reopen journey open |
+| M05-H | Service profile changes, permissions loosen, administrator is revoked, or member generation changes | Reject stale configuration and recheck authority before binding; restart only the same owned service | Private configuration, all-choice and preflight-lock cancellation process checks passed; product revocation/reboot integration open |
+
+[Subscription preparation and login evidence](../../../docs/reviews/2026-11-27-claude-subscription-bridge.md).
 
 ## Vault account selection — 6 journeys
 

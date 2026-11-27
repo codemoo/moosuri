@@ -6,6 +6,7 @@ fn email_is_a_private_single_line() {
     let root = tempfile::Builder::new()
         .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
         .unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let file = root.path().join("email");
     fs::write(&file, "owner@example.test\n").unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();

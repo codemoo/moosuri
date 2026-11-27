@@ -1372,3 +1372,25 @@ the already observed provider rejection. Continue independent implementation
 without repeating unchanged provider attempts.
 
 [Full latest evidence](../../../docs/reviews/2026-11-27-final-entry-production.md).
+
+
+### Owner subscription prerequisite and private login bridge — 2026-11-27
+
+The credential-free disposable Linux guest verified rootless systemd/cgroup 2,
+actual container limits/isolation, the unchanged official CLI artifact and the
+existing worker's logged-out result. Main integrated the official Claude-written
+private child bridge, fixed blocking standard-input shutdown, reused worker
+configuration/account/all-model validation, and wired the hidden CLI. Independent
+Claude review prompted cancellable preflight and zeroizing deserialization;
+closure found no material defect. The existing serde feature is now explicit.
+
+Final Linux 57 Rust checks (15 engine, 42 connector) and 12 actual-process cases
+passed. The official confined CLI emitted its authorization URL and cancelled
+with actual container cleanup and no code, credential, browser login, inference
+or binding. This does not complete M05/M06/C01: automatic service/profile/storage
+preparation, Kiri gateway/UI, fresh owner authentication, binding and reboot
+remain next. No production model choice, account or configuration was changed.
+Eight supporting M05/M06 checkpoints keep those gaps visible without claiming
+additional completed end-to-end journeys.
+
+[Exact scope, earlier failures and reproduction](../../../docs/reviews/2026-11-27-claude-subscription-bridge.md).

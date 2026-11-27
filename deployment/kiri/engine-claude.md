@@ -2,6 +2,14 @@
 
 Kiri 엔진은 등록한 회원의 요청을 호스트의 Linux 비루트 작업자에게 전달한다. 한 작업자에 한 회원의 런타임 튜플과 그 회원이 직접 인증한 Claude 계정을 등록한다. 회원 컨테이너는 기존 `/model/model.sock`을 사용한다. 공식 Claude Code가 자신의 인증 환경을 관리한다. [엔진 연결](subscriptions.md) · [Claude Code 이용 조건](https://code.claude.com/docs/en/legal-and-compliance)
 
+개발판의 비공개 `claude-engine-login-bridge --config …`는 화면 연동용 자식
+프로세스다. 비루트 작업자의 기존 비공개 설정을 읽고, 부모의 파이프로 공식 인증
+주소와 고정 결과만 전달한다. 부모는 코드를 한 번만 보내고 결과까지 입력 파이프를
+유지해야 한다. 종료 시 결과가 없으면 실패로 처리하며, 표준 오류는 버리고 인증
+주소·코드를 기록하지 않는다. 이 명령은 모델 연결을 등록하지 않는다. 자동 서비스
+준비와 Kiri 화면 연동은 미완료이며 아래 수동 운영자 절차를 제품 자동화로 보지
+않는다. [검증 범위](../../docs/reviews/2026-11-27-claude-subscription-bridge.md)
+
 ## 운영자 설정
 
 1. 전용 비루트 Linux UID에서 rootless Docker와 격리 프로필을 준비한다. 공식 Claude Code 바이너리, Moosuri 실행 파일, 이미지 다이제스트를 고정하고 배포 환경의 격리 수락 시험을 통과한 프로필을 사용한다. `auth_root`와 `scratch_root`는 작업자가 소유한 `0700` 디렉터리다. 프로필 JSON과 계정 이메일 파일은 작업자가 소유한 비공개 디렉터리에 `0600`으로 둔다. 프로필 필드와 시험 절차는 기존 실행 가이드를 따른다. [프로필과 격리 시험](../../docs/claude-execution.md#operator-profile)

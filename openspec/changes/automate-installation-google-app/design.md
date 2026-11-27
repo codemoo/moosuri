@@ -239,3 +239,51 @@ private input for public questions; complete flags remain supported. No new
 installer framework, queue or service is introduced. I08–I10 supplement the
 existing install/replay/reboot journeys, bringing installation to10 and total
 journeys to61.
+
+## Owner-bound Claude subscription preparation
+
+The API setup route and an owner's official Claude subscription are distinct
+choices. Preserve the existing choice until an administrator explicitly selects
+and verifies a replacement. Preparing public runtime artifacts must not copy a
+developer's login or configure an unauthenticated connection as ready. M05/M06
+remain open until preparation, fresh owner login, exact-model verification,
+member binding and reboot recovery work through the installed product.
+
+Reuse the current `engine-login-worker`, `Profile`, official initialization
+catalog, model broker and private `model-setup` directory. The installer prepares
+the unchanged pinned official binary from its signed manifest, the native helper,
+an immutable base image and a dedicated non-root Linux identity. Its Docker
+daemon is a systemd user service with a private socket and subordinate UID/GID
+ranges. Only that service identity receives controller delegation. Member runtime
+UIDs, reserved allocations and other services are not adopted or altered.
+Public source must generate profiles and units from verified local artifacts;
+asking users to supply a profile, artifact hashes or hand-written worker JSON
+does not satisfy the clean-installation journey.
+
+The current launch's memory, CPU and process limits require an engine that
+explicitly reports rootless mode, systemd/cgroup2 and the required controllers.
+The preparation acceptance also observes actual container limits, namespace
+isolation and cleanup; an engine self-report or a profile digest alone is not
+that acceptance. Failure preserves the current model binding and reports a
+specific unavailable setup state, without an uncontrolled execution fallback.
+
+A private child-login command runs as the worker identity using its existing
+protected worker configuration. It reuses `Profile::login_web`; stdout carries
+only the connector's validated official authorization URL and fixed status,
+and stdin carries at most one code or cancellation. The gateway retains this
+process only for the originating authenticated member/session and administrator
+model revision. EOF, cancellation, revocation and timeout close the original
+attempt. Codes and URLs remain volatile, are not conversation messages and are
+never automatically replayed after an uncertain response.
+
+After the official login, the child verifies the expected account and exact
+administrator-selected model/effort without an inference request. Before any
+binding write, the gateway rechecks the owner generation, current session and
+installation revision, starts the existing worker and verifies its kernel peer
+and readiness. A later member authenticates a separate environment and worker;
+one owner's subscription credentials are never assigned to another member.
+Reboot reconstructs the same owned services and bindings, not a second login.
+
+These are the target contracts for the remaining subscription unit. Credential-
+free Linux preparation and startup evidence is not successful official login,
+model inference, product UI integration or C01 acceptance.

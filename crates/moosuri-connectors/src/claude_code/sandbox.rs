@@ -426,11 +426,31 @@ impl Profile {
         tokio::task::spawn_blocking(move || p.files())
             .await
             .map_err(|_| err())??;
+        // Rootless Docker ignores --memory/--cpus/--pids-limit without systemd + cgroup v2,
+        // so admit only an engine that explicitly reports enforcement of the launch contract.
         let info = self
-            .engine_output(&["info", "--format", "{{json .SecurityOptions}}"])
+            .engine_output(&["info", "--format", "{{json .}}"])
             .await?;
-        let values: Vec<String> = serde_json::from_slice(&info).map_err(|_| err())?;
-        if !values.iter().any(|s| s == "name=rootless") {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct EngineInfo {
+            security_options: Vec<String>,
+            cgroup_driver: String,
+            cgroup_version: String,
+            memory_limit: bool,
+            cpu_cfs_period: bool,
+            cpu_cfs_quota: bool,
+            pids_limit: bool,
+        }
+        let info: EngineInfo = serde_json::from_slice(&info).map_err(|_| err())?;
+        if !info.security_options.iter().any(|s| s == "name=rootless")
+            || info.cgroup_driver != "systemd"
+            || info.cgroup_version != "2"
+            || !info.memory_limit
+            || !info.cpu_cfs_period
+            || !info.cpu_cfs_quota
+            || !info.pids_limit
+        {
             return Err(err());
         }
         Ok(())
@@ -1030,5 +1050,57 @@ pub async fn helper_main(
         Ok(())
     } else {
         Err(TransportError::Transport)
+    }
+}
+
+#[cfg(test)]
+mod engine_contract_tests {
+    use super::super::fixture::Fixture;
+    const VALID: &str = r#"{"SecurityOptions":["name=seccomp,profile=builtin","name=rootless","name=cgroupns"],"CgroupDriver":"systemd","CgroupVersion":"2","MemoryLimit":true,"CpuCfsPeriod":true,"CpuCfsQuota":true,"PidsLimit":true,"Unknown":{"extra":1}}"#;
+    async fn accepted(raw: &str) -> bool {
+        let f = Fixture::new();
+        f.engine_info(raw);
+        let ok = f.profile.verify().await.is_ok();
+        assert_eq!(f.launches(), 0);
+        ok
+    }
+    #[tokio::test]
+    async fn default_fixture_and_real_shape_are_accepted() {
+        Fixture::new().profile.verify().await.unwrap();
+        assert!(accepted(VALID).await);
+    }
+    #[tokio::test]
+    async fn rootful_or_unenforced_cgroups_are_rejected() {
+        for (from, to) in [
+            ("name=rootless", "name=other"),
+            ("\"systemd\"", "\"cgroupfs\""),
+            ("\"CgroupVersion\":\"2\"", "\"CgroupVersion\":\"1\""),
+            ("\"CgroupDriver\":\"systemd\",", ""),
+            ("\"CgroupVersion\":\"2\",", ""),
+            ("\"MemoryLimit\":true", "\"MemoryLimit\":false"),
+            ("\"CpuCfsPeriod\":true", "\"CpuCfsPeriod\":false"),
+            ("\"CpuCfsQuota\":true", "\"CpuCfsQuota\":false"),
+            ("\"PidsLimit\":true", "\"PidsLimit\":false"),
+            ("\"MemoryLimit\":true,", ""),
+            ("\"CpuCfsPeriod\":true,", ""),
+            ("\"CpuCfsQuota\":true,", ""),
+            ("\"PidsLimit\":true,", ""),
+            ("\"PidsLimit\":true", "\"PidsLimit\":\"true\""),
+        ] {
+            assert!(VALID.contains(from), "{from}");
+            assert!(!accepted(&VALID.replacen(from, to, 1)).await, "{from}");
+        }
+    }
+    #[tokio::test]
+    async fn malformed_info_is_rejected() {
+        for raw in [
+            "",
+            "[\"name=rootless\"]",
+            "{",
+            "null",
+            "{\"SecurityOptions\":null}",
+        ] {
+            assert!(!accepted(raw).await, "{raw}");
+        }
     }
 }

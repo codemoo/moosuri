@@ -51,21 +51,8 @@ pub(super) struct Adapter {
 
 impl Adapter {
     pub(super) async fn open(config: Config, choices: &[ModelChoice]) -> Result<Self, String> {
-        if config.environment_id.is_nil() {
-            return Err("claude_worker_environment_invalid".into());
-        }
-        let expected_email = read_expected_email(&config.expected_email_file)?;
-        let profile = load_profile(config.profile_file).await?;
-        if profile.digest() != config.profile_digest {
-            return Err("claude_worker_profile_changed".into());
-        }
-        Self::bind(
-            profile,
-            config.environment_id.to_string(),
-            expected_email,
-            choices,
-        )
-        .await
+        let (profile, environment, expected_email) = prepare(config).await?;
+        Self::bind(profile, environment, expected_email, choices).await
     }
 
     async fn bind(
@@ -82,20 +69,8 @@ impl Adapter {
         if models.login_required {
             return Err("claude_worker_account_unavailable".into());
         }
-        for choice in choices {
-            if !models.models.contains(&choice.model)
-                || choice.effort.as_ref().is_some_and(|effort| {
-                    !models.effort_metadata.iter().any(|metadata| {
-                        metadata.model == choice.model
-                            && metadata
-                                .efforts
-                                .as_ref()
-                                .is_some_and(|levels| levels.contains(effort))
-                    })
-                })
-            {
-                return Err("claude_worker_model_unavailable".into());
-            }
+        if !choices_available(&models, choices) {
+            return Err("claude_worker_model_unavailable".into());
         }
         Ok(Self {
             profile,
@@ -131,6 +106,35 @@ impl Adapter {
             .await
             .map_err(|_| "claude_worker_execution_failed".into())
     }
+}
+
+/// Shared private-config binding checks for the worker and the login bridge.
+async fn prepare(config: Config) -> Result<(Profile, String, Zeroizing<String>), String> {
+    if config.environment_id.is_nil() {
+        return Err("claude_worker_environment_invalid".into());
+    }
+    let expected_email = read_expected_email(&config.expected_email_file)?;
+    let profile = load_profile(config.profile_file).await?;
+    if profile.digest() != config.profile_digest {
+        return Err("claude_worker_profile_changed".into());
+    }
+    Ok((profile, config.environment_id.to_string(), expected_email))
+}
+
+/// Every selected model and effort must be present in the verified catalog.
+fn choices_available(models: &AccountModels, choices: &[ModelChoice]) -> bool {
+    choices.iter().all(|choice| {
+        models.models.contains(&choice.model)
+            && !choice.effort.as_ref().is_some_and(|effort| {
+                !models.effort_metadata.iter().any(|metadata| {
+                    metadata.model == choice.model
+                        && metadata
+                            .efforts
+                            .as_ref()
+                            .is_some_and(|levels| levels.contains(effort))
+                })
+            })
+    })
 }
 
 pub(crate) async fn login(options: &LoginOptions) -> Result<(), String> {
@@ -250,6 +254,9 @@ fn private_file(path: &Path, limit: usize) -> Result<Zeroizing<Vec<u8>>, ()> {
     }
     Ok(bytes)
 }
+
+mod login_bridge;
+pub(crate) use login_bridge::{BridgeOptions as LoginBridgeOptions, run as login_bridge};
 
 #[cfg(test)]
 mod tests;

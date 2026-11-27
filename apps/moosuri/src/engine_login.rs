@@ -493,12 +493,7 @@ async fn bind(dir: &Path, uid: u32) -> Result<(UnixListener, Bound), String> {
         },
     ))
 }
-pub(crate) async fn run(o: &Options) -> Result<(), String> {
-    let uid = unsafe { libc::geteuid() };
-    if !cfg!(target_os = "linux") || uid == 0 {
-        return Err("engine_worker_requires_unprivileged_linux_user".into());
-    }
-    let config = read_config(&o.config)?;
+fn validate_config(config: &Config) -> Result<Vec<ModelChoice>, String> {
     if config.version != 1
         || config.owner.generation <= 0
         || [
@@ -512,8 +507,17 @@ pub(crate) async fn run(o: &Options) -> Result<(), String> {
     {
         return Err("engine_config_invalid".into());
     }
-    let models = model_catalog(&config.model, config.effort.as_deref(), &config.models)
-        .ok_or("engine_config_invalid")?;
+    model_catalog(&config.model, config.effort.as_deref(), &config.models)
+        .ok_or_else(|| "engine_config_invalid".into())
+}
+
+pub(crate) async fn run(o: &Options) -> Result<(), String> {
+    let uid = unsafe { libc::geteuid() };
+    if !cfg!(target_os = "linux") || uid == 0 {
+        return Err("engine_worker_requires_unprivileged_linux_user".into());
+    }
+    let config = read_config(&o.config)?;
+    let models = validate_config(&config)?;
     let (listener, _socket) = bind(&config.socket_directory, uid).await?;
     let (route, adapter) = match config.adapter {
         Settings::ChatgptPlan(c) => (

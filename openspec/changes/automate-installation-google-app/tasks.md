@@ -1571,3 +1571,9 @@ module path expressions on Linux. This restores the runner; it does not add new
 browser/provider acceptance to the earlier first-mail results. The current-source
 empty installation, two members, real reboot and production transition remain
 open until the recorded execution completes.
+
+The administrator, engine and subscription guides now lead with the implemented
+automatic preparation and same-Kiri login screen. Manual worker/JSON setup is
+operator reference; real authentication/inference remains explicitly open.
+Existing-host dependency guidance distinguishes Docker CE's rootless tools from
+distribution packages to avoid replacing the engine during an additive repair.

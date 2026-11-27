@@ -17,7 +17,10 @@ consents remain open. [Current evidence and limits](../../../docs/reviews/2026-1
 The bounded SSO follow-up confirmed that Google's new page has the original
 Claude page as opener but remains unattached. No credentials were submitted;
 product cancellation removed the auth container. [Six related-window journeys](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
-now track the correction, with Linux real-Chrome evidence still pending.
+track the correction. Actual Linux Kiri Chrome now passes popup typing, immediate
+close/reopen, callback refusal, background completion and cancel, and independent
+Claude review closed its material findings. Matched deployment and the real
+provider retry remain open; synthetic pages/codes do not establish authentication.
 
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
 - [x] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing; corrected source installation and two-member reboot accepted below.

@@ -124,6 +124,7 @@ fn parse_reply(bytes: &[u8], kind: Kind, authorize: &AuthorizeUrl) -> Result<Ans
         }
         return Err(match reply.error.as_deref() {
             Some("stale_page") => BrowserError::StalePage,
+            Some("input_uncertain") if kind == Kind::Input => BrowserError::InputUncertain,
             Some("invalid_handle") => BrowserError::InvalidHandle,
             Some("capacity") => BrowserError::Capacity,
             _ => BrowserError::Protocol,
@@ -373,6 +374,7 @@ impl CapsuleReader {
                         let recoverable = matches!(
                             &result,
                             Err(BrowserError::StalePage
+                                | BrowserError::InputUncertain
                                 | BrowserError::InvalidHandle
                                 | BrowserError::Capacity)
                         );
@@ -456,7 +458,8 @@ impl ClaudeAttempt {
         answer
     }
     /// Next sanitized frame (origin-only URL), or, once, the captured `code#state`.
-    /// `StalePage`/`Capacity`/`InvalidHandle` are recoverable: poll again. Any other
+    /// `StalePage`/`Capacity`/`InvalidHandle` are recoverable: poll again. An input's
+    /// `InputUncertain` also permits viewing again, but never replaying the input. Any other
     /// error means the actor is already cleaning up; call `shutdown` for its outcome.
     /// Do not drop or time out this future to "try again": that cancels the attempt.
     pub async fn poll(&mut self) -> Result<ClaudeView, BrowserError> {
@@ -649,6 +652,46 @@ mod tests {
         ));
         attempt.shutdown().await.unwrap();
         assert_eq!(cleaned(&reader), 1);
+    }
+
+    #[tokio::test]
+    async fn uncertain_input_is_not_replayed_and_the_current_screen_remains_available() {
+        let tenant = Uuid::new_v4();
+        let reader = capsule_with(worker(
+            &ready(tenant),
+            &[
+                frame_reply("https://claude.com"),
+                error_reply("input_uncertain"),
+                frame_reply("https://claude.com"),
+            ],
+        ));
+        let mut attempt = reader
+            .start_claude(tenant, authorization(), &CancellationToken::new())
+            .await
+            .unwrap();
+        let ClaudeView::Frame(frame) = attempt.poll().await.unwrap() else {
+            panic!("expected frame")
+        };
+        assert!(matches!(
+            attempt.input(&frame.frame_token, key()).await,
+            Err(BrowserError::InputUncertain)
+        ));
+        assert!(matches!(
+            attempt.poll().await.unwrap(),
+            ClaudeView::Frame(_)
+        ));
+        attempt.shutdown().await.unwrap();
+        assert_eq!(cleaned(&reader), 1);
+        // An input receipt can never masquerade as a recoverable frame response.
+        let authorize = AuthorizeUrl::parse(&authorization()).unwrap();
+        assert!(matches!(
+            parse_reply(
+                error_reply("input_uncertain").as_bytes(),
+                Kind::Poll,
+                &authorize
+            ),
+            Err(BrowserError::Protocol)
+        ));
     }
 
     #[tokio::test]

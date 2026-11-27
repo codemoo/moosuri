@@ -48,6 +48,8 @@ pub enum BrowserError {
     InvalidHandle,
     #[error("browser page changed; open it again")]
     StalePage,
+    #[error("browser input delivery is uncertain; inspect the current screen")]
+    InputUncertain,
     #[error("browser tab limit reached")]
     Capacity,
     #[error("invalid public HTTP URL")]
@@ -407,40 +409,7 @@ impl BrowserSession {
             )
             .await?;
         let session = string(&result, "sessionId")?;
-        self.cdp
-            .command("Page.enable", json!({}), Some(&session))
-            .await?;
-        self.cdp
-            .command(
-                "Page.setLifecycleEventsEnabled",
-                json!({"enabled":true}),
-                Some(&session),
-            )
-            .await?;
-        self.cdp
-            .command("Network.enable", json!({}), Some(&session))
-            .await?;
-        self.cdp
-            .command(
-                "Emulation.setScriptExecutionDisabled",
-                json!({"value":!self.javascript_enabled}),
-                Some(&session),
-            )
-            .await?;
-        self.cdp
-            .command(
-                "Network.setBypassServiceWorker",
-                json!({"bypass":true}),
-                Some(&session),
-            )
-            .await?;
-        self.cdp
-            .command(
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
-                Some(&session),
-            )
-            .await?;
+        self.configure_page(&session).await?;
         if let Some(url) = url.filter(|url| *url != "about:blank") {
             self.cdp.before_navigation(&session);
             let navigation = self
@@ -475,6 +444,46 @@ impl BrowserSession {
             navigation_generation: 1,
         };
         Ok(handle)
+    }
+    /// The fixed per-page settings shared by every attached page, including a
+    /// paused auto-attached popup (no navigation happens here).
+    async fn configure_page(&mut self, session: &str) -> Result<(), BrowserError> {
+        let session = session.to_owned();
+        self.cdp
+            .command("Page.enable", json!({}), Some(&session))
+            .await?;
+        self.cdp
+            .command(
+                "Page.setLifecycleEventsEnabled",
+                json!({"enabled":true}),
+                Some(&session),
+            )
+            .await?;
+        self.cdp
+            .command("Network.enable", json!({}), Some(&session))
+            .await?;
+        self.cdp
+            .command(
+                "Emulation.setScriptExecutionDisabled",
+                json!({"value":!self.javascript_enabled}),
+                Some(&session),
+            )
+            .await?;
+        self.cdp
+            .command(
+                "Network.setBypassServiceWorker",
+                json!({"bypass":true}),
+                Some(&session),
+            )
+            .await?;
+        self.cdp
+            .command(
+                "Emulation.setDeviceMetricsOverride",
+                json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
+                Some(&session),
+            )
+            .await?;
+        Ok(())
     }
     pub async fn read(&mut self, handle: &PageHandle) -> Result<BrowserPage, BrowserError> {
         let duration = self.remaining()?;

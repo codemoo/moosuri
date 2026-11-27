@@ -1,11 +1,12 @@
 //! Private CDP-backed implementation used only by the explicitly selected worker mode.
 //! Public human controller types live in `capsule`; no arbitrary CDP/script API is exposed.
+use super::cdp::InputOp;
 use super::*;
 use capsule::{
     RenderedLink, RenderedPage, WorkspaceFrame, WorkspaceInput, WorkspaceKey, WorkspaceObservation,
 };
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 const MAXIMUM: Duration = Duration::from_secs(capsule::workspace::WORKSPACE_MAX_SECONDS);
 const FRAME_MAX_AGE: Duration = Duration::from_secs(30);
@@ -341,12 +342,10 @@ impl BrowserWorkspace {
         input.validate()?;
         bounded!(self, self.input_inner(expected_frame_token, input))
     }
-    async fn input_inner(
-        &mut self,
-        expected: &str,
-        input: WorkspaceInput,
-    ) -> Result<(), BrowserError> {
-        // Consume before any await. Neither stale input nor uncertain dispatch is replayed.
+    /// Shared by ordinary and Claude input: consume the proof before any await (neither
+    /// stale input nor uncertain dispatch is replayed), check age and geometry, then
+    /// record the human interaction. Returns the session the input is bound to.
+    async fn validate_input(&mut self, expected: &str) -> Result<String, BrowserError> {
         let proof = self.take_proof(expected)?;
         if proof.captured_at.elapsed() > FRAME_MAX_AGE {
             return Err(BrowserError::StalePage);
@@ -364,46 +363,28 @@ impl BrowserWorkspace {
         let sid = self.sid()?;
         self.human_interacted = true;
         self.last_links = None;
-        match input {
-            WorkspaceInput::Click { x, y } => {
-                self.session
-                    .cdp
-                    .command(
-                        "Input.dispatchMouseEvent",
-                        json!({"type":"mousePressed","x":x,"y":y,"button":"left","clickCount":1}),
-                        Some(&sid),
-                    )
-                    .await?;
-                self.session
-                    .cdp
-                    .command(
-                        "Input.dispatchMouseEvent",
-                        json!({"type":"mouseReleased","x":x,"y":y,"button":"left","clickCount":1}),
-                        Some(&sid),
-                    )
-                    .await?;
-            }
-            WorkspaceInput::InsertText { mut text } => {
-                use zeroize::Zeroize;
-                let result = self
-                    .session
-                    .cdp
-                    .command("Input.insertText", json!({"text":text}), Some(&sid))
-                    .await;
-                text.zeroize();
-                result?;
-            }
-            WorkspaceInput::Key { key } => {
-                let (name, code, virtual_code, text) = key_spec(key);
-                self.session.cdp.command("Input.dispatchKeyEvent", json!({"type":"keyDown","key":name,"code":code,"windowsVirtualKeyCode":virtual_code,"text":text}), Some(&sid)).await?;
-                self.session.cdp.command("Input.dispatchKeyEvent", json!({"type":"keyUp","key":name,"code":code,"windowsVirtualKeyCode":virtual_code}), Some(&sid)).await?;
-            }
-            WorkspaceInput::Scroll { delta_x, delta_y } => {
-                self.session.cdp.command("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":640,"y":450,"deltaX":delta_x,"deltaY":delta_y}), Some(&sid)).await?;
-            }
+        Ok(sid)
+    }
+    async fn input_inner(
+        &mut self,
+        expected: &str,
+        input: WorkspaceInput,
+    ) -> Result<(), BrowserError> {
+        let sid = self.validate_input(expected).await?;
+        let mut plan = InputPlan::new(input);
+        while let Some((op, params)) = plan.next() {
+            self.session
+                .cdp
+                .command(op.method(), params, Some(&sid))
+                .await?;
         }
-        // Refresh only identity, never text. The next human frame is an explicit request.
-        if let Err(error) = self.refresh().await {
+        // The private authentication controller reconciles window closure before
+        // its next frame. A successful input can synchronously close an SSO window;
+        // asking that dead session for its identity would kill the whole login.
+        // Its proof is already consumed, and no observation is returned here.
+        if !self.private_auth
+            && let Err(error) = self.refresh().await
+        {
             self.session.poisoned = true;
             self.session.kill();
             return Err(error);
@@ -411,6 +392,58 @@ impl BrowserWorkspace {
         Ok(())
     }
 }
+/// The fixed CDP commands for one human input, sent strictly in order (mouse
+/// down/up, key down/up). Typed text lives only in the queued params and is wiped when
+/// a step is sent (see `Cdp`) or when the plan is dropped unsent.
+struct InputPlan {
+    steps: VecDeque<(InputOp, Value)>,
+}
+impl InputPlan {
+    fn new(input: WorkspaceInput) -> Self {
+        let mut steps = VecDeque::new();
+        match input {
+            WorkspaceInput::Click { x, y } => {
+                for kind in ["mousePressed", "mouseReleased"] {
+                    steps.push_back((
+                        InputOp::Mouse,
+                        json!({"type":kind,"x":x,"y":y,"button":"left","clickCount":1}),
+                    ));
+                }
+            }
+            WorkspaceInput::InsertText { mut text } => {
+                use zeroize::Zeroize;
+                steps.push_back((InputOp::Text, json!({"text":text})));
+                text.zeroize();
+            }
+            WorkspaceInput::Key { key } => {
+                let (name, code, virtual_code, text) = key_spec(key);
+                steps.push_back((InputOp::Key, json!({"type":"keyDown","key":name,"code":code,"windowsVirtualKeyCode":virtual_code,"text":text})));
+                steps.push_back((InputOp::Key, json!({"type":"keyUp","key":name,"code":code,"windowsVirtualKeyCode":virtual_code})));
+            }
+            WorkspaceInput::Scroll { delta_x, delta_y } => {
+                steps.push_back((
+                    InputOp::Mouse,
+                    json!({"type":"mouseWheel","x":640,"y":450,"deltaX":delta_x,"deltaY":delta_y}),
+                ));
+            }
+        }
+        Self { steps }
+    }
+    fn next(&mut self) -> Option<(InputOp, Value)> {
+        self.steps.pop_front()
+    }
+}
+impl Drop for InputPlan {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for (_, params) in &mut self.steps {
+            if let Some(Value::String(text)) = params.get_mut("text") {
+                text.zeroize();
+            }
+        }
+    }
+}
+
 /// A bounded proof of the rendered document geometry. Resolve only the document
 /// URL and fixed interaction styles from the string table. Input/text values,
 /// color/caret pixels and AX names are never hashed.

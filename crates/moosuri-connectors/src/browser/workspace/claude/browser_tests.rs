@@ -87,8 +87,8 @@ async fn launch_synthetic(
                 return Err(error);
             }
         };
-    let mut this = ClaudeWorkspace {
-        inner: BrowserWorkspace {
+    let mut this = ClaudeWorkspace::assemble(
+        BrowserWorkspace {
             session,
             current: None,
             proof: None,
@@ -98,57 +98,21 @@ async fn launch_synthetic(
             human_interacted: false,
             private_auth: true,
         },
-        display: Some(display),
-        authorize: AuthorizeUrl::parse(AUTHORIZE).unwrap(),
-        fetch_session: String::new(),
-        top_frame: String::new(),
-        phase: Phase::Waiting,
-    };
-    if let Err(error) = open_synthetic(&mut this, html).await {
+        Some(display),
+        AuthorizeUrl::parse(AUTHORIZE).unwrap(),
+    );
+    // The production initialization (Fetch rule, auto-attach, baseline), then only the
+    // first navigation differs: a synthetic document instead of the authorize URL.
+    let opened = async {
+        this.prepare().await?;
+        this.navigate(&data_url(html)).await
+    }
+    .await;
+    if let Err(error) = opened {
         this.shutdown().await;
         return Err(error);
     }
     Ok(this)
-}
-
-async fn open_synthetic(this: &mut ClaudeWorkspace, html: &str) -> Result<(), BrowserError> {
-    this.inner.blank().await?;
-    let identity = this.inner.refresh().await?;
-    this.top_frame = identity.frame;
-    let sid = this.inner.sid()?;
-    // Identical Fetch rule to production, enabled before the first navigation.
-    this.inner
-        .session
-        .cdp
-        .command_timeout(
-            "Fetch.enable",
-            json!({"patterns":[{
-                "urlPattern":format!("{}*", claude_auth::CALLBACK),
-                "resourceType":"Document",
-                "requestStage":"Request",
-            }]}),
-            Some(&sid),
-            STEP,
-        )
-        .await?;
-    drop(this.inner.session.cdp.take_paused());
-    this.fetch_session = sid.clone();
-    this.inner.session.cdp.before_navigation(&sid);
-    let navigation = this
-        .inner
-        .session
-        .cdp
-        .command_timeout(
-            "Page.navigate",
-            json!({"url":data_url(html)}),
-            Some(&sid),
-            Duration::from_secs(15),
-        )
-        .await?;
-    if navigation.get("errorText").is_some() {
-        return Err(BrowserError::Network);
-    }
-    Ok(())
 }
 
 /// Watch until `done` holds or the time is up; returns every watch result seen.
@@ -185,6 +149,234 @@ async fn assert_blank_and_free_of_the_code(workspace: &mut ClaudeWorkspace) {
         .expect("the replacement page must be readable");
     assert_eq!(identity.url, "about:blank", "page was not replaced");
     assert!(!identity.url.contains(CODE) && !identity.url.contains(STATE));
+}
+
+const SSO_CASES: [&str; 4] = [
+    "return",
+    "callback_popup",
+    "root_completes",
+    "cancel_with_popup",
+];
+
+/// The root shows one full-viewport button. Its click handler (a real user gesture,
+/// delivered through the proof-bound human input) opens a same-origin `about:blank`
+/// window whose only control immediately closes it; or opens the exact
+/// callback URL in a window; and optionally completes the root callback in the
+/// background while that window is displayed.
+fn sso_page(case: &str) -> String {
+    let good = serde_json::to_string(&callback(CODE, STATE)).unwrap();
+    let window = if case == "callback_popup" {
+        format!("window.open({good});")
+    } else {
+        "const w=window.open('about:blank');w.document.write(\"<input id='entry' style='position:fixed;left:440px;top:150px;width:400px;height:40px;z-index:2'><button style='position:fixed;left:0;top:0;width:100%;height:100%' onclick='window.close()'>close</button>\");w.document.close();".to_owned()
+    };
+    let later = if case == "root_completes" {
+        format!("setTimeout(()=>location.replace({good}),800);")
+    } else {
+        String::new()
+    };
+    format!(
+        "<button style='position:fixed;left:0;top:0;width:100%;height:100%' onclick='go()'>go</button><script>function go(){{{window}{later}}}</script>"
+    )
+}
+
+async fn wait_for(
+    workspace: &mut ClaudeWorkspace,
+    seconds: u64,
+    done: impl Fn(&ClaudeWorkspace) -> bool,
+) -> bool {
+    let end = Instant::now() + Duration::from_secs(seconds);
+    while Instant::now() < end {
+        let _ = workspace.watch().await;
+        if done(workspace) {
+            return true;
+        }
+    }
+    false
+}
+
+async fn click_displayed(workspace: &mut ClaudeWorkspace) -> String {
+    let frame = workspace
+        .human_frame()
+        .await
+        .expect("the displayed page must be capturable");
+    workspace
+        .human_input(&frame.frame_token, WorkspaceInput::Click { x: 640, y: 450 })
+        .await
+        .expect("proof-bound input was refused");
+    frame.frame_token
+}
+
+/// Real user-gesture `window.open` in the confined Chrome (one scenario per process,
+/// `MOOSURI_CLAUDE_SSO_CASE`). Same confinement and synthetic-only documents as above.
+#[tokio::test]
+#[ignore = "requires the confined pinned Google-auth image; run with MOOSURI_CLAUDE_SSO_CASE"]
+async fn actual_chrome_follows_sso_window_and_keeps_root_callback_contract() {
+    let case = std::env::var("MOOSURI_CLAUDE_SSO_CASE").unwrap_or_else(|_| "return".into());
+    assert!(SSO_CASES.contains(&case.as_str()), "unknown SSO scenario");
+    let case = case.as_str();
+    let cancel = CancellationToken::new();
+    let mut workspace = tokio::time::timeout(
+        Duration::from_secs(60),
+        launch_synthetic("", cancel.clone()),
+    )
+    .await
+    .expect("launch timed out")
+    .expect("confined Chrome and private X did not start");
+    let root = workspace.root_page.expect("root page");
+    // Human frames deliberately reject data: URLs. Keep the synthetic document in
+    // the permitted blank root; production URL validation stays unchanged.
+    workspace.navigate("about:blank").await.unwrap();
+    let sid = workspace.inner.sid().unwrap();
+    workspace
+        .inner
+        .session
+        .cdp
+        .command(
+            "Page.setDocumentContent",
+            json!({"frameId":workspace.top_frame,"html":sso_page(case)}),
+            Some(&sid),
+        )
+        .await
+        .unwrap();
+    // Let the synthetic document load, then click it like the owner would.
+    watch_until(&mut workspace, 2, |_| false).await;
+    click_displayed(&mut workspace).await;
+    assert!(
+        wait_for(&mut workspace, 15, |w| if case == "callback_popup" {
+            w.nonroot_intercepts >= 1
+        } else {
+            w.popups.len() == 1
+        })
+        .await,
+        "the user-gesture window was not admitted"
+    );
+    assert!(matches!(
+        workspace.phase,
+        Phase::Waiting | Phase::Captured(_)
+    ));
+    if case != "callback_popup" {
+        assert_ne!(
+            workspace.inner.current.as_ref().map(|h| h.page),
+            Some(root),
+            "the admitted window must be the displayed page"
+        );
+    }
+
+    match case {
+        "return" => {
+            let previous_popup = workspace.inner.current.as_ref().unwrap().page;
+            let frame = workspace.human_frame().await.unwrap();
+            workspace
+                .human_input(&frame.frame_token, WorkspaceInput::Click { x: 640, y: 170 })
+                .await
+                .unwrap();
+            let frame = workspace.human_frame().await.unwrap();
+            workspace
+                .human_input(
+                    &frame.frame_token,
+                    WorkspaceInput::InsertText {
+                        text: "synthetic-login".into(),
+                    },
+                )
+                .await
+                .unwrap();
+            let sid = workspace.inner.sid().unwrap();
+            let value = workspace.inner.session.cdp.command("Runtime.evaluate",
+                json!({"expression":"document.getElementById('entry')?.value === 'synthetic-login'","returnByValue":true}), Some(&sid)).await.unwrap();
+            assert_eq!(
+                value.pointer("/result/value"),
+                Some(&json!(true)),
+                "input reached the shown popup"
+            );
+            let frame = workspace.human_frame().await.unwrap();
+            let result = workspace
+                .human_input(&frame.frame_token, WorkspaceInput::Click { x: 640, y: 450 })
+                .await;
+            assert!(
+                matches!(result, Ok(()) | Err(BrowserError::InputUncertain)),
+                "closing input must be acknowledged or explicitly uncertain"
+            );
+            let token = frame.frame_token;
+            assert!(
+                wait_for(&mut workspace, 15, |w| w.popups.is_empty()).await,
+                "closing the window was not noticed"
+            );
+            assert!(matches!(workspace.phase, Phase::Waiting));
+            assert_eq!(workspace.inner.current.as_ref().map(|h| h.page), Some(root));
+            // Returning to the root invalidated the window's frame proof.
+            assert!(matches!(
+                workspace
+                    .human_input(&token, WorkspaceInput::Click { x: 1, y: 1 })
+                    .await,
+                Err(BrowserError::StalePage)
+            ));
+            workspace.human_frame().await.expect("root is shown again");
+            click_displayed(&mut workspace).await;
+            assert!(wait_for(&mut workspace, 15, |w| w.popups.len() == 1).await);
+            assert_ne!(
+                workspace.inner.current.as_ref().unwrap().page,
+                previous_popup
+            );
+            let sid = workspace.inner.sid().unwrap();
+            let value = workspace.inner.session.cdp.command("Runtime.evaluate",
+                json!({"expression":"document.getElementById('entry')?.value === ''","returnByValue":true}), Some(&sid)).await.unwrap();
+            assert_eq!(
+                value.pointer("/result/value"),
+                Some(&json!(true)),
+                "reopened window contains no previous input"
+            );
+        }
+        "callback_popup" => {
+            // The popup callback is intercepted before network, answered blank and
+            // closed so a browser error page cannot print the callback address.
+            // Proof of interception: Chrome paused the window's callback document in
+            // its own session and the Fetch abort was acknowledged (counted only).
+            assert!(
+                wait_for(&mut workspace, 10, |w| w.nonroot_intercepts >= 1).await,
+                "the window's callback request was not aborted before the network"
+            );
+            assert!(matches!(workspace.phase, Phase::Waiting));
+            assert!(workspace.popups.is_empty());
+            assert_eq!(workspace.inner.current.as_ref().map(|h| h.page), Some(root));
+            assert!(workspace.captured_code().await.is_none());
+            workspace
+                .human_frame()
+                .await
+                .expect("the window shows no code and stays inspectable");
+        }
+        "root_completes" => {
+            assert!(
+                wait_for(&mut workspace, 20, |w| matches!(
+                    w.phase,
+                    Phase::Captured(_)
+                ))
+                .await,
+                "the background root callback was not captured"
+            );
+            assert_eq!(workspace.popups.len(), 1, "window was shown meanwhile");
+            let code = workspace
+                .captured_code()
+                .await
+                .expect("captured code was not handed out");
+            assert_eq!(code.as_str(), format!("{CODE}#{STATE}"));
+            assert!(workspace.captured_code().await.is_none(), "code replayed");
+            assert!(workspace.popups.is_empty());
+            assert_eq!(workspace.inner.session.targets.len(), 1);
+            assert_blank_and_free_of_the_code(&mut workspace).await;
+        }
+        _ => {
+            cancel.cancel();
+            assert!(matches!(
+                workspace.human_frame().await,
+                Err(BrowserError::Cancelled)
+            ));
+            assert!(workspace.captured_code().await.is_none());
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(30), workspace.shutdown())
+        .await
+        .expect("shutdown did not finish");
 }
 
 /// Run only in the confined pinned Google-auth image with no external network.

@@ -15,17 +15,23 @@ p = argparse.ArgumentParser()
 p.add_argument('--image', required=True)
 p.add_argument('--test-binary', required=True)
 p.add_argument('--claude', action='store_true', help='Private Claude callback instead of Google SDK')
+p.add_argument('--claude-sso', action='store_true', help='Related Claude SSO window journeys')
 p.add_argument('--docker-host', default='unix:///var/run/docker.sock',
                choices=('unix:///var/run/docker.sock', 'unix:///run/kiri/docker.sock'))
 p.add_argument('--case')
 a = p.parse_args()
-cases = (("valid", "wrong_state", "iframe", "popup", "subresource", "cancel") if a.claude else
+if a.claude and a.claude_sso:
+    p.error('select one Claude suite')
+cases = (("return", "callback_popup", "root_completes", "cancel_with_popup") if a.claude_sso else
+         ("valid", "wrong_state", "iframe", "popup", "subresource", "cancel") if a.claude else
          ("valid", "wrong_state", "iframe", "popup", "subresource", "burst", "retry_after_error"))
 if a.case and a.case not in cases:
     p.error('case must be one of: '+', '.join(cases))
-test = ('browser::workspace::claude::browser_tests::actual_chrome_binds_private_claude_callback'
+test = ('browser::workspace::claude::browser_tests::actual_chrome_follows_sso_window_and_keeps_root_callback_contract'
+        if a.claude_sso else 'browser::workspace::claude::browser_tests::actual_chrome_binds_private_claude_callback'
         if a.claude else 'browser::google_auth::sdk::tests::actual_chrome_intercepts_only_the_bound_top_level_callback')
-case_env = 'MOOSURI_CLAUDE_TEST_CASE' if a.claude else 'MOOSURI_SDK_TEST_CASE'
+case_env = ('MOOSURI_CLAUDE_SSO_CASE' if a.claude_sso else
+            'MOOSURI_CLAUDE_TEST_CASE' if a.claude else 'MOOSURI_SDK_TEST_CASE')
 root = Path(__file__).resolve().parent
 binary = Path(a.test_binary).resolve(strict=True)
 assert binary.is_file() and os.access(binary, os.X_OK)

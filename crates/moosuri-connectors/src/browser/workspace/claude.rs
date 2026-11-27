@@ -53,6 +53,27 @@ pub(crate) struct ClaudeWorkspace {
     fetch_session: String,
     top_frame: String,
     phase: Phase,
+    /// The initiating root page. Only its session may deliver the callback code.
+    root_page: Option<Uuid>,
+    /// Same-browser SSO windows admitted by proof-validated input (see `popup`).
+    popups: Vec<popup::Popup>,
+    /// Pages that existed before auto-attach (never adopted, never paused).
+    baseline: HashSet<String>,
+    arm: Option<popup::Arm>,
+    /// Test-only evidence: callback requests of non-root sessions aborted before the
+    /// network. A bare count; it never sees or keeps a code or URL.
+    #[cfg(test)]
+    nonroot_intercepts: usize,
+}
+
+/// The fixed callback rule, enabled on the root and on every admitted popup before
+/// its first script or navigation can run.
+fn fetch_patterns() -> Value {
+    json!({"patterns":[{
+        "urlPattern":format!("{}*", claude_auth::CALLBACK),
+        "resourceType":"Document",
+        "requestStage":"Request",
+    }]})
 }
 
 /// One paused request, reduced to what the decision needs. The URL (which may carry
@@ -112,8 +133,8 @@ impl ClaudeWorkspace {
                 return Err(error);
             }
         };
-        let mut this = Self {
-            inner: BrowserWorkspace {
+        let mut this = Self::assemble(
+            BrowserWorkspace {
                 session,
                 current: None,
                 proof: None,
@@ -123,12 +144,9 @@ impl ClaudeWorkspace {
                 human_interacted: false,
                 private_auth: true,
             },
-            display: Some(display),
+            Some(display),
             authorize,
-            fetch_session: String::new(),
-            top_frame: String::new(),
-            phase: Phase::Waiting,
-        };
+        );
         if let Err(error) = this.open_authorize().await {
             this.shutdown().await;
             return Err(error);
@@ -136,32 +154,71 @@ impl ClaudeWorkspace {
         Ok(this)
     }
 
+    fn assemble(
+        inner: BrowserWorkspace,
+        display: Option<Display>,
+        authorize: AuthorizeUrl,
+    ) -> Self {
+        Self {
+            inner,
+            display,
+            authorize,
+            fetch_session: String::new(),
+            top_frame: String::new(),
+            phase: Phase::Waiting,
+            root_page: None,
+            popups: Vec::new(),
+            baseline: HashSet::new(),
+            arm: None,
+            #[cfg(test)]
+            nonroot_intercepts: 0,
+        }
+    }
+
     async fn open_authorize(&mut self) -> Result<(), BrowserError> {
+        self.prepare().await?;
+        let url = self.authorize.as_str().to_owned();
+        self.navigate(&url).await
+    }
+
+    /// Creates the root page and installs every interception before any navigation:
+    /// the Fetch callback rule on the root, then page auto-attach (new pages start
+    /// paused, so a popup's Fetch rule exists before its scripts or navigation run).
+    /// The already-open root and Chrome's initial blank page are reported as existing
+    /// targets; their duplicate sessions are detached so nothing is paused or owned twice.
+    async fn prepare(&mut self) -> Result<(), BrowserError> {
         self.inner.blank().await?;
         let identity = {
             let inner = &mut self.inner;
             bounded!(inner, inner.refresh())?
         };
         self.top_frame = identity.frame;
+        self.root_page = self.inner.current.as_ref().map(|handle| handle.page);
         let sid = self.inner.sid()?;
         // Fetch is enabled before the first navigation, so the callback can never
         // reach the proxy. It is never disabled: closing the target ends its requests.
         self.inner
             .session
             .cdp
-            .command_timeout(
-                "Fetch.enable",
-                json!({"patterns":[{
-                    "urlPattern":format!("{}*", claude_auth::CALLBACK),
-                    "resourceType":"Document",
-                    "requestStage":"Request",
-                }]}),
-                Some(&sid),
-                STEP,
-            )
+            .command_timeout("Fetch.enable", fetch_patterns(), Some(&sid), STEP)
             .await?;
         drop(self.inner.session.cdp.take_paused());
-        self.fetch_session = sid.clone();
+        self.fetch_session = sid;
+        self.inner
+            .session
+            .cdp
+            .set_page_auto_attach(true, STEP)
+            .await?;
+        self.inner
+            .session
+            .cdp
+            .pump(Duration::from_millis(100))
+            .await?;
+        self.adopt_baseline().await
+    }
+
+    async fn navigate(&mut self, url: &str) -> Result<(), BrowserError> {
+        let sid = self.inner.sid()?;
         self.inner.session.cdp.before_navigation(&sid);
         let navigation = self
             .inner
@@ -169,7 +226,7 @@ impl ClaudeWorkspace {
             .cdp
             .command_timeout(
                 "Page.navigate",
-                json!({"url":self.authorize.as_str()}),
+                json!({"url":url}),
                 Some(&sid),
                 Duration::from_secs(15),
             )
@@ -190,6 +247,7 @@ impl ClaudeWorkspace {
             self.phase = Phase::Failed;
             return Err(error);
         }
+        self.reconcile().await?;
         self.drain().await
     }
 
@@ -225,7 +283,23 @@ impl ClaudeWorkspace {
                         _ => {}
                     }
                 }
-                failed |= self.abort(&request).await.is_err();
+                let popup = self.popups.iter().any(|p| p.session == request.session);
+                // A Chrome error page may print the failed address. Give an owned
+                // popup only the fixed blank document, then return to the root;
+                // never render a callback URL/code even though it was not adopted.
+                let handled = if popup {
+                    self.fulfill(&request).await.is_ok()
+                        && self.close_callback_window(&request.session).await.is_ok()
+                } else {
+                    self.abort(&request).await.is_ok()
+                };
+                failed |= !handled && !self.inner.session.cdp.detached_session(&request.session);
+                #[cfg(test)]
+                {
+                    if handled && request.session != self.fetch_session {
+                        self.nonroot_intercepts += 1;
+                    }
+                }
             }
         }
         if failed || rejected || duplicate {
@@ -282,7 +356,16 @@ impl ClaudeWorkspace {
         let Phase::Captured(code) = std::mem::replace(&mut self.phase, Phase::Delivered) else {
             return None;
         };
-        if self.replace_with_blank().await.is_err() {
+        let cancellation = self.inner.session.cancellation.clone();
+        let replaced = match self.inner.session.remaining() {
+            Ok(duration) => tokio::select! { biased;
+                _ = cancellation.cancelled() => Err(BrowserError::Cancelled),
+                result = tokio::time::timeout(duration, self.replace_with_blank()) =>
+                    result.unwrap_or(Err(BrowserError::Timeout)),
+            },
+            Err(error) => Err(error),
+        };
+        if replaced.is_err() {
             self.inner.session.poisoned = true;
             self.inner.session.kill();
         }
@@ -290,18 +373,39 @@ impl ClaudeWorkspace {
     }
 
     async fn replace_with_blank(&mut self) -> Result<(), BrowserError> {
-        let handle = self
-            .inner
-            .current
-            .take()
-            .ok_or(BrowserError::InvalidHandle)?;
+        // Stop pausing new pages first, or the replacement itself would start paused.
+        self.arm = None;
+        self.inner
+            .session
+            .cdp
+            .set_page_auto_attach(false, STEP)
+            .await?;
+        let root = self.root_page.take().ok_or(BrowserError::InvalidHandle)?;
+        let popups = std::mem::take(&mut self.popups);
+        self.inner.current = None;
+        self.inner.clear_proofs();
+        self.inner.last_links = None;
+        // Every window of this attempt goes away, whichever one was displayed.
+        for popup in popups {
+            self.inner.session.targets.remove(&popup.page);
+            let _ = self
+                .inner
+                .session
+                .cdp
+                .command_timeout(
+                    "Target.closeTarget",
+                    json!({"targetId":popup.target}),
+                    None,
+                    STEP,
+                )
+                .await;
+        }
         let target = self
             .inner
             .session
             .targets
-            .remove(&handle.page)
+            .remove(&root)
             .ok_or(BrowserError::InvalidHandle)?;
-        self.inner.clear_proofs();
         self.inner
             .session
             .cdp
@@ -319,11 +423,37 @@ impl ClaudeWorkspace {
     /// Sanitized screenshot: the page URL is reduced to its origin before leaving.
     /// Frames are shared while geometry is unchanged, so a token stays valid for input.
     pub(crate) async fn human_frame(&mut self) -> Result<WorkspaceFrame, BrowserError> {
+        if self.inner.session.cancellation.is_cancelled() {
+            return Err(BrowserError::Cancelled);
+        }
         if !matches!(self.phase, Phase::Waiting) {
             return Err(BrowserError::Expired);
         }
-        let inner = &mut self.inner;
-        let mut frame = bounded!(inner, inner.frame_inner(true))?;
+        // Notice a closed or newly admitted window before capturing the displayed one.
+        self.settle(Duration::from_millis(20)).await?;
+        let displayed = self.inner.sid()?;
+        let popup = self.popups.iter().any(|p| p.session == displayed);
+        let duration = self.inner.session.remaining()?;
+        let cancellation = self.inner.session.cancellation.clone();
+        let result = tokio::select! { biased;
+            _ = cancellation.cancelled() => Err(BrowserError::Cancelled),
+            result = tokio::time::timeout(duration, self.inner.frame_inner(true)) =>
+                result.unwrap_or(Err(BrowserError::Timeout)),
+        };
+        // A read can race the admitted window closing. Recover only with Chrome's
+        // exact detach receipt, never from an arbitrary error, timeout or root loss.
+        if popup
+            && matches!(
+                result,
+                Err(BrowserError::Protocol | BrowserError::InvalidHandle)
+            )
+            && self.inner.session.cdp.detached_session(&displayed)
+        {
+            self.reconcile().await?;
+            return Err(BrowserError::StalePage);
+        }
+        self.inner.session.after(&result);
+        let mut frame = result?;
         frame.url = claude_auth::sanitized_origin(&frame.url).ok_or(BrowserError::Protocol)?;
         Ok(frame)
     }
@@ -334,10 +464,154 @@ impl ClaudeWorkspace {
         frame_token: &str,
         input: WorkspaceInput,
     ) -> Result<(), BrowserError> {
+        if self.inner.session.cancellation.is_cancelled() {
+            return Err(BrowserError::Cancelled);
+        }
         if !matches!(self.phase, Phase::Waiting) {
             return Err(BrowserError::Expired);
         }
-        self.inner.input(frame_token, input).await
+        // Typed text is wiped on every path that does not reach the browser.
+        let mut input = input;
+        if let Err(error) = input.validate() {
+            if let WorkspaceInput::InsertText { text } = &mut input {
+                text.zeroize();
+            }
+            return Err(error);
+        }
+        let may_open = matches!(
+            &input,
+            WorkspaceInput::Click { .. }
+                | WorkspaceInput::Key {
+                    key: WorkspaceKey::Enter
+                }
+        );
+        let plan = InputPlan::new(input);
+        self.settle(Duration::from_millis(20)).await?;
+        let duration = self.inner.session.remaining()?;
+        let cancellation = self.inner.session.cancellation.clone();
+        // Same original bound and cancellation as ordinary input. A timeout or
+        // cancellation drops the attempt (and its pending command): nothing is replayed.
+        let result = tokio::select! { biased;
+            _ = cancellation.cancelled() => Err(BrowserError::Cancelled),
+            result = tokio::time::timeout(duration, self.input_attempt(frame_token, plan, may_open)) =>
+                result.unwrap_or(Err(BrowserError::Timeout)),
+        };
+        self.inner.session.cdp.abandon_input();
+        self.inner.session.after(&result);
+        match result {
+            Ok(true) => {
+                self.extend_arm();
+                self.settle(Duration::from_millis(100)).await
+            }
+            // The window the input was sent to vanished before Chrome acknowledged
+            // it: report that truthfully; the surviving root was already restored.
+            Ok(false) => Err(BrowserError::InputUncertain),
+            Err(error) => {
+                if matches!(error, BrowserError::Timeout | BrowserError::Cancelled) {
+                    self.arm = None;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// One proof-validated input, sent exactly once and left pending while the browser
+    /// is serviced: the click handler of a gesture window is stalled until that
+    /// window's paused target is configured and resumed, which happens here, before
+    /// Chrome can answer the input. `Ok(false)` means uncertain (never acknowledged).
+    async fn input_attempt(
+        &mut self,
+        frame_token: &str,
+        plan: InputPlan,
+        may_open: bool,
+    ) -> Result<bool, BrowserError> {
+        let displayed = self.inner.sid()?;
+        let popup = self.popups.iter().any(|p| p.session == displayed);
+        let validated = self.inner.validate_input(frame_token).await;
+        if popup
+            && matches!(
+                validated,
+                Err(BrowserError::Protocol | BrowserError::InvalidHandle)
+            )
+            && self.inner.session.cdp.detached_session(&displayed)
+        {
+            self.reconcile().await?;
+            return Err(BrowserError::StalePage);
+        }
+        let sid = validated?;
+        // A later accepted input cannot extend or revive an earlier gesture.
+        self.arm = None;
+        // Only an input accepted against a live frame proof can authorize a window that
+        // appears afterwards, and only for the page it is dispatched to. Armed before
+        // the first byte is sent, so every window it opens arrives after `mark`.
+        if may_open && let Some(opener) = self.displayed_target() {
+            let mark = self.inner.session.cdp.attach_mark();
+            self.arm_popup(opener, mark);
+        }
+        let outcome = self.dispatch_input(&sid, plan).await;
+        if !matches!(outcome, Ok(true)) {
+            // Refused, failed or uncertain input keeps no window authority.
+            self.arm = None;
+        }
+        outcome
+    }
+
+    async fn dispatch_input(
+        &mut self,
+        sid: &str,
+        mut plan: InputPlan,
+    ) -> Result<bool, BrowserError> {
+        let mut gone = false;
+        while let Some((op, params)) = plan.next() {
+            if gone || self.inner.session.cdp.detached_session(sid) {
+                self.reconcile().await?;
+                return Ok(false);
+            }
+            self.inner.session.cdp.begin_input(op, params, sid).await?;
+            if !self.await_input(sid, &mut gone).await? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Services attachments while the one pending input command is unanswered.
+    async fn await_input(&mut self, sid: &str, gone: &mut bool) -> Result<bool, BrowserError> {
+        let mut grace: Option<Instant> = None;
+        loop {
+            if let Some(reply) = self.inner.session.cdp.take_input_reply() {
+                *gone |= self.inner.session.cdp.detached_session(sid);
+                return match reply {
+                    Ok(()) => Ok(true),
+                    Err(_) if *gone => {
+                        self.reconcile().await?;
+                        Ok(false)
+                    }
+                    Err(error) => Err(error),
+                };
+            }
+            if grace.is_some_and(|end| Instant::now() >= end) {
+                // The window is proven gone and never answered: uncertain, not replayed.
+                self.inner.session.cdp.abandon_input();
+                self.reconcile().await?;
+                return Ok(false);
+            }
+            if let Err(error) = self
+                .inner
+                .session
+                .cdp
+                .pump_input(Duration::from_millis(25))
+                .await
+            {
+                self.phase = Phase::Failed;
+                return Err(error);
+            }
+            if self.inner.session.cdp.detached_session(sid) {
+                *gone = true;
+                grace.get_or_insert(Instant::now() + Duration::from_millis(500));
+            }
+            self.reconcile().await?;
+        }
     }
 
     /// Awaited teardown of Chrome, its profile and the private X server.
@@ -350,6 +624,8 @@ impl ClaudeWorkspace {
     }
 }
 
+mod popup;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,21 +633,39 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio_tungstenite::tungstenite::Message;
 
-    const STATE: &str = "state_VALUE-123~abcdefgh";
-    const CODE: &str = "CANARYcode123456";
+    pub(super) const STATE: &str = "state_VALUE-123~abcdefgh";
+    pub(super) const CODE: &str = "CANARYcode123456";
     const AUTHORIZE: &str = "https://claude.com/cai/oauth/authorize?response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=state_VALUE-123~abcdefgh";
 
-    type Log = Arc<Mutex<Vec<(String, Value)>>>;
-    struct Fixture {
-        workspace: ClaudeWorkspace,
-        log: Log,
-        events: mpsc::UnboundedSender<Value>,
-        server: tokio::task::JoinHandle<()>,
+    pub(super) type Log = Arc<Mutex<Vec<(String, Value)>>>;
+    /// What the scripted browser does with the reply to a `mouseReleased` input.
+    #[derive(Clone, Copy)]
+    pub(super) enum Hold {
+        /// Answer at once.
+        Off,
+        /// Answer only after the named method has been answered (a stalled handler).
+        UntilMethod(&'static str),
+        /// Never answer.
+        Forever,
+        /// Answer with a CDP error.
+        Error,
     }
-    fn callback(code: &str, state: &str) -> String {
+    /// Scripted behavior at `mouseReleased`: events pushed first, then the held reply.
+    pub(super) struct Script {
+        pub(super) hold: Hold,
+        pub(super) on_release: Vec<Value>,
+    }
+    pub(super) struct Fixture {
+        pub(super) workspace: ClaudeWorkspace,
+        pub(super) log: Log,
+        pub(super) events: mpsc::UnboundedSender<Value>,
+        pub(super) server: tokio::task::JoinHandle<()>,
+        pub(super) script: Arc<Mutex<Script>>,
+    }
+    pub(super) fn callback(code: &str, state: &str) -> String {
         format!("https://platform.claude.com/oauth/code/callback?code={code}&state={state}")
     }
-    fn event(id: &str, url: &str) -> Value {
+    pub(super) fn event(id: &str, url: &str) -> Value {
         json!({"method":"Fetch.requestPaused","sessionId":"session","params":{
             "requestId":id,"resourceType":"Document","frameId":"frame",
             "request":{"method":"GET","url":url}}})
@@ -382,7 +676,7 @@ mod tests {
         png.extend(900u32.to_be_bytes());
         base64::engine::general_purpose::STANDARD.encode(png)
     }
-    async fn fixture() -> Fixture {
+    pub(super) async fn fixture() -> Fixture {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!(
             "ws://{}/devtools/browser/synthetic",
@@ -392,9 +686,16 @@ mod tests {
         let url = Arc::new(Mutex::new(AUTHORIZE.to_owned()));
         let (events, mut inbox) = mpsc::unbounded_channel::<Value>();
         let (record, current) = (log.clone(), url.clone());
+        let script = Arc::new(Mutex::new(Script {
+            hold: Hold::Off,
+            on_release: Vec::new(),
+        }));
+        let scripted = script.clone();
         let server = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
             let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut held: Option<Value> = None;
+            let mut release_after: Option<&'static str> = None;
             loop {
                 tokio::select! {
                     message = ws.next() => {
@@ -405,7 +706,10 @@ mod tests {
                         record.lock().unwrap().push((method.clone(), request["params"].clone()));
                         let page = current.lock().unwrap().clone();
                         let result = match method.as_str() {
-                            "Page.getFrameTree" => json!({"frameTree":{"frame":{"id":"frame","loaderId":"loader","url":page}}}),
+                            "Page.getFrameTree" => match request["sessionId"].as_str() {
+                                Some(sid) if sid.starts_with("popup") => json!({"frameTree":{"frame":{"id":format!("{sid}-frame"),"loaderId":"ploader","url":"https://accounts.google.com/signin"}}}),
+                                _ => json!({"frameTree":{"frame":{"id":"frame","loaderId":"loader","url":page}}}),
+                            },
                             "Target.createTarget" => {
                                 *current.lock().unwrap() = "about:blank".into();
                                 json!({"targetId":"target2"})
@@ -419,9 +723,53 @@ mod tests {
                             "Page.captureScreenshot" => json!({"data":png()}),
                             _ => json!({}),
                         };
-                        let reply = json!({"id":request["id"],"sessionId":request["sessionId"],"result":result});
-                        if ws.send(Message::Text(reply.to_string().into())).await.is_err() {
+                        let mut reply = json!({"id":request["id"],"sessionId":request["sessionId"],"result":result});
+                        let released = method == "Input.dispatchMouseEvent"
+                            && request["params"]["type"] == "mouseReleased";
+                        let (hold, pushed) = {
+                            let mut script = scripted.lock().unwrap();
+                            if released {
+                                (script.hold, std::mem::take(&mut script.on_release))
+                            } else {
+                                (Hold::Off, Vec::new())
+                            }
+                        };
+                        let mut sent = true;
+                        for event in pushed {
+                            sent &= ws.send(Message::Text(event.to_string().into())).await.is_ok();
+                        }
+                        if !sent {
                             break;
+                        }
+                        let mut deferred = false;
+                        if released {
+                            match hold {
+                                Hold::Off => {}
+                                Hold::Error => {
+                                    reply = json!({"id":request["id"],"sessionId":request["sessionId"],"error":{"code":-32000,"message":"closed"}});
+                                }
+                                Hold::UntilMethod(_) => {
+                                    held = Some(reply.clone());
+                                    deferred = true;
+                                }
+                                Hold::Forever => deferred = true,
+                            }
+                            if let Hold::UntilMethod(until) = hold {
+                                release_after = Some(until);
+                            }
+                        }
+                        if !deferred
+                            && ws.send(Message::Text(reply.to_string().into())).await.is_err()
+                        {
+                            break;
+                        }
+                        if release_after == Some(method.as_str())
+                            && let Some(late) = held.take()
+                        {
+                            release_after = None;
+                            if ws.send(Message::Text(late.to_string().into())).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     pushed = inbox.recv() => {
@@ -458,34 +806,38 @@ mod tests {
             cancellation: CancellationToken::new(),
             javascript_enabled: true,
         };
-        Fixture {
-            workspace: ClaudeWorkspace {
-                inner: BrowserWorkspace {
-                    session,
-                    current: Some(PageHandle {
-                        page,
-                        worker_generation: generation,
-                        navigation_generation: 1,
-                    }),
-                    proof: None,
-                    prior_proof: None,
-                    ignored_targets: HashSet::new(),
-                    last_links: None,
-                    human_interacted: false,
-                    private_auth: true,
-                },
-                display: None,
-                authorize: AuthorizeUrl::parse(AUTHORIZE).unwrap(),
-                fetch_session: "session".into(),
-                top_frame: "frame".into(),
-                phase: Phase::Waiting,
+        let mut workspace = ClaudeWorkspace::assemble(
+            BrowserWorkspace {
+                session,
+                current: Some(PageHandle {
+                    page,
+                    worker_generation: generation,
+                    navigation_generation: 1,
+                }),
+                proof: None,
+                prior_proof: None,
+                ignored_targets: HashSet::new(),
+                last_links: None,
+                human_interacted: false,
+                private_auth: true,
             },
+            None,
+            AuthorizeUrl::parse(AUTHORIZE).unwrap(),
+        );
+        workspace.fetch_session = "session".into();
+        workspace.top_frame = "frame".into();
+        workspace.root_page = Some(page);
+        // What `prepare` does in production for the attachment protocol.
+        workspace.inner.session.cdp.track_attachments();
+        Fixture {
+            workspace,
             log,
             events,
             server,
+            script,
         }
     }
-    fn methods(log: &Log, name: &str) -> Vec<Value> {
+    pub(super) fn methods(log: &Log, name: &str) -> Vec<Value> {
         log.lock()
             .unwrap()
             .iter()
@@ -494,7 +846,7 @@ mod tests {
             .collect()
     }
     /// Pump until the predicate holds (or the attempt failed closed).
-    async fn settle(workspace: &mut ClaudeWorkspace, done: impl Fn(&Phase) -> bool) {
+    pub(super) async fn settle(workspace: &mut ClaudeWorkspace, done: impl Fn(&Phase) -> bool) {
         for _ in 0..100 {
             let _ = workspace.watch().await;
             if done(&workspace.phase) {
@@ -503,7 +855,7 @@ mod tests {
         }
         panic!("the synthetic callback was not accounted for");
     }
-    async fn pump_for_a_while(workspace: &mut ClaudeWorkspace) {
+    pub(super) async fn pump_for_a_while(workspace: &mut ClaudeWorkspace) {
         for _ in 0..12 {
             let _ = workspace.watch().await;
         }

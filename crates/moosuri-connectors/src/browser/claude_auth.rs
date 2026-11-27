@@ -309,11 +309,15 @@ async fn send_code(
     )?;
     send_bytes(output, &bytes).await
 }
-/// Only a stale or invalid-handle result (and capacity) leaves the attempt usable.
+/// Stale control or uncertain delivery leaves the current screen inspectable;
+/// an uncertain input is never replayed. Capacity is also recoverable.
 fn recoverable(error: &BrowserError) -> bool {
     matches!(
         error,
-        BrowserError::StalePage | BrowserError::InvalidHandle | BrowserError::Capacity
+        BrowserError::StalePage
+            | BrowserError::InvalidHandle
+            | BrowserError::Capacity
+            | BrowserError::InputUncertain
     )
 }
 async fn send_error(
@@ -322,6 +326,7 @@ async fn send_error(
 ) -> (Result<(), BrowserError>, bool) {
     let code = match error {
         BrowserError::StalePage => "stale_page",
+        BrowserError::InputUncertain => "input_uncertain",
         BrowserError::InvalidHandle => "invalid_handle",
         BrowserError::Capacity => "capacity",
         _ => "failed",

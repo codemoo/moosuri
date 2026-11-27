@@ -21,7 +21,9 @@
 실제 Claude 인증·추론과 자연어 Gmail 조회는 계속 미완료다.
 후속 한 번의 진단에서 Google 창이 원래 Claude 창의 자식으로 열렸지만
 인증 컨트롤러에 연결되지 않은 상태를 확인했다. 새 창 표시·복귀와 입력·콜백
-경계를 [6개 SSO 여정](reviews/2026-11-27-claude-sso-popup.md)으로 추가해 수정·검증 중이다.
+경계를 [6개 SSO 여정](reviews/2026-11-27-claude-sso-popup.md)으로 추가했다. 수정 소스는
+실제 Linux Kiri Chrome에서 새 창의 문자 입력·닫기·재열기·콜백 차단·기존 창 완료·취소를
+통과했고 독립 Claude 검토도 마쳤다. 운영 전환과 실제 계정 인증 재검사는 남아 있다.
 
 권장 Linux 진입점은 **공개 소스 설치**다. 별도 한 줄 설치기는 기존 표준 서버
 개발판을 설치한다. [설치판 안내](install.md) · [Kiri 소스 설치](../deployment/kiri/source-install.md)

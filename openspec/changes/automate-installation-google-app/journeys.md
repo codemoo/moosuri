@@ -102,8 +102,9 @@ not close real Claude authentication/inference or the final-source installer gat
 
 The [SS01–SS06 SSO-window journeys](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
 expand M05's actual Google-button failure: related-window input, return, background
-completion, stale input, foreign/callback refusal and cleanup. They remain open
-until their stated Linux Chrome and provider evidence is recorded.
+completion, stale input, foreign/callback refusal and cleanup. Corrected Linux
+Chrome synthetic journeys and independent review passed in the linked scope;
+matched deployment and actual provider acceptance remain open.
 
 ## Vault account selection — 6 journeys
 

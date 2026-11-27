@@ -299,3 +299,27 @@ rootless systemd/cgroup2 memory/CPU/PIDs resource contract.
 #### Scenario: The parent leaves its input open after completion
 - **WHEN** the child has emitted its terminal result
 - **THEN** it exits without waiting for another blocking stdin read, and regular files or terminals cannot serve as its protocol channels
+
+### Requirement: Claude preparation owns bounded resources before authentication
+The installation SHALL derive a dedicated non-root service and all artifact and
+storage destinations from a private root-owned request with a complete owner
+pin. It SHALL verify immutable artifacts and actual rootless resource support,
+retain exact recovery identity, and refuse unsupported prerequisites before
+preparation effects. Preparation or a native isolation receipt SHALL NOT by
+itself authenticate an account or authorize a model binding.
+
+#### Scenario: Fresh preparation and interrupted replay
+- **WHEN** an authorized root parent prepares a new owner and repeats the same request after interruption
+- **THEN** the existing exact service identity and subordinate ranges are retained, unknown users or changed owner fields are refused, and the response remains preparation-only
+
+#### Scenario: Authentication files exhaust capacity
+- **WHEN** the dedicated authentication filesystem reaches its byte or inode limit
+- **THEN** writes fail within the fixed filesystem, other member data is untouched, and removing only the owner's failed data permits a verified retry
+
+#### Scenario: Worker cannot use its prospective runtime
+- **WHEN** artifacts are inaccessible to the actual service UID, a service file changes, or native confinement cannot be proven
+- **THEN** no ready model binding is written and the precise preparation stage remains incomplete
+
+#### Scenario: Probe interruption and existing login data
+- **WHEN** a credential-free probe is interrupted or admission is requested on a root containing a login environment
+- **THEN** the former reuses one reserved probe identity and requires owned-container cleanup before directory removal, while the latter is refused without sweeping credentials

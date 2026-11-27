@@ -1394,3 +1394,23 @@ Eight supporting M05/M06 checkpoints keep those gaps visible without claiming
 additional completed end-to-end journeys.
 
 [Exact scope, earlier failures and reproduction](../../../docs/reviews/2026-11-27-claude-subscription-bridge.md).
+
+
+### Credential-free host preparation — 2026-11-27
+
+The root helper now prepares a dedicated service, verified artifacts and bounded
+auth storage, reusing the installer and member-filesystem implementations.
+Native launch admission remains separate from account authentication and root
+binding authority. Ten preparation checkpoints expand M05-A/M06; the first
+real run exposed an overlong Unix-socket path and retained that failure.
+[Implementation, exact results and open gates](../../../docs/reviews/2026-11-27-claude-runtime-preparation.md).
+
+P01–P09 actual Linux preparation/replay/quota/two-owner/reboot checks passed;
+P10 final-candidate host-inode-default and reserved-login regression also passed;
+P04's original socket-path failure is preserved. Final63 targeted Rust checks
+and native build passed. Independent Claude initial/closure and focused inode/
+reserved-UUID review completed. This is credential-free preparation only.
+Root-bound evidence, owner-wide admission/login serialization, engine-home
+resource limits, interrupted storage-record repair, Ubuntu22 portability and
+existing gateway/UI/worker registration are explicit next integration gates.
+No real login, inference, production configuration or model choice changed.

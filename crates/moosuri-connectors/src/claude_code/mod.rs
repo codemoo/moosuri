@@ -5,8 +5,8 @@ mod sandbox;
 pub mod tool_bridge;
 #[cfg(unix)]
 pub use sandbox::{
-    AccountModels, AccountUsage, LoginCode, LoginEvent, ModelEffortMetadata, Profile, UsageLimit,
-    helper_main,
+    AccountModels, AccountUsage, IsolationAdmission, IsolationReceipt, LoginCode, LoginEvent,
+    ModelEffortMetadata, Profile, UsageLimit, helper_main,
 };
 
 #[cfg(any(test, feature = "test-fixtures"))]

@@ -5,12 +5,15 @@ pub use discovery::{AccountModels, ModelEffortMetadata};
 #[path = "usage.rs"]
 mod usage;
 pub use usage::{AccountUsage, UsageLimit};
+#[path = "isolation.rs"]
+mod isolation;
 #[path = "login.rs"]
 mod login;
 use crate::model::{
     CancellationToken, TransportError,
     protocol::{ModelEvent, TextRequest},
 };
+pub use isolation::{IsolationAdmission, IsolationReceipt};
 pub use login::{LoginCode, LoginEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -213,6 +216,7 @@ impl Profile {
     // Host-owned metadata outside the container-writable HOME. Every login
     // checks it under the same OS lock used by text inference.
     fn login_allowed(&self, environment: &str) -> Result<(), TransportError> {
+        Self::login_environment(environment)?;
         self.allowed_environment(environment)?;
         match std::fs::symlink_metadata(
             self.config
@@ -252,13 +256,7 @@ impl Profile {
             .map_err(|_| err())
     }
     pub fn block_environment(&self, environment: &str) -> Result<(), TransportError> {
-        if uuid::Uuid::parse_str(environment)
-            .map_err(|_| err())?
-            .to_string()
-            != environment
-        {
-            return Err(err());
-        }
+        Self::login_environment(environment)?;
         directory(&self.config.auth_root)?;
         let path = self.config.auth_root.join(format!("{environment}.retired"));
         let f = std::fs::OpenOptions::new()
@@ -335,6 +333,19 @@ impl Profile {
         Ok(())
     }
     async fn os_lock(&self, environment: &str) -> Result<std::fs::File, TransportError> {
+        Self::login_environment(environment)?;
+        self.environment_lock(environment).await
+    }
+    // Version 8 belongs to credential-free admission. No public login,
+    // inference, retirement or binding may use that identity namespace.
+    fn login_environment(environment: &str) -> Result<(), TransportError> {
+        let id = uuid::Uuid::parse_str(environment).map_err(|_| err())?;
+        if id.is_nil() || id.get_version_num() == 8 || id.to_string() != environment {
+            return Err(err());
+        }
+        Ok(())
+    }
+    async fn environment_lock(&self, environment: &str) -> Result<std::fs::File, TransportError> {
         use std::os::fd::AsRawFd;
         if uuid::Uuid::parse_str(environment)
             .map_err(|_| err())?
@@ -497,6 +508,24 @@ impl Profile {
         terminal: bool,
         max_output_tokens: Option<u32>,
     ) -> Command {
+        self.launch_mode(
+            env,
+            bridge,
+            name,
+            if login { "login" } else { "text" },
+            terminal,
+            max_output_tokens,
+        )
+    }
+    fn launch_mode(
+        &self,
+        env: &Path,
+        bridge: &Path,
+        name: &str,
+        mode: &str,
+        terminal: bool,
+        max_output_tokens: Option<u32>,
+    ) -> Command {
         let c = &self.config;
         let mut cmd = self.engine();
         cmd.args([
@@ -556,9 +585,7 @@ impl Profile {
         } else {
             cmd.arg("-i");
         }
-        cmd.arg(&c.image)
-            .arg("internal-claude-run")
-            .arg(if login { "login" } else { "text" });
+        cmd.arg(&c.image).arg("internal-claude-run").arg(mode);
         cmd
     }
     async fn prepare(
@@ -937,7 +964,7 @@ pub async fn helper_main(
     model: Option<&str>,
     session: Option<&str>,
 ) -> Result<(), TransportError> {
-    if !["text", "login"].contains(&mode) {
+    if !["text", "login", "isolation-probe"].contains(&mode) {
         return Err(err());
     }
     let mut lease = UnixStream::connect("/bridge/proxy.sock")
@@ -967,6 +994,15 @@ pub async fn helper_main(
             }
         }
     });
+    if mode == "isolation-probe" {
+        let mut closed = [0];
+        let result = tokio::select! {
+            result = isolation::child(address) => result,
+            _ = lease.read(&mut closed) => Err(TransportError::Cancelled),
+        };
+        relay.abort();
+        return result;
+    }
     let mut cmd = Command::new("/runtime/claude");
     cmd.env_clear()
         .env("PATH", "/runtime")

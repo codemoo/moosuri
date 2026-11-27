@@ -104,3 +104,6 @@ member needs a separate authenticated environment and binding.
 The [eight supporting journeys](../../openspec/changes/automate-installation-google-app/journeys.md#m05m06-subscription-connection-checkpoints--8-supporting-journeys)
 retain these limits alongside the 61 primary acceptance journeys. C01 remains
 open until real natural-language Gmail works through an admitted model connection.
+
+Follow-up implementation and native preparation journeys are recorded in
+[the runtime preparation report](2026-11-27-claude-runtime-preparation.md).

@@ -95,6 +95,12 @@ enum Command {
     /// Private child protocol for a fresh owner-bound Claude subscription login.
     #[command(hide = true)]
     ClaudeEngineLoginBridge(engine_login::claude::LoginBridgeOptions),
+    /// Credential-free native admission of a newly prepared Claude launch.
+    #[command(hide = true)]
+    ClaudeEngineIsolation(engine_login::claude::IsolationOptions),
+    /// Prepare isolated host resources for a new owner-bound Claude connection.
+    #[command(hide = true)]
+    ClaudeRuntimePrepare(installation::claude_runtime::Options),
     /// Inspect an enrolled host-side ChatGPT engine connection.
     EngineChatgptInspect(engine_login::ChatGptInspectOptions),
     /// Make one text call using the member broker socket and private standard input.
@@ -482,6 +488,12 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::ClaudeEngineLoginBridge(options) = &cli.command {
         return engine_login::claude::login_bridge(options).await;
     }
+    if let Command::ClaudeEngineIsolation(options) = &cli.command {
+        return engine_login::claude::admit_isolation(options).await;
+    }
+    if let Command::ClaudeRuntimePrepare(options) = &cli.command {
+        return installation::claude_runtime::run(options);
+    }
     if let Command::RuntimeModel(options) = &cli.command {
         return runtime_model::run(options).await;
     }
@@ -669,6 +681,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::EngineLoginWorker(_)
         | Command::ClaudeEngineLogin(_)
         | Command::ClaudeEngineLoginBridge(_)
+        | Command::ClaudeEngineIsolation(_)
+        | Command::ClaudeRuntimePrepare(_)
         | Command::EngineChatgptInspect(_)
         | Command::RuntimeModel(_)
         | Command::RuntimeModelCall(_)

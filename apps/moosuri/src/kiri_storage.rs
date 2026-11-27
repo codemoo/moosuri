@@ -12,6 +12,7 @@ use std::{
     process::Command,
 };
 use uuid::Uuid;
+pub(crate) mod claude;
 const MARKER: &str = "moosuri-kiri-storage-v1\n";
 #[derive(Args, Clone)]
 pub struct Options {
@@ -471,6 +472,9 @@ fn image_identity(r: &Record) -> Result<(), String> {
     Ok(())
 }
 fn prepare_image(r: &mut Record) -> Result<(), String> {
+    prepare_image_with_inodes(r, None)
+}
+fn prepare_image_with_inodes(r: &mut Record, inodes: Option<u32>) -> Result<(), String> {
     if r.phase == Phase::Planned {
         let f = OpenOptions::new()
             .read(true)
@@ -506,22 +510,25 @@ fn prepare_image(r: &mut Record) -> Result<(), String> {
         }
         r.phase = Phase::Formatting;
         save(r)?;
-        command(
-            "/usr/sbin/mkfs.ext4",
-            &[
-                "-q",
-                "-t",
-                "ext4",
-                "-E",
-                "nodiscard,lazy_itable_init=0,lazy_journal_init=0",
-                "-F",
-                "-m",
-                "0",
-                "-U",
-                &r.plan.volume,
-                r.plan.image().to_str().ok_or("storage_path_invalid")?,
-            ],
-        )?;
+        let inode_count = inodes.map(|n| n.to_string());
+        let image_path = r.plan.image();
+        let mut arguments = vec![
+            "-q",
+            "-t",
+            "ext4",
+            "-E",
+            "nodiscard,lazy_itable_init=0,lazy_journal_init=0",
+            "-F",
+            "-m",
+            "0",
+            "-U",
+            &r.plan.volume,
+        ];
+        if let Some(count) = inode_count.as_deref() {
+            arguments.extend(["-N", count]);
+        }
+        arguments.push(image_path.to_str().ok_or("storage_path_invalid")?);
+        command("/usr/sbin/mkfs.ext4", &arguments)?;
     }
     private_file(&r.plan.image())?
         .sync_all()
@@ -776,19 +783,22 @@ fn verify_mount(_: &Plan) -> Result<(), String> {
     Err("storage_linux_only".into())
 }
 fn layout(p: &Path, uid: u32) -> Result<(), String> {
+    layout_for_ids(p, uid, uid)
+}
+fn layout_for_ids(p: &Path, uid: u32, gid: u32) -> Result<(), String> {
     if fs::symlink_metadata(p).is_err() {
         fs::DirBuilder::new()
             .mode(0o700)
             .create(p)
             .map_err(|_| "storage_layout_create_failed")?;
-        std::os::unix::fs::chown(p, Some(uid), Some(uid))
+        std::os::unix::fs::chown(p, Some(uid), Some(gid))
             .map_err(|_| "storage_layout_owner_failed")?;
         sync(p.parent().ok_or("storage_parent_missing")?)?;
     }
     let m = fs::symlink_metadata(p).map_err(|_| "storage_layout_unavailable")?;
     if !m.is_dir()
         || m.uid() != uid
-        || m.gid() != uid
+        || m.gid() != gid
         || m.mode() & 0o777 != 0o700
         || fs::canonicalize(p).ok().as_deref() != Some(p)
         || m.dev()

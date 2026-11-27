@@ -8,7 +8,7 @@
 //! Not in this unit: creating a new Google OAuth application.
 mod browser;
 mod bundle;
-mod host;
+pub(super) mod host;
 mod render;
 
 use clap::Args;

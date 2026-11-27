@@ -42,6 +42,35 @@ pub(crate) struct LoginOptions {
     expected_email_file: PathBuf,
 }
 
+#[derive(Args)]
+pub(crate) struct IsolationOptions {
+    /// Credential-free prepared profile, with an empty acceptance field.
+    #[arg(long)]
+    profile_file: PathBuf,
+}
+
+pub(crate) async fn admit_isolation(options: &IsolationOptions) -> Result<(), String> {
+    let bytes = private_file(&options.profile_file, 16_384)
+        .map_err(|_| "claude_isolation_input_invalid")?;
+    let raw = std::str::from_utf8(&bytes).map_err(|_| "claude_isolation_input_invalid")?;
+    let cancel = CancellationToken::new();
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|_| "claude_isolation_signal_unavailable")?;
+    let operation = Profile::admit_json(raw, &cancel);
+    tokio::pin!(operation);
+    let result = tokio::select! {
+        result = &mut operation => result,
+        _ = term.recv() => { cancel.cancel(); operation.await },
+        _ = tokio::signal::ctrl_c() => { cancel.cancel(); operation.await },
+    }
+    .map_err(|_| "claude_isolation_not_accepted")?;
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(|_| "claude_isolation_output_failed")?
+    );
+    Ok(())
+}
+
 pub(super) struct Adapter {
     profile: Profile,
     environment: String,
@@ -110,7 +139,7 @@ impl Adapter {
 
 /// Shared private-config binding checks for the worker and the login bridge.
 async fn prepare(config: Config) -> Result<(Profile, String, Zeroizing<String>), String> {
-    if config.environment_id.is_nil() {
+    if config.environment_id.is_nil() || config.environment_id.get_version_num() == 8 {
         return Err("claude_worker_environment_invalid".into());
     }
     let expected_email = read_expected_email(&config.expected_email_file)?;
@@ -138,7 +167,7 @@ fn choices_available(models: &AccountModels, choices: &[ModelChoice]) -> bool {
 }
 
 pub(crate) async fn login(options: &LoginOptions) -> Result<(), String> {
-    if options.environment_id.is_nil() {
+    if options.environment_id.is_nil() || options.environment_id.get_version_num() == 8 {
         return Err("claude_worker_environment_invalid".into());
     }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() || !io::stderr().is_terminal() {

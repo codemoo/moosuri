@@ -1,4 +1,5 @@
 //! Signed bundles and stopped forward-schema activation. No service mutation.
+pub(crate) mod claude_runtime;
 mod component;
 mod download;
 pub mod kiri;

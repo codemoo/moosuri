@@ -617,15 +617,17 @@ async fn check(g: &Gateway, id: Uuid, cancel: &CancellationToken) -> Result<(), 
     if cancel.is_cancelled() {
         return Err(Stop::Cancelled);
     }
-    let (a, session, base) =
-        with_job(g, id, |j| (j.session(), j.session.clone(), j.base)).ok_or(Stop::Failed)?;
-    let admin = admin_for(g, &a, &session).await.map_err(|_| Stop::Failed)?;
+    let (a, session, base) = with_job(g, id, |j| (j.session(), j.session.clone(), j.base))
+        .ok_or_else(|| failed("check_job_absent"))?;
+    let admin = admin_for(g, &a, &session)
+        .await
+        .map_err(|_| failed("check_authority"))?;
     if local_with(g, admin, receipt::current_revision)
         .await
-        .map_err(|_| Stop::Failed)?
+        .map_err(|_| failed("check_revision_read"))?
         != base
     {
-        return Err(Stop::Failed);
+        return Err(failed("check_revision_changed"));
     }
     if cancel.is_cancelled() {
         return Err(Stop::Cancelled);
@@ -684,6 +686,17 @@ async fn read_lines(out: ChildStdout, tx: mpsc::Sender<Msg>) {
     let _ = tx.send(Msg::Bad).await;
 }
 
+/// A terminal CLI-side failure. Only a static code is logged, never CLI output,
+/// URLs, codes or identifiers; the control decision is the returned `Stop` alone.
+fn diagnostic(code: &'static str) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr().lock(), "moosuri: claude_login_{code}");
+}
+fn failed(code: &'static str) -> Stop {
+    diagnostic(code);
+    Stop::Failed
+}
+
 /// The helper's stdin stays open until its result and exit. Ready needs a
 /// ready result, no trailing event, output EOF and OS exit status 0. The
 /// authorization URL is handed only to the sealed browser; its supervisor
@@ -708,19 +721,23 @@ async fn converse(
             let status: std::process::ExitStatus = status;
             return if outcome == Outcome::Ready && status.success() && published && sent {
                 Ok(())
+            } else if outcome != Outcome::Ready {
+                Err(failed("result_not_ready"))
+            } else if !status.success() {
+                Err(failed("exit_status"))
             } else {
-                Err(Stop::Failed)
+                Err(failed("incomplete"))
             };
         }
         tokio::select! {
             _ = cancel.cancelled() => return Err(Stop::Cancelled),
-            _ = &mut limit => return Err(Stop::Failed),
+            _ = &mut limit => return Err(failed(if seq.finished().is_some() { "exit_grace" } else { "deadline" })),
             msg = rx.recv(), if !end => match msg {
                 Some(Msg::Line(line)) => match seq.accept(&line) {
                     Ok(Step::Url(url)) => {
                         check(g, id, cancel).await?;
                         if !protocol::browser_ready(&url) {
-                            return Err(Stop::Failed);
+                            return Err(failed("url_rejected"));
                         }
                         // Ready once the browser's first frame exists; the
                         // supervisor then sets `awaiting_code`.
@@ -729,22 +746,23 @@ async fn converse(
                         persist(g, id).await;
                     }
                     Ok(Step::Result(Outcome::Ready)) => {
-                        if !published || !sent { return Err(Stop::Failed); }
+                        if !published || !sent { return Err(failed("result_early")); }
                         limit.as_mut().reset(tokio::time::Instant::now() + EXIT_GRACE);
                     }
                     Ok(Step::Result(Outcome::Cancelled)) => return Err(Stop::Cancelled),
-                    Ok(Step::Result(_)) | Err(()) => return Err(Stop::Failed),
+                    Ok(Step::Result(_)) => return Err(failed("result_failed")),
+                    Err(()) => return Err(failed("protocol_invalid")),
                 },
                 Some(Msg::End) => {
                     end = true;
                     if seq.finished().is_none() {
-                        return Err(Stop::Failed);
+                        return Err(failed("stream_ended"));
                     }
                 }
-                Some(Msg::Bad) | None => return Err(Stop::Failed),
+                Some(Msg::Bad) | None => return Err(failed("stream_failed")),
             },
             code = code_rx.recv(), if published && !sent && seq.finished().is_none() => {
-                let Some(code) = code else { return Err(Stop::Failed) };
+                let Some(code) = code else { return Err(failed("handoff_closed")) };
                 check(g, id, cancel).await?;
                 let mut input = Zeroizing::new(Vec::with_capacity(code.len() + 1));
                 input.extend_from_slice(code.as_bytes());
@@ -755,13 +773,13 @@ async fn converse(
                     stdin.flush().await
                 })
                 .await
-                .map_err(|_| Stop::Failed)?
-                .map_err(|_| Stop::Failed)?;
+                .map_err(|_| failed("code_write_timeout"))?
+                .map_err(|_| failed("code_write_failed"))?;
                 sent = true;
             }
             status = child.wait(), if exit.is_none() => match status {
                 Ok(status) => exit = Some(status),
-                Err(_) => return Err(Stop::Failed),
+                Err(_) => return Err(failed("wait_failed")),
             },
         }
     }
@@ -773,17 +791,17 @@ async fn login(
     code_rx: &mut mpsc::Receiver<Zeroizing<String>>,
     cancel: &CancellationToken,
 ) -> Result<(), Stop> {
-    let mut command = host::login_command(prepared).map_err(|_| Stop::Failed)?;
+    let mut command = host::login_command(prepared).map_err(|_| failed("command_invalid"))?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let mut child = command.spawn().map_err(|_| Stop::Failed)?;
+    let mut child = command.spawn().map_err(|_| failed("spawn_failed"))?;
     let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
         let _ = child.start_kill();
         let _ = timeout(EXIT_GRACE, child.wait()).await;
-        return Err(Stop::Failed);
+        return Err(failed("stdio_missing"));
     };
     let (tx, mut rx) = mpsc::channel(4);
     let reader = tokio::spawn(read_lines(stdout, tx));
@@ -802,6 +820,12 @@ async fn login(
     )
     .await;
     if login_deadline.0.is_cancelled() && !cancel.is_cancelled() {
+        // The browser supervisor also cancels this child token on a fault.
+        // It sets faulted before cancellation, so do not label that as a timer.
+        if matches!(&result, Err(Stop::Cancelled)) && with_job(g, id, |j| j.faulted) == Some(false)
+        {
+            diagnostic("deadline");
+        }
         result = Err(Stop::Failed);
     }
     if result.is_err() {
@@ -874,7 +898,13 @@ async fn steps(
                 "kiri_install_foreign_or_changed_file" => "host_file_conflict",
                 _ => "host_prepare_failed",
             };
-            eprintln!("moosuri: claude_subscription_prepare_{code}");
+            {
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "moosuri: claude_subscription_prepare_{code}"
+                );
+            }
             return Err(Stop::Failed);
         }
     };
@@ -982,6 +1012,21 @@ async fn run(
             }
         }
     };
+    if stage == Stage::Failed {
+        let cause = with_job(&g, id, |j| {
+            if j.revoked {
+                "terminal_revoked"
+            } else if j.faulted {
+                "terminal_browser_fault"
+            } else {
+                "terminal_failed"
+            }
+        })
+        .unwrap_or("terminal_job_absent");
+        diagnostic(cause);
+    } else if stage == Stage::Cancelled {
+        diagnostic("terminal_cancelled");
+    }
     // The browser is gone (acknowledged) or the job holds. It never reaches
     // cancelled, failed-and-released or ready with an unconfirmed browser;
     // the host state stays held for the same retry (`cancel`) as any cleanup.
@@ -1147,7 +1192,18 @@ async fn watch(g: Gateway, id: Uuid, cancel: CancellationToken) {
             Err(_) => true,
         };
         if revoke {
-            with_job(&g, id, |j| j.revoked = true);
+            let first = with_job(&g, id, |j| {
+                let first = !j.revoked;
+                j.revoked = true;
+                first
+            }) == Some(true);
+            if first {
+                diagnostic(if transient >= 5 {
+                    "watch_unavailable"
+                } else {
+                    "watch_revoked"
+                });
+            }
             cancel.cancel();
         }
     }

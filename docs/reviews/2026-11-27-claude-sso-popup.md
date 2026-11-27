@@ -159,3 +159,37 @@ bounded step is to distinguish browser/input/poll failure from CLI termination
 without logging URLs, input, codes or raw provider output. The same login will
 not be repeated without that new evidence. Actual Claude inference, conversational
 Gmail, new OAuth registration and two real member consents remain open.
+
+## Next bounded failure journeys
+
+These expand M05/K05; they do not create completed primary journeys. The private
+fixed-code implementation passed the Linux checks and independent review described below.
+No diagnostic build or new authentication attempt is deployed yet.
+
+| ID | User journey / injected failure | Required evidence | Status |
+| --- | --- | --- | --- |
+| DF01 | Owner clicks or watches the login screen and the browser exchange fails | Fixed input/poll/watch classification, no raw output; same authority, uncertain-input handling and confirmed cleanup | Linux classified worker/actor failures passed; production cause still unknown |
+| DF02 | Official CLI exits or its result/stream/deadline fails while login is open | Distinct fixed CLI cause; no activation or replay; browser/child cleanup and original connection preserved | Linux gateway lifecycle suite passed; actual CLI failure cause still pending |
+| DF03 | Worker returns an unknown error, malformed reply or cancellation-looking failure | Fail closed; no private value appears in logs; worker cancellation remains a fault | Linux strict protocol and stale-cause regressions passed |
+
+
+The diagnostic change preserves the existing private error envelope and recovery
+sets. Worker cancellation is still a fault, and unknown errors still fail closed.
+Only fixed static stage/cause labels reach the private journal. Authorization
+watch, launch, browser input/poll and terminal CLI paths are distinguished; a
+completed input is never replayed to obtain a better diagnostic.
+
+Linux browser checks passed187 with3 ignored; final transport checks passed14.
+The gateway lifecycle suite passed56, including the final correction below.
+Independent official Claude Sonnet5.5/medium review found stale cause reuse,
+unlabelled authority/watch exits and a false deadline label: the browser fault
+cancels a deadline child token too. Causes now reset per call, authority/watch and
+terminal paths have fixed labels, and the deadline label is suppressed when the
+supervisor had already recorded a browser fault. New diagnostic writes ignore
+stderr errors. Only the four owned Rust files were formatted.
+
+A mid-request EOF remains the coarse `host_stream_failed` classification; it
+cannot establish whether the worker crashed. No raw worker stderr is enabled.
+These checks establish the diagnostic and existing control boundaries, not a fix
+for the production authentication failure. Matched diagnostic deployment and one
+instrumented production observation remain the next acceptance step.

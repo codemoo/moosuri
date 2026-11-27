@@ -320,19 +320,41 @@ fn recoverable(error: &BrowserError) -> bool {
             | BrowserError::InputUncertain
     )
 }
-async fn send_error(
-    output: &mut (impl AsyncWrite + Unpin),
-    error: &BrowserError,
-) -> (Result<(), BrowserError>, bool) {
-    let code = match error {
+/// The fixed wire vocabulary for a worker error: a classification only, never text
+/// derived from a URL, page, input or code. The host accepts exactly these strings
+/// and treats anything else as a protocol failure. `failed` is the unclassified rest.
+fn wire_code(error: &BrowserError) -> &'static str {
+    match error {
         BrowserError::StalePage => "stale_page",
         BrowserError::InputUncertain => "input_uncertain",
         BrowserError::InvalidHandle => "invalid_handle",
         BrowserError::Capacity => "capacity",
+        BrowserError::Timeout => "timeout",
+        BrowserError::Protocol => "protocol",
+        BrowserError::Setup => "setup",
+        BrowserError::Network => "network",
+        BrowserError::Expired => "expired",
+        BrowserError::Cancelled => "cancelled",
+        BrowserError::OutputTooLarge => "output_too_large",
         _ => "failed",
-    };
+    }
+}
+/// A failure that ends the attempt. A recoverable code would make the host keep
+/// polling a worker that is about to exit, so the classification of such an error
+/// is withheld here and only the unclassified terminal code is sent.
+fn terminal_code(error: &BrowserError) -> &'static str {
+    if recoverable(error) {
+        "failed"
+    } else {
+        wire_code(error)
+    }
+}
+async fn send_error(
+    output: &mut (impl AsyncWrite + Unpin),
+    error: &BrowserError,
+) -> (Result<(), BrowserError>, bool) {
     (
-        send_json(output, &json!({"ok":false,"error":code})).await,
+        send_json(output, &json!({"ok":false,"error":wire_code(error)})).await,
         recoverable(error),
     )
 }
@@ -395,15 +417,18 @@ async fn session_loop(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let deadline = tokio::time::sleep(lifetime);
     tokio::pin!(deadline);
-    let (mut failed, mut delivered) = (false, false);
+    // The classified origin of a callback-watch failure, kept for the next reply.
+    let (mut failed, mut delivered): (Option<&'static str>, bool) = (None, false);
     loop {
         let bytes = tokio::select! { biased;
             _ = stop.cancelled() => break,
             _ = &mut deadline => break,
             next = lines.recv() => match next { Some(Ok(bytes)) => bytes, _ => break },
             _ = tick.tick() => {
-                if !failed && session.watch().await.is_err() {
-                    failed = true;
+                if failed.is_none() {
+                    if let Err(error) = session.watch().await {
+                        failed = Some(terminal_code(&error));
+                    }
                 }
                 continue;
             }
@@ -414,8 +439,13 @@ async fn session_loop(
             Ok(Command::Shutdown {}) | Err(_) => break,
             Ok(command) => command,
         };
-        if failed || delivered {
-            let _ = send_json(output, &json!({"ok":false,"error":"failed"})).await;
+        if failed.is_some() || delivered {
+            let code = if delivered {
+                "failed"
+            } else {
+                failed.unwrap_or("failed")
+            };
+            let _ = send_json(output, &json!({"ok":false,"error":code})).await;
             break;
         }
         let (written, keep) = match command {
@@ -766,7 +796,7 @@ mod tests {
 
     #[derive(Default)]
     struct Fake {
-        watch_fails: bool,
+        watch_fails: Option<fn() -> BrowserError>,
         code: Option<Zeroizing<String>>,
         frames: VecDeque<Result<WorkspaceFrame, BrowserError>>,
         input_results: VecDeque<Result<(), BrowserError>>,
@@ -774,11 +804,7 @@ mod tests {
     }
     impl Session for Fake {
         async fn watch(&mut self) -> Result<(), BrowserError> {
-            if self.watch_fails {
-                Err(BrowserError::Protocol)
-            } else {
-                Ok(())
-            }
+            self.watch_fails.map_or(Ok(()), |error| Err(error()))
         }
         async fn captured_code(&mut self) -> Option<Zeroizing<String>> {
             self.code.take()
@@ -879,33 +905,71 @@ mod tests {
         let run = session_loop(&mut fake, &mut rx, &mut out, &stop, Duration::from_secs(20));
         let drive = async {
             tx.send(host_line(INPUT)).await.unwrap();
-            assert_eq!(reply(&mut read).await, json!({"ok":false,"error":"failed"}));
+            // The classified cause is reported; it is still terminal (not recoverable).
+            assert_eq!(
+                reply(&mut read).await,
+                json!({"ok":false,"error":"protocol"})
+            );
         };
         tokio::join!(run, drive);
         assert_eq!(fake.inputs, 1);
     }
 
+    #[test]
+    fn worker_error_vocabulary_is_fixed_and_recoverability_is_unchanged() {
+        let all = [
+            (BrowserError::StalePage, "stale_page", true),
+            (BrowserError::InputUncertain, "input_uncertain", true),
+            (BrowserError::InvalidHandle, "invalid_handle", true),
+            (BrowserError::Capacity, "capacity", true),
+            (BrowserError::Timeout, "timeout", false),
+            (BrowserError::Protocol, "protocol", false),
+            (BrowserError::Setup, "setup", false),
+            (BrowserError::Network, "network", false),
+            (BrowserError::Expired, "expired", false),
+            (BrowserError::Cancelled, "cancelled", false),
+            (BrowserError::OutputTooLarge, "output_too_large", false),
+            (BrowserError::InvalidUrl, "failed", false),
+        ];
+        for (error, code, recover) in all {
+            assert_eq!(wire_code(&error), code);
+            assert_eq!(recoverable(&error), recover);
+            // A held terminal failure never advertises a recoverable classification.
+            assert_eq!(terminal_code(&error), if recover { "failed" } else { code });
+        }
+    }
+
     #[tokio::test]
     async fn a_callback_failure_between_requests_is_answered_to_the_next_request() {
-        let mut fake = Fake {
-            watch_fails: true,
-            ..Fake::default()
-        };
-        fake.frames.push_back(Ok(frame()));
-        let (tx, mut rx) = mpsc::channel(1);
-        let (mut out, read) = tokio::io::duplex(1 << 16);
-        let mut read = BufReader::new(read);
-        let stop = CancellationToken::new();
-        let run = session_loop(&mut fake, &mut rx, &mut out, &stop, Duration::from_secs(20));
-        let drive = async {
-            // The first tick fails immediately and is held; no unsolicited line appears.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            tx.send(host_line(r#"{"op":"poll"}"#)).await.unwrap();
-            assert_eq!(reply(&mut read).await, json!({"ok":false,"error":"failed"}));
-        };
-        tokio::join!(run, drive);
-        // The queued frame was never served.
-        assert_eq!(fake.frames.len(), 1);
+        // The classified origin survives to the next reply; a recoverable-looking
+        // origin is withheld so the host cannot keep polling a worker that is ending.
+        for (error, expected) in [
+            (
+                (|| BrowserError::Timeout) as fn() -> BrowserError,
+                "timeout",
+            ),
+            (|| BrowserError::StalePage, "failed"),
+        ] {
+            let mut fake = Fake {
+                watch_fails: Some(error),
+                ..Fake::default()
+            };
+            fake.frames.push_back(Ok(frame()));
+            let (tx, mut rx) = mpsc::channel(1);
+            let (mut out, read) = tokio::io::duplex(1 << 16);
+            let mut read = BufReader::new(read);
+            let stop = CancellationToken::new();
+            let run = session_loop(&mut fake, &mut rx, &mut out, &stop, Duration::from_secs(20));
+            let drive = async {
+                // The first tick fails immediately and is held; no unsolicited line appears.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                tx.send(host_line(r#"{"op":"poll"}"#)).await.unwrap();
+                assert_eq!(reply(&mut read).await, json!({"ok":false,"error":expected}));
+            };
+            tokio::join!(run, drive);
+            // The queued frame was never served.
+            assert_eq!(fake.frames.len(), 1);
+        }
     }
 
     #[tokio::test]

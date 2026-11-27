@@ -408,6 +408,26 @@ SHALL remain read-only; old public catalog revisions SHALL NOT be republished.
 - **WHEN** the updated gateway reads a valid version-two connect receipt
 - **THEN** it preserves that connection's ownership and recovery semantics, without interpreting it as a disconnect or accepting legacy unbound version-one authority
 
+### Requirement: Authentication failures retain private fixed diagnostics
+The installation SHALL distinguish browser exchange failures from official CLI
+termination using a closed vocabulary of stages and causes. Diagnostics SHALL NOT
+include provider output, page contents, addresses, input, codes, credentials or
+member/request identifiers. Classification SHALL NOT change cleanup, authority,
+recovery or input replay decisions.
+
+#### Scenario: The browser fails while an owner is viewing or using its screen
+- **WHEN** a browser input, polling or callback-watch exchange fails
+- **THEN** the installation retains only a fixed private stage/cause and applies the existing cleanup and uncertain-input rules
+- **AND** a worker-side cancellation cannot be mistaken for an authorized user cancellation
+
+#### Scenario: The official CLI exits without completing authentication
+- **WHEN** its stream, process or deadline ends before the required successful result
+- **THEN** the private diagnostic identifies the CLI stage, no connection is activated, and the existing browser/child cleanup is completed
+
+#### Scenario: A worker returns an unknown or malformed error
+- **WHEN** an error string or response shape is outside the accepted private vocabulary
+- **THEN** the exchange fails closed with a fixed protocol classification and no raw value is logged or replayed
+
 ### Requirement: Claude authentication stays inside the member Kiri screen
 The existing subscription flow SHALL use fresh Kiri Chrome for the initiating
 session and deliver the matching official callback privately to its CLI child.

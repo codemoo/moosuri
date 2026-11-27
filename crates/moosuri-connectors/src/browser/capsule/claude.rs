@@ -48,11 +48,36 @@ enum Answer {
     Code(Zeroizing<String>),
     Accepted,
 }
+/// A failed exchange: the error that drives every control decision, plus a fixed
+/// static label of where it came from (`worker_*` reported over the wire, `host_*`
+/// observed here). The label is diagnostic only and never changes a decision; it is
+/// never built from a URL, page, input, code or any other runtime text.
+struct Failure {
+    error: BrowserError,
+    cause: &'static str,
+}
+impl Failure {
+    fn new(error: BrowserError, cause: &'static str) -> Self {
+        Self { error, cause }
+    }
+    /// A local stream/process/timer failure of this host.
+    fn host(error: BrowserError) -> Self {
+        let cause = match error {
+            BrowserError::Cancelled => "host_cancelled",
+            BrowserError::Timeout => "host_timeout",
+            BrowserError::Expired => "host_deadline",
+            BrowserError::OutputTooLarge => "host_output_too_large",
+            BrowserError::Protocol => "host_stream_failed",
+            _ => "host_failed",
+        };
+        Self { error, cause }
+    }
+}
 struct Request {
     /// A complete wire line (with newline). Input text may be a password: zeroized.
     line: Zeroizing<Vec<u8>>,
     kind: Kind,
-    reply: oneshot::Sender<Result<Answer, BrowserError>>,
+    reply: oneshot::Sender<Result<Answer, Failure>>,
 }
 
 pub struct ClaudeAttempt {
@@ -61,6 +86,10 @@ pub struct ClaudeAttempt {
     done: Option<oneshot::Receiver<Result<(), BrowserError>>>,
     /// The code was handed out; nothing more is served.
     finished: bool,
+    /// Why the actor stopped serving, set once before its requests close.
+    exit: Arc<std::sync::OnceLock<&'static str>>,
+    /// Static label of the last failed exchange.
+    cause: Option<&'static str>,
 }
 struct Guard(Option<CancellationToken>);
 impl Drop for Guard {
@@ -90,6 +119,30 @@ struct Reply {
     error: Option<String>,
 }
 
+/// Strict, closed mapping of the worker's error string. Recoverable codes keep their
+/// exact meaning; a worker `cancelled` is never a host cancellation (it is a fault and
+/// stays one), and anything unrecognised fails closed as a protocol error.
+fn wire_failure(code: Option<&str>, kind: Kind) -> Failure {
+    let (error, cause) = match code {
+        Some("stale_page") => (BrowserError::StalePage, "worker_stale_page"),
+        Some("input_uncertain") if kind == Kind::Input => {
+            (BrowserError::InputUncertain, "worker_input_uncertain")
+        }
+        Some("invalid_handle") => (BrowserError::InvalidHandle, "worker_invalid_handle"),
+        Some("capacity") => (BrowserError::Capacity, "worker_capacity"),
+        Some("timeout") => (BrowserError::Timeout, "worker_timeout"),
+        Some("setup") => (BrowserError::Setup, "worker_setup"),
+        Some("network") => (BrowserError::Network, "worker_network"),
+        Some("expired") => (BrowserError::Expired, "worker_expired"),
+        Some("output_too_large") => (BrowserError::OutputTooLarge, "worker_output_too_large"),
+        Some("protocol") => (BrowserError::Protocol, "worker_protocol"),
+        Some("cancelled") => (BrowserError::Protocol, "worker_cancelled"),
+        Some("failed") => (BrowserError::Protocol, "worker_failed"),
+        _ => (BrowserError::Protocol, "worker_unknown"),
+    };
+    Failure::new(error, cause)
+}
+
 fn validate_frame(frame: &WorkspaceFrame) -> Result<(), BrowserError> {
     if frame.width != 1280
         || frame.height != 900
@@ -116,36 +169,32 @@ fn validate_frame(frame: &WorkspaceFrame) -> Result<(), BrowserError> {
 }
 
 /// Exact-shape parse of one worker line for the request kind that was sent.
-fn parse_reply(bytes: &[u8], kind: Kind, authorize: &AuthorizeUrl) -> Result<Answer, BrowserError> {
-    let reply: Reply = serde_json::from_slice(bytes).map_err(|_| BrowserError::Protocol)?;
+fn parse_reply(bytes: &[u8], kind: Kind, authorize: &AuthorizeUrl) -> Result<Answer, Failure> {
+    let shape = || Failure::new(BrowserError::Protocol, "worker_shape_invalid");
+    let reply: Reply = serde_json::from_slice(bytes)
+        .map_err(|_| Failure::new(BrowserError::Protocol, "worker_malformed"))?;
     if !reply.ok {
         if reply.frame.is_some() || reply.code.is_some() || reply.accepted.is_some() {
-            return Err(BrowserError::Protocol);
+            return Err(shape());
         }
-        return Err(match reply.error.as_deref() {
-            Some("stale_page") => BrowserError::StalePage,
-            Some("input_uncertain") if kind == Kind::Input => BrowserError::InputUncertain,
-            Some("invalid_handle") => BrowserError::InvalidHandle,
-            Some("capacity") => BrowserError::Capacity,
-            _ => BrowserError::Protocol,
-        });
+        return Err(wire_failure(reply.error.as_deref(), kind));
     }
     if reply.error.is_some() {
-        return Err(BrowserError::Protocol);
+        return Err(shape());
     }
     match (kind, reply.frame, reply.code, reply.accepted) {
         (Kind::Poll, Some(frame), None, None) => {
-            validate_frame(&frame)?;
+            validate_frame(&frame).map_err(|e| Failure::new(e, "worker_frame_invalid"))?;
             Ok(Answer::Frame(frame))
         }
         (Kind::Poll, None, Some(code), None) => {
             if !authorize.owns_code(code.as_str()) {
-                return Err(BrowserError::Protocol);
+                return Err(Failure::new(BrowserError::Protocol, "worker_code_invalid"));
             }
             Ok(Answer::Code(code.into_zeroizing()))
         }
         (Kind::Input, None, None, Some(true)) => Ok(Answer::Accepted),
-        _ => Err(BrowserError::Protocol),
+        _ => Err(shape()),
     }
 }
 
@@ -258,10 +307,12 @@ impl CapsuleReader {
         let (finished, done) = oneshot::channel();
         let this = self.clone();
         let control = cancel.clone();
+        let exit = Arc::new(std::sync::OnceLock::new());
+        let reason = exit.clone();
         tokio::spawn(async move {
             let _capacity = capacity;
             let result = this
-                .claude_actor(tenant, authorize, name, control, rx, started)
+                .claude_actor(tenant, authorize, name, control, rx, started, reason)
                 .await;
             let _ = finished.send(result);
         });
@@ -276,9 +327,12 @@ impl CapsuleReader {
             cancel,
             done: Some(done),
             finished: false,
+            exit,
+            cause: None,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn claude_actor(
         &self,
         tenant: Uuid,
@@ -287,7 +341,12 @@ impl CapsuleReader {
         cancel: CancellationToken,
         mut requests: mpsc::Receiver<Request>,
         started: oneshot::Sender<Result<(), BrowserError>>,
+        exit: Arc<std::sync::OnceLock<&'static str>>,
     ) -> Result<(), BrowserError> {
+        // The first reason wins and is recorded before the request channel can close.
+        let note = |reason: &'static str| {
+            let _ = exit.set(reason);
+        };
         let identity = Uuid::new_v4();
         let mut command = self.worker_command_mode(tenant, identity, &name, None, true);
         command
@@ -338,51 +397,76 @@ impl CapsuleReader {
                     let mut delivered = false;
                     loop {
                         let request = tokio::select! { biased;
-                            _ = cancel.cancelled() => break,
-                            _ = tokio::time::sleep_until(deadline) => break,
+                            _ = cancel.cancelled() => { note("host_cancelled"); break },
+                            _ = tokio::time::sleep_until(deadline) => { note("host_deadline"); break },
                             // Child::wait would close the worker's stdin.
                             _ = liveness.tick() => {
-                                if !matches!(child.try_wait(), Ok(None)) { break; }
+                                if !matches!(child.try_wait(), Ok(None)) {
+                                    note("worker_exited");
+                                    break;
+                                }
                                 continue;
                             },
-                            request = requests.recv() => match request { Some(r) => r, None => break },
+                            request = requests.recv() => match request {
+                                Some(r) => r,
+                                None => { note("host_released"); break }
+                            },
                         };
                         // A disconnected caller has no authority to dispatch a delayed action.
                         if request.reply.is_closed() {
+                            note("host_caller_gone");
                             break;
                         }
                         if delivered {
-                            let _ = request.reply.send(Err(BrowserError::Expired));
+                            let _ = request
+                                .reply
+                                .send(Err(Failure::new(BrowserError::Expired, "host_delivered")));
                             continue;
                         }
                         let kind = request.kind;
                         let operation = async {
-                            write_line(&mut child, &request.line).await?;
+                            write_line(&mut child, &request.line)
+                                .await
+                                .map_err(Failure::host)?;
                             let limit = if kind == Kind::Poll {
                                 MAX_FRAME_LINE
                             } else {
                                 1024
                             };
-                            let bytes = read_reply(reader, limit).await?;
+                            let bytes = read_reply(reader, limit).await.map_err(Failure::host)?;
                             parse_reply(&bytes, kind, &authorize)
                         };
                         let result = tokio::select! { biased;
-                            _ = cancel.cancelled() => Err(BrowserError::Cancelled),
-                            _ = tokio::time::sleep_until(deadline) => Err(BrowserError::Expired),
-                            result = tokio::time::timeout(Duration::from_secs(40), operation) => result.unwrap_or(Err(BrowserError::Timeout)),
+                            _ = cancel.cancelled() => Err(Failure::host(BrowserError::Cancelled)),
+                            _ = tokio::time::sleep_until(deadline) => Err(Failure::host(BrowserError::Expired)),
+                            result = tokio::time::timeout(Duration::from_secs(40), operation) => {
+                                result.unwrap_or(Err(Failure::host(BrowserError::Timeout)))
+                            }
                         };
                         let recoverable = matches!(
                             &result,
-                            Err(BrowserError::StalePage
-                                | BrowserError::InputUncertain
-                                | BrowserError::InvalidHandle
-                                | BrowserError::Capacity)
+                            Err(Failure {
+                                error: BrowserError::StalePage
+                                    | BrowserError::InputUncertain
+                                    | BrowserError::InvalidHandle
+                                    | BrowserError::Capacity,
+                                ..
+                            })
                         );
                         let terminal = result.is_err() && !recoverable;
                         delivered |= matches!(&result, Ok(Answer::Code(_)));
+                        if let Err(failure) = &result {
+                            if terminal {
+                                note(failure.cause);
+                            }
+                        }
                         // An abandoned request's reply (even a code) is dropped and wiped,
                         // and ends the attempt: nothing stale is ever matched to a later one.
-                        if request.reply.send(result).is_err() || terminal {
+                        if request.reply.send(result).is_err() {
+                            note("host_caller_gone");
+                            break;
+                        }
+                        if terminal {
                             break;
                         }
                     }
@@ -438,22 +522,48 @@ impl ClaudeAttempt {
     pub async fn closed(&self) {
         self.requests.closed().await;
     }
+    /// Static label of the last failed poll/input exchange, for bounded diagnostics
+    /// only (`worker_*` reported by the worker, `host_*` observed here). It is never
+    /// derived from page, URL, input or code data and never drives a decision.
+    pub fn cause(&self) -> Option<&'static str> {
+        self.cause
+    }
     async fn exchange(
         &mut self,
         kind: Kind,
         line: Zeroizing<Vec<u8>>,
     ) -> Result<Answer, BrowserError> {
-        if self.cancel.is_cancelled() {
-            return Err(BrowserError::Cancelled);
+        match self.exchange_classified(kind, line).await {
+            Ok(answer) => Ok(answer),
+            Err(failure) => {
+                self.cause = Some(failure.cause);
+                Err(failure.error)
+            }
         }
+    }
+    async fn exchange_classified(
+        &self,
+        kind: Kind,
+        line: Zeroizing<Vec<u8>>,
+    ) -> Result<Answer, Failure> {
+        if self.cancel.is_cancelled() {
+            return Err(Failure::host(BrowserError::Cancelled));
+        }
+        // The actor stopped without a reply: report why it stopped, when known.
+        let gone = || {
+            Failure::new(
+                BrowserError::Expired,
+                self.exit.get().copied().unwrap_or("host_closed"),
+            )
+        };
         // Dropping this future mid-request cancels the attempt (fail closed).
         let mut guard = Guard(Some(self.cancel.clone()));
         let (reply, response) = oneshot::channel();
         self.requests
             .send(Request { line, kind, reply })
             .await
-            .map_err(|_| BrowserError::Expired)?;
-        let answer = response.await.map_err(|_| BrowserError::Expired)?;
+            .map_err(|_| gone())?;
+        let answer = response.await.map_err(|_| gone())?;
         guard.0 = None;
         answer
     }
@@ -463,6 +573,7 @@ impl ClaudeAttempt {
     /// error means the actor is already cleaning up; call `shutdown` for its outcome.
     /// Do not drop or time out this future to "try again": that cancels the attempt.
     pub async fn poll(&mut self) -> Result<ClaudeView, BrowserError> {
+        self.cause = None;
         if self.finished {
             return Err(BrowserError::Expired);
         }
@@ -484,6 +595,7 @@ impl ClaudeAttempt {
         frame_token: &str,
         input: WorkspaceInput,
     ) -> Result<(), BrowserError> {
+        self.cause = None;
         if self.finished {
             return Err(BrowserError::Expired);
         }
@@ -690,8 +802,113 @@ mod tests {
                 Kind::Poll,
                 &authorize
             ),
-            Err(BrowserError::Protocol)
+            Err(Failure {
+                error: BrowserError::Protocol,
+                ..
+            })
         ));
+    }
+
+    #[test]
+    fn worker_error_strings_map_to_one_exact_error_and_unknown_fails_closed() {
+        let authorize = AuthorizeUrl::parse(&authorization()).unwrap();
+        let cases = [
+            ("stale_page", BrowserError::StalePage, "worker_stale_page"),
+            (
+                "invalid_handle",
+                BrowserError::InvalidHandle,
+                "worker_invalid_handle",
+            ),
+            ("capacity", BrowserError::Capacity, "worker_capacity"),
+            ("timeout", BrowserError::Timeout, "worker_timeout"),
+            ("setup", BrowserError::Setup, "worker_setup"),
+            ("network", BrowserError::Network, "worker_network"),
+            ("expired", BrowserError::Expired, "worker_expired"),
+            (
+                "output_too_large",
+                BrowserError::OutputTooLarge,
+                "worker_output_too_large",
+            ),
+            ("protocol", BrowserError::Protocol, "worker_protocol"),
+            // A worker-side cancellation is a fault, never a host/user cancellation.
+            ("cancelled", BrowserError::Protocol, "worker_cancelled"),
+            ("failed", BrowserError::Protocol, "worker_failed"),
+            ("anything else", BrowserError::Protocol, "worker_unknown"),
+            ("input_uncertain", BrowserError::Protocol, "worker_unknown"),
+            ("STALE_PAGE", BrowserError::Protocol, "worker_unknown"),
+        ];
+        for (code, error, cause) in cases {
+            let Err(failure) = parse_reply(error_reply(code).as_bytes(), Kind::Poll, &authorize)
+            else {
+                panic!("{code}")
+            };
+            assert_eq!((failure.error, failure.cause), (error, cause), "{code}");
+        }
+        let Err(failure) = parse_reply(
+            error_reply("input_uncertain").as_bytes(),
+            Kind::Input,
+            &authorize,
+        ) else {
+            panic!("input_uncertain")
+        };
+        assert_eq!(failure.error, BrowserError::InputUncertain);
+        for bad in [
+            r#"{"ok":false}"#,
+            r#"{"ok":false,"error":null}"#,
+            r#"{"ok":false,"error":"timeout","accepted":true}"#,
+        ] {
+            assert_eq!(
+                parse_reply(bad.as_bytes(), Kind::Poll, &authorize)
+                    .err()
+                    .map(|f| f.error),
+                Some(BrowserError::Protocol),
+                "{bad}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_worker_causes_are_labelled_without_changing_control() {
+        let tenant = Uuid::new_v4();
+        // Classified terminal replies stay terminal: no further request is served.
+        for (code, label) in [
+            ("timeout", "worker_timeout"),
+            ("cancelled", "worker_cancelled"),
+        ] {
+            let reader = capsule_with(worker(&ready(tenant), &[error_reply(code)]));
+            let mut attempt = reader
+                .start_claude(tenant, authorization(), &CancellationToken::new())
+                .await
+                .unwrap();
+            assert!(attempt.cause().is_none());
+            let first = attempt.poll().await;
+            assert!(matches!(
+                (code, first),
+                ("timeout", Err(BrowserError::Timeout))
+                    | ("cancelled", Err(BrowserError::Protocol))
+            ));
+            assert_eq!(attempt.cause(), Some(label));
+            // A later locally rejected input must not inherit the previous cause.
+            assert!(matches!(
+                attempt.input("invalid", key()).await,
+                Err(BrowserError::StalePage)
+            ));
+            assert!(attempt.cause().is_none());
+            assert!(attempt.poll().await.is_err());
+            attempt.shutdown().await.unwrap();
+        }
+        // EOF during a request is classified as stream failure; an idle exit uses worker_exited.
+        let reader = capsule_with(format!(
+            "read -r init; printf '%s\\n' '{}'; read -r req; exit 0",
+            ready(tenant)
+        ));
+        let mut attempt = reader
+            .start_claude(tenant, authorization(), &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(attempt.poll().await.is_err());
+        assert_eq!(attempt.cause(), Some("host_stream_failed"));
+        let _ = attempt.shutdown().await;
     }
 
     #[tokio::test]

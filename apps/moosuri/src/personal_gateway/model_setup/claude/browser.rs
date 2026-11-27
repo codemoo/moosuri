@@ -217,15 +217,28 @@ pub(super) async fn launch(
     // Persist before a process can be created, including crashes during startup.
     with_job(g, id, |j| j.browser_unresolved = true);
     if !persist(g, id).await {
+        report("launch", Some("receipt_failed"));
         return Err(Stop::Failed);
     }
     let attempt = match start(&rt, tenant, &url, &stop).await {
         Ok(attempt) => attempt,
         Err(BrowserError::CleanupUnconfirmed) => {
+            report("launch", Some("cleanup_unconfirmed"));
             with_job(g, id, |j| j.browser_unresolved = true);
             return Err(Stop::Failed);
         }
         Err(error) => {
+            report(
+                "launch",
+                Some(match &error {
+                    BrowserError::Timeout => "timeout",
+                    BrowserError::Cancelled => "cancelled",
+                    BrowserError::Capacity => "capacity",
+                    BrowserError::Protocol => "protocol",
+                    BrowserError::Setup => "setup",
+                    _ => "start_failed",
+                }),
+            );
             // Only these classified failures prove no unacknowledged process.
             // Unexpected errors require an independent empty inventory receipt.
             let clean = matches!(
@@ -258,9 +271,9 @@ pub(super) async fn launch(
     ));
     let pump = Pump { stop, task };
     let outcome = tokio::select! {
-        ready = ready_rx => ready.map_err(|_| Stop::Failed),
+        ready = ready_rx => ready.map_err(|_| { report("launch", Some("supervisor_ended")); Stop::Failed }),
         _ = cancel.cancelled() => Err(Stop::Cancelled),
-        _ = sleep(READY_LIMIT) => Err(Stop::Failed),
+        _ = sleep(READY_LIMIT) => { report("launch", Some("ready_timeout")); Err(Stop::Failed) },
     };
     match outcome {
         Ok(()) => Ok(pump),
@@ -269,6 +282,18 @@ pub(super) async fn launch(
             Err(why)
         }
     }
+}
+
+/// One bounded terminal diagnostic line: a static stage and the connector's fixed
+/// static cause label. No error text, URL, page, input, code or identifier is ever
+/// formatted, and it is emitted only for a terminal event, never per frame.
+fn report(stage: &'static str, cause: Option<&'static str>) {
+    use std::io::Write as _;
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "moosuri: claude_browser_{stage}_{}",
+        cause.unwrap_or("unclassified")
+    );
 }
 
 async fn serve(g: &Gateway, id: Uuid, attempt: &mut ClaudeAttempt, command: Command) {
@@ -294,7 +319,12 @@ async fn serve(g: &Gateway, id: Uuid, attempt: &mut ClaudeAttempt, command: Comm
         match attempt.input(&token, input).await {
             Ok(()) => Ok(()),
             Err(BrowserError::StalePage | BrowserError::InvalidHandle) => Err(InputError::Stale),
-            Err(_) => Err(InputError::Uncertain),
+            Err(_) => {
+                if let Some(cause) = attempt.cause().filter(|cause| *cause != "host_cancelled") {
+                    report("input", Some(cause));
+                }
+                Err(InputError::Uncertain)
+            }
         }
     };
     let _ = reply.send(result);
@@ -351,6 +381,7 @@ async fn supervise(
                     if sent {
                         persist(&g, id).await;
                     } else {
+                        report("handoff", Some("code_not_accepted"));
                         fault = true;
                     }
                     break;
@@ -364,6 +395,9 @@ async fn supervise(
                     // A user/deadline cancellation can interrupt an in-flight poll.
                     // Preserve its cause instead of relabelling it a browser fault.
                     fault = !stop.is_cancelled() && !matches!(error, BrowserError::Cancelled);
+                    if fault {
+                        report("poll", attempt.cause());
+                    }
                     break;
                 }
             },

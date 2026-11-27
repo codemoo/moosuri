@@ -5,7 +5,7 @@ use crate::installation::kiri::host::{self, Exec, Input, Layout, Result, args};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    os::unix::fs::MetadataExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -141,6 +141,27 @@ pub(super) fn check(layout: &Layout, exec: &dyn Exec) -> Result<Tools> {
         return Err("claude_runtime_unsupported_useradd_subids".into());
     }
     if !system_subids {
+        // shadow useradd allocates subordinate IDs only when these databases
+        // exist. Keep allocation/locking in useradd; never create or edit them.
+        for name in ["subuid", "subgid"] {
+            // An existing empty database is valid on a root-only host.
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(layout.at(&format!("/etc/{name}")))
+                .map_err(|_| "claude_runtime_subid_allocator_unconfigured")?;
+            let meta = file
+                .metadata()
+                .map_err(|_| "claude_runtime_subid_allocator_unconfigured")?;
+            if !meta.is_file()
+                || meta.nlink() != 1
+                || meta.uid() != host::euid()
+                || meta.mode() & 0o022 != 0
+                || meta.len() > 128 * 1024
+            {
+                return Err("claude_runtime_subid_allocator_unconfigured".into());
+            }
+        }
         let path = layout.at("/etc/login.defs");
         let (mut file, _) = host::open_regular(&path, 128 * 1024)
             .map_err(|_| "claude_runtime_subid_allocator_unconfigured")?;
@@ -148,21 +169,38 @@ pub(super) fn check(layout: &Layout, exec: &dyn Exec) -> Result<Tools> {
         std::io::Read::read_to_string(&mut file, &mut text)
             .map_err(|_| "claude_runtime_subid_allocator_unconfigured")?;
         for prefix in ["SUB_UID", "SUB_GID"] {
-            let value = |suffix: &str| -> Option<u64> {
+            let value = |suffix: &str, default: u64| -> Option<u64> {
                 let key = format!("{prefix}_{suffix}");
-                let values: Vec<_> = text
-                    .lines()
-                    .filter_map(|line| {
-                        let mut fields = line.split('#').next()?.split_whitespace();
-                        (fields.next()? == key)
-                            .then(|| fields.next()?.parse::<u64>().ok())
-                            .flatten()
-                    })
-                    .collect();
-                (values.len() == 1).then(|| values[0])
+                let mut value = None;
+                for line in text.lines() {
+                    let mut fields = line.split('#').next()?.split_whitespace();
+                    if fields.next() != Some(key.as_str()) {
+                        continue;
+                    }
+                    if value.is_some() {
+                        return None;
+                    }
+                    let raw = fields.next()?;
+                    // shadow interprets prefixed numbers in base 0. Accept
+                    // decimal only instead of interpreting octal as decimal.
+                    if !raw.bytes().all(|b| b.is_ascii_digit())
+                        || (raw.len() > 1 && raw.starts_with('0'))
+                    {
+                        return None;
+                    }
+                    value = Some(raw.parse::<u64>().ok()?);
+                    if fields.next().is_some() {
+                        return None;
+                    }
+                }
+                Some(value.unwrap_or(default))
             };
-            if !matches!((value("MIN"), value("MAX"), value("COUNT")),
-                (Some(min), Some(max), Some(count)) if min > 0 && count >= 65536 && max >= min && max-min >= count)
+            // Ubuntu22's shadow 4.8 useradd(8) documents these defaults even
+            // though its stock login.defs omits the keys. Explicit invalid or
+            // duplicate settings must never be mistaken for an omitted key.
+            // identity::verify still checks the actual allocated ranges.
+            if !matches!((value("MIN", 100_000), value("MAX", 600_100_000), value("COUNT", 65_536)),
+                (Some(min), Some(max), Some(count)) if min > 0 && count >= 65536 && max <= u64::from(u32::MAX) && max >= min && max-min >= count)
             {
                 return Err("claude_runtime_subid_allocator_unconfigured".into());
             }

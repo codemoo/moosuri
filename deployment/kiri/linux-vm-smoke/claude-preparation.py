@@ -42,6 +42,13 @@ def put(name, value):
     p.chmod(0o600)
     return p
 
+def binary_sha256():
+    digest = hashlib.sha256()
+    with open(binary, 'rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
 def check(name, action):
     if args.product_boundaries and args.retry and any(c['journey'] == name and c['status'] == 'passed' for c in report['checks']):
         print(json.dumps({'journey': name, 'status': 'previous_pass_retained'}), flush=True)
@@ -49,7 +56,7 @@ def check(name, action):
     started = time.monotonic()
     try:
         action()
-        report['checks'].append({'journey': name, 'status': 'passed', 'candidate_sha256': hashlib.file_digest(open(binary,'rb'),'sha256').hexdigest(), 'seconds': round(time.monotonic()-started, 2)})
+        report['checks'].append({'journey': name, 'status': 'passed', 'candidate_sha256': binary_sha256(), 'seconds': round(time.monotonic()-started, 2)})
     except Exception as error:
         report['checks'].append({'journey': name, 'status': 'failed', 'error_type': type(error).__name__})
         put('result.json', report)

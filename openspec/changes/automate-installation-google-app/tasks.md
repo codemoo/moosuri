@@ -1549,3 +1549,14 @@ cross-run proof and report recovery gaps; the harness was corrected without
 claiming stronger historical evidence. [Results and exact limits](../../../docs/reviews/2026-11-27-google-app-sharing.md).
 Synthetic app only, no provider or production change. Final-source and real
 Google/Claude/two-member acceptance remain open.
+
+### Ubuntu22 Claude preparation compatibility — 2026-11-27
+
+Actual stock Ubuntu22 preparation exposed omitted native subid defaults being
+rejected. The fix accepts documented defaults and trusted empty databases while
+refusing malformed/ambiguous settings before allocation. Fifteen focused Linux
+tests and native build passed; independent official Claude7/6-turn review closed
+the material findings. Six supporting journeys passed through12 native checks,
+including two owners and an actual reboot. Four earlier product/prerequisite/
+harness failures remain recorded. [Scope and evidence](../../../docs/reviews/2026-11-27-claude-ubuntu22.md).
+No real authentication, inference, OS upgrade or production change occurred.

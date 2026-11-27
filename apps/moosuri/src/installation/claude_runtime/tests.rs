@@ -759,3 +759,59 @@ fn older_useradd_without_native_subid_defaults_refuses_before_allocation() {
     assert!(e.host.st.borrow().users.is_empty());
     assert!(!calls(&e).iter().any(|line| line.starts_with("curl ")));
 }
+
+#[test]
+fn older_useradd_accepts_omitted_shadow_defaults_without_editing_host_files() {
+    for contents in [
+        "# stock Ubuntu22 omits SUB_UID/GID keys\n",
+        "SUB_UID_MIN 200000\n",
+    ] {
+        let e = env();
+        {
+            let mut st = e.host.st.borrow_mut();
+            st.subids_supported = false;
+            st.legacy_useradd = true;
+        }
+        let path = e.host.root.join("etc/login.defs");
+        put(&path, contents.as_bytes(), 0o644);
+        let prepared = go(&e, &request(891, 892, 1)).unwrap();
+        assert_eq!(prepared.service.uid, 10000);
+        assert_eq!(fs::read_to_string(path).unwrap(), contents);
+    }
+}
+
+#[test]
+fn older_useradd_invalid_explicit_settings_or_missing_database_never_allocate() {
+    for setting in [
+        "SUB_UID_MIN invalid\n",
+        "SUB_UID_MIN\n",
+        "SUB_UID_MIN 100000\nSUB_UID_MIN 200000\n",
+        "SUB_GID_MAX 50000\n",
+        "SUB_UID_MAX 4294967296\n",
+        "SUB_GID_COUNT 65536 trailing\n",
+        "SUB_UID_MIN 0100000\n",
+        "SUB_UID_MIN 0x186a0\n",
+        "missing_subuid",
+        "missing_subgid",
+    ] {
+        let e = env();
+        {
+            let mut st = e.host.st.borrow_mut();
+            st.subids_supported = false;
+            st.legacy_useradd = true;
+        }
+        if let Some(name) = setting.strip_prefix("missing_") {
+            fs::remove_file(e.root.join("etc").join(name)).unwrap();
+        } else {
+            put(&e.root.join("etc/login.defs"), setting.as_bytes(), 0o644);
+        }
+        assert_eq!(
+            go(&e, &request(893, 894, 1)).unwrap_err(),
+            "claude_runtime_subid_allocator_unconfigured",
+            "{setting}",
+        );
+        assert!(e.host.st.borrow().users.is_empty());
+        assert!(!e.root.join("var/lib/moosuri-claude-control").exists());
+        assert!(!calls(&e).iter().any(|line| line.starts_with("curl ")));
+    }
+}

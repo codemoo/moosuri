@@ -87,6 +87,11 @@ member; the user must not have to create Linux users or private JSON by hand.
 The [ten native preparation checkpoints](../../../docs/reviews/2026-11-27-claude-runtime-preparation.md)
 expand M05-A/M06 without adding completed primary journeys.
 
+[Ubuntu22 preparation compatibility](../../../docs/reviews/2026-11-27-claude-ubuntu22.md)
+tracks J22-01–J22-06: native allocator defaults, private rootless setup, refusal,
+capacity/isolation and reboot. This is credential-free upgrade evidence; it does
+not close real Claude authentication/inference or the final-source installer gate.
+
 ## Vault account selection — 6 journeys
 
 | ID | Starting condition and action | Observable acceptance | Current result |

@@ -335,6 +335,11 @@ itself authenticate an account or authorize a model binding.
 - **WHEN** an authorized root parent prepares a new owner and repeats the same request after interruption
 - **THEN** the existing exact service identity and subordinate ranges are retained, unknown users or changed owner fields are refused, and the response remains preparation-only
 
+#### Scenario: Older native user allocator uses its documented defaults
+- **WHEN** a supported older useradd lacks the system-subid option and its trusted allocator files omit the SUB_UID/GID settings
+- **THEN** preparation recognizes the native defaults, leaves allocation and locking to useradd, and verifies actual ranges before worker use
+- **AND** existing empty subordinate-ID databases are accepted while missing or untrusted files and malformed, ambiguous or inadequate explicit settings refuse before allocation
+
 #### Scenario: Authentication files exhaust capacity
 - **WHEN** the dedicated authentication filesystem reaches its byte or inode limit
 - **THEN** writes fail within the fixed filesystem, other member data is untouched, and removing only the owner's failed data permits a verified retry

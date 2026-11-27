@@ -351,3 +351,31 @@ authenticated recovery.
 #### Scenario: A new request never reached the host
 - **WHEN** cleanup encounters only an earlier request's root record
 - **THEN** it leaves that record untouched and releases only the unseen request, so a failed start cannot permanently block retry
+
+### Requirement: An owner explicitly disconnects a managed Claude subscription
+The administrator UI SHALL offer explicit disconnect of its owned subscription.
+The system SHALL reserve the operation, verify full ownership, record exact
+intent and durably unpublish before retirement. Completion SHALL require exact
+root cleanup, public catalog withdrawal and a durable terminal receipt. Polling
+SHALL remain read-only; old public catalog revisions SHALL NOT be republished.
+
+#### Scenario: Disconnect loses its response and is replayed
+- **WHEN** the owner resubmits the same disconnect operation and target
+- **THEN** the same intent is resumed without starting another cleanup, and changed targets or foreign owners are refused
+- **AND** the fresh operation ID is distinct from the old connection revision, with no new setup until cleanup and terminal persistence finish
+
+#### Scenario: Disconnect is interrupted before root cleanup
+- **WHEN** the gateway restarts after intent or durable unpublish
+- **THEN** a current authorized session of the exact owner can resume the original target, and no new setup starts while cleanup remains unconfirmed
+
+#### Scenario: The configuration cannot be trusted during recovery
+- **WHEN** the config is unreadable or differs from the exact intended target
+- **THEN** the operation remains recoverable without removing that target's credentials or claiming completion
+
+#### Scenario: The owner reconnects after completed disconnect
+- **WHEN** root cleanup and terminal persistence have completed
+- **THEN** the UI returns to connection choices and a fresh subscription login reuses only the same owner's prepared runtime with a new login environment
+
+#### Scenario: A deployed version-two connection receipt exists
+- **WHEN** the updated gateway reads a valid version-two connect receipt
+- **THEN** it preserves that connection's ownership and recovery semantics, without interpreting it as a disconnect or accepting legacy unbound version-one authority

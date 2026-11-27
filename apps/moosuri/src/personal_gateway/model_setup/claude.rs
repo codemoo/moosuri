@@ -28,12 +28,13 @@ use tokio::{
     sync::mpsc,
     time::{MissedTickBehavior, interval, sleep, timeout},
 };
+mod lifecycle;
 mod protocol;
 mod receipt;
 #[cfg(test)]
 mod tests;
 use protocol::{Outcome, Sequence, Step};
-use receipt::{Receipt, Relation, Settled};
+use receipt::{Mode, Receipt, Relation, Settled};
 
 const UNAVAILABLE: StatusCode = StatusCode::SERVICE_UNAVAILABLE;
 const MAX_JOBS: usize = 4;
@@ -59,12 +60,16 @@ enum Stage {
     Failed,
     Interrupted,
     CleanupPending,
+    /// Explicit administrator disconnect in progress (never cancellable).
+    Disconnecting,
+    /// Root cleanup acknowledged and this terminal receipt durable.
+    Disconnected,
 }
 impl Stage {
     fn terminal(self) -> bool {
         matches!(
             self,
-            Self::Ready | Self::Cancelled | Self::Failed | Self::Interrupted
+            Self::Ready | Self::Cancelled | Self::Failed | Self::Interrupted | Self::Disconnected
         )
     }
 }
@@ -80,6 +85,9 @@ enum Op {
     Status,
     Code,
     Cancel,
+    /// `request_id` is the fresh operation id; `replace_revision` the exact
+    /// current connection revision to disconnect. Nothing else is accepted.
+    Disconnect,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +123,14 @@ impl Input {
             }
             Op::Code => bare && self.code.is_some(),
             Op::Status | Op::Cancel => bare && self.code.is_none(),
+            Op::Disconnect => {
+                self.email.is_none()
+                    && self.model.is_none()
+                    && self.effort.is_none()
+                    && self.hosting_terms_accepted.is_none()
+                    && self.code.is_none()
+                    && self.replace_revision.is_some()
+            }
         }
     }
 }
@@ -182,6 +198,9 @@ pub(in crate::personal_gateway) struct Job {
     digest: String,
     config_sha256: Option<String>,
     replace: Option<Uuid>,
+    /// `Disconnect`: `target` is the connection revision being removed.
+    mode: Mode,
+    target: Option<Uuid>,
     /// Connection revision observed at start; every checkpoint compares it.
     base: Option<Uuid>,
     model: String,
@@ -228,6 +247,8 @@ impl Job {
             digest,
             config_sha256: None,
             replace,
+            mode: Mode::Connect,
+            target: None,
             base,
             model,
             effort,
@@ -264,6 +285,13 @@ impl Job {
         job.stage = Stage::CleanupPending;
         job.after = Stage::Cancelled;
         job.retiring = true;
+        // A disconnect keeps its own mode and the OLD connection revision it
+        // targets; the operation id is never reused as that target.
+        job.mode = r.mode;
+        job.target = r.target_revision;
+        if r.mode == Mode::Disconnect {
+            job.after = Stage::Disconnected;
+        }
         job
     }
     fn same_admin(&self, a: &SessionAllocation) -> bool {
@@ -288,6 +316,9 @@ impl Job {
         }
         if self.stage == Stage::Ready {
             v["connection_revision"] = json!(self.id);
+        }
+        if self.mode == Mode::Disconnect {
+            v["kind"] = json!("disconnect");
         }
         v
     }
@@ -315,7 +346,7 @@ impl Job {
             None => Default::default(),
         };
         Receipt {
-            version: receipt::VERSION,
+            version: self.mode.version(),
             request_id: self.id,
             account_id,
             tenant_id,
@@ -328,6 +359,8 @@ impl Job {
             effort: self.effort.clone(),
             state: self.stage,
             updated: now(),
+            mode: self.mode,
+            target_revision: self.target,
         }
     }
 }
@@ -434,7 +467,7 @@ async fn persist(g: &Gateway, id: Uuid) -> bool {
     receipts(g, move |d| {
         // Snapshot while holding the receipt lock. A terminal disk receipt may
         // precede finish's in-memory update; it must never regress in that gap.
-        let Some(r) = with_job(&current, id, |j| j.snapshot()) else {
+        let Some(mut r) = with_job(&current, id, |j| j.snapshot()) else {
             return Err(io::ErrorKind::NotFound.into());
         };
         if let Some(old) = receipt::read_receipt(d)? {
@@ -443,6 +476,19 @@ async fn persist(g: &Gateway, id: Uuid) -> bool {
             }
             if old.state.terminal() {
                 return Ok(());
+            }
+            // Registry-locked disconnect intent may reach disk before the
+            // drive task mirrors it in memory. Preserve that exact digest.
+            if old.mode == Mode::Disconnect {
+                if r.mode != old.mode || r.target_revision != old.target_revision {
+                    return Err(io::ErrorKind::InvalidData.into());
+                }
+                if let Some(sha) = old.config_sha256 {
+                    if r.config_sha256.as_ref().is_some_and(|next| next != &sha) {
+                        return Err(io::ErrorKind::InvalidData.into());
+                    }
+                    r.config_sha256 = Some(sha);
+                }
             }
         }
         if r.state.terminal() {
@@ -1017,6 +1063,7 @@ pub(super) async fn handle(
             Op::Status => status(&g, &a, &session, input.request_id).await,
             Op::Code => code(&g, &a, &session, input).await,
             Op::Cancel => cancel(&g, &a, &session, input.request_id).await,
+            Op::Disconnect => lifecycle::disconnect(&g, &a, &session, input).await,
         }
     }
     .await;
@@ -1042,12 +1089,32 @@ async fn list(g: &Gateway, a: &SessionAllocation, session: &str) -> Result<Value
         receipt,
         relation,
     } = stored(g).await?;
-    let current = current.map_err(|_| UNAVAILABLE)?;
     let operation = live.or_else(|| {
         receipt
             .filter(|r| r.owner_is(&a.allocation))
             .map(|r| r.view(relation))
     });
+    let recoverable = operation.as_ref().is_some_and(|v| {
+        matches!(
+            v["state"].as_str(),
+            Some(
+                "preparing"
+                    | "awaiting_code"
+                    | "verifying"
+                    | "activating"
+                    | "interrupted"
+                    | "cleanup_pending"
+                    | "disconnecting"
+            )
+        )
+    });
+    // A damaged config must not hide the owner's pending recovery operation.
+    // This is a read-only view; every mutation still rechecks the exact config.
+    let current = match current {
+        Ok(current) => current,
+        Err(_) if recoverable => None,
+        Err(_) => return Err(UNAVAILABLE),
+    };
     Ok(json!({"supported":true,"saved":current.is_some(),
         "connection_revision":current,"operation":operation}))
 }
@@ -1224,7 +1291,7 @@ async fn cancel(
 ) -> Result<Value, StatusCode> {
     enum Next {
         Done(Value),
-        Retry(Option<host::Prepared>, Value),
+        Retry(Option<host::Prepared>, Value, Mode),
         Orphan,
     }
     let next = {
@@ -1241,8 +1308,12 @@ async fn cancel(
                 } else {
                     j.retiring = true;
                     let view = wrap(j.view(true));
-                    Next::Retry(j.prepared.take(), view)
+                    Next::Retry(j.prepared.take(), view, j.mode)
                 }
+            }
+            // A disconnect is never cancellable: only its resume (above) exists.
+            Some(j) if j.mode == Mode::Disconnect => {
+                Next::Done(wrap(j.view(j.owned_by(a, session))))
             }
             Some(j) if !j.owned_by(a, session) => return Err(StatusCode::NOT_FOUND),
             Some(j) => {
@@ -1256,8 +1327,12 @@ async fn cancel(
     };
     match next {
         Next::Done(v) => Ok(v),
-        Next::Retry(prepared, view) => {
+        Next::Retry(prepared, view, Mode::Connect) => {
             tokio::spawn(cleanup(g.clone(), id, prepared));
+            Ok(view)
+        }
+        Next::Retry(_, view, Mode::Disconnect) => {
+            tokio::spawn(lifecycle::drive(g.clone(), id));
             Ok(view)
         }
         Next::Orphan => orphan(g, a, session, id).await,
@@ -1280,7 +1355,10 @@ async fn orphan(
     if !r.unresolved(seen.relation) {
         return Ok(wrap(r.view(seen.relation)));
     }
-    if !seen.relation.may_retire() && seen.relation != Relation::Exact {
+    // A disconnect receipt is judged by `lifecycle::drive` itself (target
+    // config rechecked before every transition), not by the connect relation.
+    let disconnect = r.mode == Mode::Disconnect;
+    if !disconnect && !seen.relation.may_retire() && seen.relation != Relation::Exact {
         // Unreadable or mismatching config: nothing destructive is safe.
         return Ok(wrap(r.view_as(Stage::CleanupPending)));
     }
@@ -1301,6 +1379,10 @@ async fn orphan(
         lock(g)?.retain(|j| j.id != id);
         return Err(UNAVAILABLE);
     }
-    tokio::spawn(cleanup(g.clone(), id, None));
+    if disconnect {
+        tokio::spawn(lifecycle::drive(g.clone(), id));
+    } else {
+        tokio::spawn(cleanup(g.clone(), id, None));
+    }
     Ok(wrap(view))
 }

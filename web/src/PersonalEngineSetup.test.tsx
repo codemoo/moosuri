@@ -95,6 +95,72 @@ it("reports a stale replacement without saving or re-submitting", async () => {
   expect(posts).toBe(1);
   expect(onSaved).not.toHaveBeenCalled();
 });
+it("offers an explicit disconnect for a connected subscription, then returns to fresh choices without replace", async () => {
+  let removed = false;
+  const subscriptionPosts: Record<string, unknown>[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (String(url).endsWith("/personal/admin/engine/subscription")) {
+      if (init.method === "GET") return Response.json({ supported: true, operation: null });
+      const body = JSON.parse(String(init.body)); subscriptionPosts.push(body);
+      const state = body.op === "disconnect" ? (removed = true, "disconnected") : "preparing";
+      return Response.json({ supported: true, operation: { request_id: body.request_id, state, kind: body.op === "disconnect" ? "disconnect" : undefined, model: "claude-sonnet-5-5", effort: "medium" } });
+    }
+    return Response.json(removed ? empty : { supported: true, saved: true, connection_revision: current });
+  }));
+  const onSaved = vi.fn();
+  render(<PersonalEngineSetup account="synthetic-admin" onSaved={onSaved} expired={vi.fn()} unavailable={vi.fn()} subscriptionRevision={current} />);
+  const user = userEvent.setup();
+  // Connected: one clear disconnect, no key form and no implicit replacement.
+  await user.click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  await waitFor(() => expect(subscriptionPosts).toHaveLength(1));
+  expect(subscriptionPosts[0]).toMatchObject({ op: "disconnect", replace_revision: current });
+  expect(subscriptionPosts[0].request_id).not.toBe(current);
+  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  // Back to the choices: API by default, own subscription is a fresh start (no replace).
+  expect(await screen.findByLabelText("API 키 사용")).toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent("연결이 해제되었습니다");
+  expect(screen.queryByRole("button", { name: "구독 연결 해제" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "키·모델 교체" })).not.toBeInTheDocument();
+  await user.click(screen.getByLabelText("내 Claude 구독 사용"));
+  await user.type(await screen.findByLabelText("Claude 계정 이메일"), "owner@example.test");
+  await user.click(screen.getByLabelText(/호스팅 조건을 확인했고/));
+  await user.click(screen.getByRole("button", { name: "구독 로그인 시작" }));
+  await waitFor(() => expect(subscriptionPosts.some(p => p.op === "start")).toBe(true));
+  expect(subscriptionPosts.find(p => p.op === "start")).not.toHaveProperty("replace_revision");
+});
+it("shows no disconnect when the connected subscription revision cannot be confirmed", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ supported: true, saved: true, connection_revision: current })));
+  render(<PersonalEngineSetup account="synthetic-admin" onSaved={vi.fn()} expired={vi.fn()} unavailable={vi.fn()} subscriptionRevision="22222222-2222-4222-8222-222222222222" />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("현재 연결 상태를 확인하지 못했습니다");
+  expect(screen.queryByRole("button", { name: "구독 연결 해제" })).not.toBeInTheDocument();
+});
+it("returns to API and subscription choices after a reloaded disconnect finishes", async () => {
+  let removed = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (String(url).endsWith("/personal/admin/engine/subscription")) {
+      if (init.method === "POST") removed = true;
+      return Response.json({ operation: { request_id: current, kind: "disconnect", state: removed ? "disconnected" : "cleanup_pending" } });
+    }
+    return Response.json({ ...empty, subscription_operation: !removed });
+  }));
+  const onSaved = vi.fn();
+  render(<PersonalEngineSetup account="synthetic-admin" onSaved={onSaved} expired={vi.fn()} unavailable={vi.fn()} />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "정리 다시 시도" }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  expect(await screen.findByLabelText("API 키 사용")).toBeChecked();
+  expect(screen.getByLabelText("Anthropic API 키")).toBeVisible();
+});
+it("keeps recovery reachable when corrupt config conflicts with a stale engine revision", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+    String(url).endsWith("/personal/admin/engine/subscription")
+      ? { operation: { request_id: current, kind: "disconnect", state: "cleanup_pending" } }
+      : { supported: true, saved: true, connection_revision: null, subscription_operation: true }
+  )));
+  render(<PersonalEngineSetup account="synthetic-admin" subscriptionRevision={current} onSaved={vi.fn()} expired={vi.fn()} unavailable={vi.fn()} />);
+  expect(await screen.findByRole("button", { name: "정리 다시 시도" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "구독 로그인 시작" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Anthropic API 키")).not.toBeInTheDocument();
+});
 it("stops immediately when the administrator session loses authority", async () => {
   const unavailable = vi.fn(); let calls = 0;
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => { calls++; return init.method === "POST" ? new Response(null, { status: 403 }) : Response.json(empty); }));

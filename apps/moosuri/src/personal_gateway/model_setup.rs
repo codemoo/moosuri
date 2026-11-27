@@ -183,10 +183,15 @@ async fn endpoint(
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         if method == Method::GET && body.is_empty() {
             return local(&g, &headers, |d| {
-                Ok((
-                    read(d, CONFIG_FILE)?.map(|c| revision_of(&c)),
-                    claude::unfinished(d),
-                ))
+                let operation = claude::unfinished(d);
+                let saved = match read(d, CONFIG_FILE) {
+                    Ok(config) => config.map(|c| revision_of(&c)),
+                    // Preserve unknown-config status while allowing the owner
+                    // to open the separately authorized recovery operation.
+                    Err(_) if operation => Some(None),
+                    Err(e) => return Err(e),
+                };
+                Ok((saved, operation))
             })
             .await
             .map(|(saved, operation)| listed(saved, operation));

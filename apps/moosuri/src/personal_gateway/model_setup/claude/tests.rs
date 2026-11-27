@@ -41,6 +41,8 @@ fn receipt_for(a: &Allocation, id: Uuid, state: Stage) -> Receipt {
         effort: Some("medium".into()),
         state,
         updated: 1,
+        mode: Mode::Connect,
+        target_revision: None,
     }
 }
 fn config_for(a: &Allocation, id: Uuid) -> Vec<u8> {
@@ -946,6 +948,538 @@ async fn late_code_persist_cannot_regress_terminal_receipt_before_memory_update(
         receipt::read_receipt(&d).unwrap().unwrap().state,
         Stage::Ready
     );
+}
+
+// ---- explicit administrator disconnect -------------------------------------
+
+fn disconnect_receipt(a: &Allocation, id: Uuid, target: Uuid, state: Stage) -> Receipt {
+    let mut r = receipt_for(a, id, state);
+    r.version = Mode::Disconnect.version();
+    r.digest = lifecycle::digest_of(a, target);
+    r.config_sha256 = None;
+    r.mode = Mode::Disconnect;
+    r.target_revision = Some(target);
+    r
+}
+fn disconnect_input(id: Uuid, target: Uuid) -> Input {
+    Input {
+        op: Op::Disconnect,
+        request_id: id,
+        email: None,
+        model: None,
+        effort: None,
+        hosting_terms_accepted: None,
+        replace_revision: Some(target),
+        code: None,
+    }
+}
+
+#[tokio::test]
+async fn delayed_persist_preserves_the_durable_disconnect_intent() {
+    let (_keep, g, _dir, d) = gateway();
+    let a = alloc(1);
+    let target = Uuid::new_v4();
+    let j = Job::disconnect(
+        Uuid::new_v4(),
+        &a,
+        "session",
+        lifecycle::digest_of(&a.allocation, target),
+        target,
+        ("claude-sonnet-5-5".into(), Some("medium".into())),
+    );
+    let id = j.id;
+    let mut disk = j.snapshot();
+    disk.config_sha256 = Some(receipt::sha(&config_for(&a.allocation, target)));
+    receipt::write_receipt(&d, &disk).unwrap();
+    // Root has the durable intent, but the drive has not yet mirrored it in RAM.
+    g.claude_jobs.lock().unwrap().push(j);
+    assert!(persist(&g, id).await);
+    assert_eq!(
+        receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
+        disk.config_sha256
+    );
+    g.claude_jobs.lock().unwrap()[0].config_sha256 = Some("changed".into());
+    assert!(!persist(&g, id).await);
+    assert_eq!(
+        receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
+        disk.config_sha256
+    );
+}
+
+#[tokio::test]
+async fn broken_config_keeps_only_the_owners_pending_recovery_visible() {
+    let (_keep, g, dir, d) = gateway();
+    let a = alloc(1);
+    let r = disconnect_receipt(
+        &a.allocation,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Stage::Disconnecting,
+    );
+    receipt::write_receipt(&d, &r).unwrap();
+    receipt::commit(&d, b"broken config", None).unwrap();
+    for unreadable in [false, true] {
+        if unreadable {
+            fs::set_permissions(dir.join(CONFIG_FILE), fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let view = list(&g, &a, "new session").await.unwrap();
+        assert_eq!(view["operation"]["request_id"], r.request_id.to_string());
+        assert_eq!(view["operation"]["state"], "cleanup_pending");
+        assert_eq!(view["saved"], false);
+        assert_eq!(
+            list(&g, &alloc(1), "stranger").await.unwrap_err(),
+            UNAVAILABLE
+        );
+        assert!(ensure_settled(&d).is_err());
+    }
+    assert_eq!(
+        receipt::read_receipt(&d).unwrap().unwrap().state,
+        Stage::Disconnecting
+    );
+}
+
+#[test]
+fn disconnect_persists_intent_then_unpublishes_durably_before_the_root_begins_retirement() {
+    use lifecycle::Unpub;
+    let (_t, p, d) = private_dir();
+    let a = alloc(1).allocation;
+    let owner = owner_of(&a).unwrap();
+    let (target, op) = (Uuid::new_v4(), Uuid::new_v4());
+    let config = config_for(&a, target);
+    receipt::commit(&d, &config, None).unwrap();
+    let reserved = disconnect_receipt(&a, op, target, Stage::Disconnecting);
+    receipt::begin(&d, &reserved).unwrap();
+    let at_root = std::cell::RefCell::new(None);
+    let report = lifecycle::unpublish(&d, &owner, &reserved, || {
+        // What the root sees: config already gone AND the intent already durable.
+        *at_root.borrow_mut() = Some((
+            p.join(CONFIG_FILE).exists(),
+            receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
+        ));
+        Ok(())
+    });
+    assert_eq!(report.result.unwrap(), Unpub::Begun);
+    let (still_published, intent) = at_root.into_inner().unwrap();
+    assert!(!still_published);
+    assert_eq!(intent.as_deref(), Some(receipt::sha(&config).as_str()));
+    assert_eq!(report.intent, intent);
+    // Unpublished but not yet acknowledged: the slot and API replacement stay blocked.
+    assert!(unfinished(&d));
+    let mut done = receipt::read_receipt(&d).unwrap().unwrap();
+    assert_eq!(done.target_revision, Some(target));
+    assert_ne!(
+        done.request_id, target,
+        "operation id is not the connection"
+    );
+    done.state = Stage::Disconnected;
+    receipt::write_receipt(&d, &done).unwrap();
+    assert!(!unfinished(&d));
+    // The owner may now start a fresh own-subscription setup (receipt gate only).
+    receipt::begin(&d, &receipt_for(&a, Uuid::new_v4(), Stage::Preparing)).unwrap();
+}
+
+#[test]
+fn a_failed_root_begin_or_lost_reply_resumes_from_the_receipt_without_republishing() {
+    use lifecycle::Unpub;
+    let (_t, p, d) = private_dir();
+    let a = alloc(1).allocation;
+    let owner = owner_of(&a).unwrap();
+    let (target, op) = (Uuid::new_v4(), Uuid::new_v4());
+    receipt::commit(&d, &config_for(&a, target), None).unwrap();
+    let reserved = disconnect_receipt(&a, op, target, Stage::Disconnecting);
+    receipt::begin(&d, &reserved).unwrap();
+    // Root busy: the config is already unpublished, the intent durable, nothing ends.
+    let first = lifecycle::unpublish(&d, &owner, &reserved, || Err("busy".into()));
+    assert!(first.result.is_err() && first.intent.is_some());
+    assert!(!p.join(CONFIG_FILE).exists());
+    // Process restart: a new session resumes from the receipt as stored.
+    let stored = receipt::read_receipt(&d).unwrap().unwrap();
+    assert_eq!(stored.config_sha256, first.intent);
+    let calls = std::cell::Cell::new(0);
+    for _ in 0..2 {
+        // The second pass is a terminal-receipt write that failed after the root ack.
+        let again = lifecycle::unpublish(&d, &owner, &stored, || {
+            calls.set(calls.get() + 1);
+            Ok(())
+        });
+        assert_eq!(again.result.unwrap(), Unpub::Begun);
+        assert!(again.intent.is_none(), "the intent is never rewritten");
+    }
+    assert_eq!(calls.get(), 2);
+    assert!(unfinished(&d));
+    // Another owner's pin can never drive this receipt.
+    let stranger = owner_of(&alloc(1).allocation).unwrap();
+    let refused = lifecycle::unpublish(&d, &stranger, &stored, || panic!("never begins"));
+    assert!(refused.result.is_err());
+}
+
+#[test]
+fn disconnect_never_touches_a_config_that_is_not_the_exact_owned_target() {
+    use lifecycle::Unpub;
+    let a = alloc(1).allocation;
+    let owner = owner_of(&a).unwrap();
+    let (target, op) = (Uuid::new_v4(), Uuid::new_v4());
+    let exact = config_for(&a, target);
+    let edit = |f: &dyn Fn(&mut Value)| {
+        let mut v: Value = serde_json::from_slice(&exact).unwrap();
+        f(&mut v);
+        serde_json::to_vec(&v).unwrap()
+    };
+    let api_key = edit(&|v| v["subscription"] = json!(null));
+    let two = edit(&|v| {
+        let first = v["bindings"][0].clone();
+        v["bindings"].as_array_mut().unwrap().push(first);
+    });
+    let changed = edit(&|v| v["model"] = json!("claude-opus-4-1"));
+    let digest_of_exact = Some(receipt::sha(&exact));
+    let cases: Vec<(Vec<u8>, Option<String>)> = vec![
+        (config_for(&alloc(1).allocation, target), None), // another owner's subscription
+        (api_key, None),
+        (two, None),
+        (b"not json".to_vec(), None),
+        (changed, digest_of_exact), // edited after the intent was recorded
+    ];
+    for (bytes, intent) in cases {
+        let (_t, p, d) = private_dir();
+        receipt::commit(&d, &bytes, None).unwrap();
+        let mut r = disconnect_receipt(&a, op, target, Stage::Disconnecting);
+        r.config_sha256 = intent;
+        receipt::begin(&d, &r).unwrap();
+        let report = lifecycle::unpublish(&d, &owner, &r, || panic!("must not begin"));
+        assert_eq!(report.result.unwrap(), Unpub::Hold);
+        assert_eq!(fs::read(p.join(CONFIG_FILE)).unwrap(), bytes);
+        assert_eq!(
+            receipt::read_receipt(&d).unwrap().unwrap().config_sha256,
+            r.config_sha256
+        );
+    }
+    // Unreadable is an error, never absence: nothing is unlinked or retired.
+    let (_t, p, d) = private_dir();
+    receipt::commit(&d, &exact, None).unwrap();
+    fs::set_permissions(p.join(CONFIG_FILE), fs::Permissions::from_mode(0o644)).unwrap();
+    let r = disconnect_receipt(&a, op, target, Stage::Disconnecting);
+    receipt::begin(&d, &r).unwrap();
+    assert!(
+        lifecycle::unpublish(&d, &owner, &r, || panic!("must not begin"))
+            .result
+            .is_err()
+    );
+    assert!(p.join(CONFIG_FILE).exists());
+    assert!(
+        receipt::read_receipt(&d)
+            .unwrap()
+            .unwrap()
+            .config_sha256
+            .is_none()
+    );
+}
+
+#[test]
+fn an_absent_or_superseded_target_confirms_and_begins_without_deleting_anything_else() {
+    use lifecycle::Unpub;
+    let a = alloc(1).allocation;
+    let owner = owner_of(&a).unwrap();
+    let (target, op) = (Uuid::new_v4(), Uuid::new_v4());
+    let mut r = disconnect_receipt(&a, op, target, Stage::CleanupPending);
+    r.config_sha256 = Some("recorded-intent".into());
+    // Definitely absent.
+    let (_t, _p, d) = private_dir();
+    receipt::begin(&d, &r).unwrap();
+    let calls = std::cell::Cell::new(0);
+    let report = lifecycle::unpublish(&d, &owner, &r, || {
+        calls.set(calls.get() + 1);
+        Ok(())
+    });
+    assert_eq!(report.result.unwrap(), Unpub::Begun);
+    assert_eq!(calls.get(), 1);
+    // Superseded by a different revision: the root is asked (it verifies the
+    // exact owner and request itself) but the other config is left untouched.
+    let (_t2, p2, d2) = private_dir();
+    let other = config_for(&a, Uuid::new_v4());
+    receipt::commit(&d2, &other, None).unwrap();
+    receipt::begin(&d2, &r).unwrap();
+    let report = lifecycle::unpublish(&d2, &owner, &r, || {
+        calls.set(calls.get() + 1);
+        Ok(())
+    });
+    assert_eq!(report.result.unwrap(), Unpub::Begun);
+    assert_eq!(fs::read(p2.join(CONFIG_FILE)).unwrap(), other);
+    assert_eq!(calls.get(), 2);
+    // A reservation without the registry-locked exact-config intent may not
+    // infer retirement authority from absence or another revision.
+    r.config_sha256 = None;
+    for dir in [&d, &d2] {
+        let held = lifecycle::unpublish(dir, &owner, &r, || panic!("unproven intent"));
+        assert_eq!(held.result.unwrap(), Unpub::Hold);
+    }
+}
+
+#[test]
+fn disconnect_receipts_are_v3_while_v2_connect_receipts_stay_readable_and_strict() {
+    let (_t, p, d) = private_dir();
+    let a = alloc(1).allocation;
+    let path = p.join("claude-subscription-operation.json");
+    // A public v2 connect receipt carries none of the new keys and still reads.
+    let ready = receipt_for(&a, Uuid::new_v4(), Stage::Ready);
+    let raw: Value = serde_json::to_value(&ready).unwrap();
+    assert!(raw.get("mode").is_none() && raw.get("target_revision").is_none());
+    receipt::write_receipt(&d, &ready).unwrap();
+    let back = receipt::read_receipt(&d).unwrap().unwrap();
+    assert_eq!(
+        (back.version, back.mode, back.target_revision),
+        (2, Mode::Connect, None)
+    );
+    // A disconnect receipt is v3, names its target, and holds no secret or URL.
+    let target = Uuid::new_v4();
+    let mine = disconnect_receipt(&a, Uuid::new_v4(), target, Stage::Disconnecting);
+    receipt::write_receipt(&d, &mine).unwrap();
+    let text = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+    let file: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(file["version"], 3);
+    assert_eq!(file["mode"], "disconnect");
+    assert_eq!(file["target_revision"], target.to_string());
+    assert!(!text.contains("http") && file.get("email").is_none());
+    // Inconsistent combinations are refused on read and on write, never half-trusted.
+    let tamper = |f: &dyn Fn(&mut Value)| {
+        let mut v = file.clone();
+        f(&mut v);
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        receipt::read_receipt(&d).is_err()
+    };
+    assert!(tamper(&|v| v["version"] = json!(2)));
+    assert!(tamper(&|v| v["mode"] = json!("connect")));
+    assert!(tamper(&|v| v["state"] = json!("ready")));
+    assert!(tamper(&|v| v["replace_revision"] = json!(Uuid::new_v4())));
+    assert!(tamper(&|v| v["version"] = json!(4)));
+    let mut wrong = receipt_for(&a, Uuid::new_v4(), Stage::Disconnected);
+    assert!(receipt::write_receipt(&d, &wrong).is_err());
+    wrong = disconnect_receipt(&a, Uuid::new_v4(), target, Stage::Ready);
+    assert!(receipt::write_receipt(&d, &wrong).is_err());
+    // States: a stored disconnect always resumes (never "interrupted"); the terminal one is final.
+    for live in [Stage::Disconnecting, Stage::CleanupPending] {
+        let r = disconnect_receipt(&a, Uuid::new_v4(), target, live);
+        for rel in [
+            Relation::Absent,
+            Relation::Other,
+            Relation::Exact,
+            Relation::Unreadable,
+        ] {
+            assert_eq!(r.effective(rel), Stage::CleanupPending);
+        }
+    }
+    let end =
+        disconnect_receipt(&a, Uuid::new_v4(), target, Stage::Disconnected).view(Relation::Absent);
+    assert_eq!(
+        (end["state"].as_str(), end["kind"].as_str()),
+        (Some("disconnected"), Some("disconnect"))
+    );
+    assert!(end.get("connection_revision").is_none());
+}
+
+#[tokio::test]
+async fn reservation_needs_the_exact_owned_target_and_replays_only_the_same_operation() {
+    let (_keep, g, dir, d) = gateway();
+    let a = alloc(1);
+    let (target, op) = (Uuid::new_v4(), Uuid::new_v4());
+    let go = |a: &SessionAllocation, s: &str, op: Uuid, t: Uuid| {
+        let (g, a, s) = (
+            g.clone(),
+            SessionAllocation {
+                allocation: a.allocation.clone(),
+                epoch: a.epoch,
+            },
+            s.to_owned(),
+        );
+        async move { lifecycle::reserve(&g, &a, &s, disconnect_input(op, t)).await }
+    };
+    assert_eq!(
+        go(&a, "s", op, op).await.unwrap_err(),
+        StatusCode::BAD_REQUEST
+    );
+    // No connection, another owner's subscription, or a stale target: nothing is reserved.
+    assert_eq!(
+        go(&a, "s", op, target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    receipt::commit(&d, &config_for(&alloc(1).allocation, target), None).unwrap();
+    assert_eq!(
+        go(&a, "s", op, target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    fs::remove_file(dir.join(CONFIG_FILE)).unwrap();
+    receipt::commit(&d, &config_for(&a.allocation, target), None).unwrap();
+    assert_eq!(
+        go(&a, "s", op, Uuid::new_v4()).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert!(g.claude_jobs.lock().unwrap().is_empty());
+    assert!(receipt::read_receipt(&d).unwrap().is_none());
+    // The exact owner and target reserve the slot and a durable receipt; no config changes.
+    let before = fs::read(dir.join(CONFIG_FILE)).unwrap();
+    let (view, fresh) = go(&a, "s", op, target).await.unwrap();
+    assert!(fresh);
+    assert_eq!(state_of(&view), "disconnecting");
+    assert_eq!(view["operation"]["kind"], "disconnect");
+    let r = receipt::read_receipt(&d).unwrap().unwrap();
+    assert_eq!(
+        (r.mode, r.request_id, r.target_revision),
+        (Mode::Disconnect, op, Some(target))
+    );
+    assert!(r.config_sha256.is_none() && r.replace_revision.is_none());
+    assert_eq!(fs::read(dir.join(CONFIG_FILE)).unwrap(), before);
+    assert!(unfinished(&d));
+    // Exact replay is idempotent; another session, target, owner or a new id is refused.
+    let (_, again) = go(&a, "s", op, target).await.unwrap();
+    assert!(!again);
+    assert_eq!(
+        go(&a, "other-session", op, target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        go(&a, "s", op, Uuid::new_v4()).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        go(&alloc(1), "s", op, target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        go(&a, "s", Uuid::new_v4(), target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(g.claude_jobs.lock().unwrap().len(), 1);
+    // After a process restart the same owner's replay only reads the receipt
+    // (resume is the explicit cleanup request); a new id still may not overwrite it.
+    g.claude_jobs.lock().unwrap().clear();
+    let (restored, fresh) = go(&a, "new-session", op, target).await.unwrap();
+    assert!(!fresh);
+    assert_eq!(state_of(&restored), "cleanup_pending");
+    assert_eq!(
+        go(&alloc(1), "s", op, target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        go(&a, "s", Uuid::new_v4(), target).await.unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(receipt::read_receipt(&d).unwrap().unwrap().request_id, op);
+}
+
+#[tokio::test]
+async fn a_disconnect_is_never_cancelled_and_only_the_exact_owner_resumes_it() {
+    let (_keep, g, _dir, _d) = gateway();
+    let a = alloc(4);
+    let target = Uuid::new_v4();
+    let make = |id: Uuid| {
+        Job::disconnect(
+            id,
+            &a,
+            "first-session",
+            lifecycle::digest_of(&a.allocation, target),
+            target,
+            ("claude-sonnet-5-5".into(), Some("medium".into())),
+        )
+    };
+    let running = make(Uuid::new_v4());
+    let id = running.id;
+    g.claude_jobs.lock().unwrap().push(running);
+    let relogin = SessionAllocation {
+        allocation: a.allocation.clone(),
+        epoch: 5,
+    };
+    // Neither the initiating nor another session can cancel it; a stranger sees nothing.
+    for (who, session) in [(&a, "first-session"), (&relogin, "second-session")] {
+        let view = cancel(&g, who, session, id).await.unwrap();
+        assert_eq!(state_of(&view), "disconnecting");
+    }
+    assert_eq!(
+        cancel(&g, &alloc(4), "s", id).await.unwrap_err(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(!g.claude_jobs.lock().unwrap()[0].cancel.is_cancelled());
+    // A stuck one (drive stopped) is taken over by the same owner's new session only.
+    {
+        let mut jobs = g.claude_jobs.lock().unwrap();
+        jobs[0].stage = Stage::CleanupPending;
+        jobs[0].retiring = true; // a resume is already running: nothing is spawned here
+    }
+    let view = cancel(&g, &relogin, "second-session", id).await.unwrap();
+    assert_eq!(state_of(&view), "cleanup_pending");
+    assert!(g.claude_jobs.lock().unwrap()[0].owned_by(&relogin, "second-session"));
+    // A restart's orphan job keeps the OLD target and never adopts the operation id as it.
+    let r = disconnect_receipt(&a.allocation, Uuid::new_v4(), target, Stage::Disconnecting);
+    let orphan = Job::orphan(&r, &relogin, "recovering");
+    let back = orphan.snapshot();
+    assert_eq!(
+        (orphan.mode, orphan.after, orphan.stage),
+        (Mode::Disconnect, Stage::Disconnected, Stage::CleanupPending)
+    );
+    assert_eq!(
+        (back.target_revision, back.request_id),
+        (Some(target), r.request_id)
+    );
+    assert_eq!(back.version, 3);
+}
+
+#[tokio::test]
+async fn a_lost_terminal_receipt_keeps_the_disconnect_resumable_and_blocks_new_setup() {
+    let (_keep, g, dir, d) = gateway();
+    let a = alloc(1);
+    let target = Uuid::new_v4();
+    let mut j = Job::disconnect(
+        Uuid::new_v4(),
+        &a,
+        "s",
+        lifecycle::digest_of(&a.allocation, target),
+        target,
+        ("claude-sonnet-5-5".into(), Some("medium".into())),
+    );
+    j.config_sha256 = Some("intent".into());
+    let id = j.id;
+    receipt::write_receipt(&d, &j.snapshot()).unwrap();
+    g.claude_jobs.lock().unwrap().push(j);
+    // The root acknowledged but the terminal receipt cannot be written.
+    fs::create_dir(dir.join("claude-subscription-operation.pending")).unwrap();
+    finish(&g, id, Some(Stage::Disconnected)).await;
+    assert_eq!(
+        g.claude_jobs.lock().unwrap()[0].stage,
+        Stage::CleanupPending
+    );
+    assert!(ensure_settled(&d).is_err());
+    let stored = receipt::read_receipt(&d).unwrap().unwrap();
+    assert_eq!(
+        (stored.state, stored.config_sha256.as_deref()),
+        (Stage::Disconnecting, Some("intent"))
+    );
+    assert_eq!(
+        start(&g, &a, "s", start_input(Uuid::new_v4(), None))
+            .await
+            .unwrap_err(),
+        StatusCode::CONFLICT
+    );
+    // The resumed pass ends it: terminal receipt, then the owner sees the final state.
+    fs::remove_dir(dir.join("claude-subscription-operation.pending")).unwrap();
+    finish(&g, id, Some(Stage::Disconnected)).await;
+    assert_eq!(g.claude_jobs.lock().unwrap()[0].stage, Stage::Disconnected);
+    assert!(ensure_settled(&d).is_ok());
+    let done = status(&g, &a, "s", id).await.unwrap();
+    assert_eq!(state_of(&done), "disconnected");
+    assert!(done["operation"].get("connection_revision").is_none());
+    assert_eq!(list(&g, &a, "s").await.unwrap()["saved"], false);
+}
+
+#[test]
+fn input_shape_for_disconnect_takes_only_the_operation_and_target() {
+    let id = Uuid::new_v4();
+    let parse = |v: Value| serde_json::from_value::<Input>(v).unwrap();
+    assert!(
+        parse(json!({"op":"disconnect","request_id":id,"replace_revision":Uuid::new_v4()}))
+            .well_formed()
+    );
+    assert!(!parse(json!({"op":"disconnect","request_id":id})).well_formed());
+    assert!(!parse(json!({"op":"disconnect","request_id":id,"replace_revision":Uuid::new_v4(),"email":"a@b.co"})).well_formed());
+    assert!(!parse(json!({"op":"disconnect","request_id":id,"replace_revision":Uuid::new_v4(),"code":"abcdefgh"})).well_formed());
 }
 
 #[test]

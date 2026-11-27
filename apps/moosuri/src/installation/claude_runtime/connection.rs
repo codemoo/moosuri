@@ -841,6 +841,39 @@ fn mark_record(store: &Store, rec: &mut Record, request_id: Uuid) -> R<()> {
     }
 }
 
+/// Authorize cleanup of an Active/WorkerReady attempt after explicit disconnect.
+///
+/// AUTHORITY PRECONDITION: the caller must hold the fresh administrator
+/// authority and the installation registry lock, and must already have durably
+/// unpublished the EXACT owned connection/binding for this request with an
+/// explicit disconnect intent. This function only persists `Phase::Cleanup` in
+/// the root record (bounded local IO); it destroys nothing and runs no command.
+/// The caller then runs `retire_request` after releasing the registry lock.
+pub(crate) fn begin_retirement(owner: Owner, request_id: Uuid) -> R<()> {
+    RuntimeRequest::new(request_id, owner).validate()?;
+    super::require_linux_root()?;
+    begin_retirement_in(&Layout::system(), owner, request_id)
+}
+fn begin_retirement_in(layout: &Layout, owner: Owner, request_id: Uuid) -> R<()> {
+    let store = Store::new(layout);
+    store.ensure()?;
+    let _lock = store.lock(&owner)?;
+    let mut rec = store
+        .load(&owner)?
+        .ok_or("claude_connection_record_missing")?;
+    if rec.owner != owner || rec.attempt.request_id != request_id {
+        return Err("claude_connection_request_conflict".into());
+    }
+    match rec.attempt.phase {
+        Phase::Cleanup | Phase::RemovingFiles | Phase::Retired => Ok(()),
+        Phase::Active | Phase::WorkerReady => {
+            rec.attempt.phase = Phase::Cleanup;
+            store.save(&rec)
+        }
+        _ => Err("claude_connection_phase_invalid".into()),
+    }
+}
+
 /// Recovery after gateway restart. The caller must authenticate the current
 /// full owner and verify this request is absent from the published model config.
 /// No credential or email is needed and no new probe/login is started.

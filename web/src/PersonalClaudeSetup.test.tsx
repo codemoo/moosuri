@@ -205,6 +205,68 @@ it("never accepts another request's ready state", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("준비하고 있습니다");
 });
 
+const gone = (id: string, state: string) => op(id, state, { kind: "disconnect" });
+
+it("disconnects with one explicit action, offers no cancel meanwhile and reports only its own completion", async () => {
+  let id = ""; let release = false;
+  const calls = serve(call => {
+    if (call.method === "GET") return Response.json(idle);
+    if (call.body?.op === "disconnect") { id = String(call.body.request_id); return Response.json(gone(id, "disconnecting")); }
+    return Response.json(gone(id, release ? "disconnected" : "disconnecting"));
+  });
+  const onDisconnected = vi.fn();
+  const props = view({ disconnectRevision: current, onDisconnected });
+  const user = userEvent.setup();
+  expect(await screen.findByText(/이 서버에 저장된 내 Claude 로그인이 삭제/)).toBeInTheDocument();
+  expect(screen.queryByLabelText("Claude 계정 이메일")).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  expect(await screen.findByText(/로그인을 삭제하고 있습니다/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "취소" })).not.toBeInTheDocument();
+  expect(onDisconnected).not.toHaveBeenCalled();
+  release = true;
+  await waitFor(() => expect(onDisconnected).toHaveBeenCalledOnce());
+  const sent = calls.filter(c => c.body?.op === "disconnect");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].body).toEqual({ op: "disconnect", request_id: id, replace_revision: current });
+  expect(id).not.toBe(current);
+  expect(props.onSaved).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent("해제되었고");
+});
+
+it("inspects a lost disconnect reply by the same operation and never sends a second one", async () => {
+  let id = "";
+  const calls = serve(call => {
+    if (call.method === "GET") return Response.json(idle);
+    if (call.body?.op === "disconnect") { id = String(call.body.request_id); throw new TypeError("synthetic response lost"); }
+    return Response.json(gone(id, "disconnecting"));
+  });
+  view({ disconnectRevision: current });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  expect(await screen.findByText(/로그인을 삭제하고 있습니다/)).toBeInTheDocument();
+  expect(calls.filter(c => c.body?.op === "disconnect")).toHaveLength(1);
+  expect(calls.find(c => c.body?.op === "status")!.body!.request_id).toBe(id);
+});
+
+it("resumes another session's stuck disconnect through the cleanup request instead of starting a new one", async () => {
+  const other = "77777777-7777-4777-8777-777777777777";
+  let refused = false; let cleaned = false;
+  const calls = serve(call => {
+    if (call.method === "GET") return Response.json(refused ? gone(other, "cleanup_pending") : idle);
+    if (call.body?.op === "disconnect") { refused = true; return new Response(null, { status: 409 }); }
+    if (call.body?.op === "cancel") { cleaned = true; return Response.json(gone(other, "disconnecting")); }
+    return Response.json(gone(other, cleaned ? "disconnected" : "cleanup_pending"));
+  });
+  const onDisconnected = vi.fn();
+  view({ disconnectRevision: current, onDisconnected });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "구독 연결 해제" }));
+  await user.click(await screen.findByRole("button", { name: "정리 다시 시도" }));
+  await waitFor(() => expect(onDisconnected).toHaveBeenCalledOnce());
+  expect(calls.find(c => c.body?.op === "cancel")!.body).toEqual({ op: "cancel", request_id: other });
+  expect(calls.filter(c => c.body?.op === "disconnect")).toHaveLength(1);
+  expect(calls.some(c => c.body?.op === "start")).toBe(false);
+});
+
 it("keeps API as the default choice and replaces a saved connection only by its revision", async () => {
   let id = "";
   const calls = serve(call => {

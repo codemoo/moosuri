@@ -1462,3 +1462,26 @@ stale owner reclamation and member isolation. These are not marked implemented.
 Real provider authentication, same-Kiri authentication rendering, ordinary member
 enrollment, Gmail conversation and final matched deployment remain open.
 No publication or production transition has occurred for this unit.
+
+
+### Explicit owner disconnect/reconnect — 2026-11-27
+
+The preceding installed-connection unit was published as b9596bb0 after final
+U01–U03 and independent closure; production remained dee84754. This unit adds
+explicit disconnect, exact target/operation separation, durable intent and root
+retirement, v2 receipt compatibility, and return to fresh connection choices.
+
+D01–D03 passed on the first lifecycle candidate. D04 reproduced a corrupt config
+hiding the stored operation behind503; the correction was independently reviewed
+and the retained failed fixture passed D04–D06. UI26 and model-setup47 checks
+passed after the borrowed-test-fixture compile correction. Installed inspection
+then found a stale public engine catalog after disconnect; exact catalog
+withdrawal and late-publication fencing passed the focused store journey and
+independent review. Final4aaa3225 passed actual Linux D01–D06 and Chromium
+DU01–DU03, including catalog withdrawal across reload. All prior failures and
+source-specific results are retained in the
+[unit worklog](../../../docs/reviews/2026-11-27-claude-disconnect.md).
+
+LC03 automatic API-swap, LC05 authenticated-worker reboot, LC06 generation-wide
+reclaim and LC07 member enrollment remain open. Preparation and synthetic Active
+fixtures do not close real login, model inference, Google/OAuth or Gmail goals.

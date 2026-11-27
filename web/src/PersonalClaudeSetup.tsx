@@ -2,12 +2,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
 
-export type ClaudeStage = "preparing" | "awaiting_code" | "verifying" | "activating" | "ready" | "cancelled" | "failed" | "interrupted" | "cleanup_pending";
-type Operation = { request_id: string; state: ClaudeStage; authorization_url?: string; connection_revision?: string };
+export type ClaudeStage = "preparing" | "awaiting_code" | "verifying" | "activating" | "ready" | "cancelled" | "failed" | "interrupted" | "cleanup_pending" | "disconnecting" | "disconnected";
+type Operation = { request_id: string; state: ClaudeStage; kind?: string; authorization_url?: string; connection_revision?: string };
 type Reply = { operation?: Operation | null };
 const path = "/personal/admin/engine/subscription";
-const stages: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "ready", "cancelled", "failed", "interrupted", "cleanup_pending"];
-const active: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "cleanup_pending"];
+const stages: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "ready", "cancelled", "failed", "interrupted", "cleanup_pending", "disconnecting", "disconnected"];
+const active: ClaudeStage[] = ["preparing", "awaiting_code", "verifying", "activating", "cleanup_pending", "disconnecting"];
 const label: Record<ClaudeStage, string> = {
   preparing: "로그인을 준비하고 있습니다…",
   awaiting_code: "Claude 로그인 후 표시되는 코드를 입력해 주세요.",
@@ -18,6 +18,8 @@ const label: Record<ClaudeStage, string> = {
   failed: "연결하지 못했습니다. 기존 연결은 그대로입니다. 입력을 확인한 뒤 다시 시도해 주세요.",
   interrupted: "서버가 다시 시작되어 설정이 중단되었습니다. 기존 연결은 그대로입니다. 새로 시작하기 전에 중단된 설정을 먼저 정리해야 합니다.",
   cleanup_pending: "이전 로그인을 정리하고 있습니다. 정리가 끝날 때까지 새로 시작할 수 없습니다. 오래 걸리면 ‘정리 다시 시도’를 눌러 주세요.",
+  disconnecting: "이 서버의 Claude 로그인을 삭제하고 있습니다. 끝날 때까지 새로 연결할 수 없습니다…",
+  disconnected: "구독 연결이 해제되었고 이 서버의 Claude 로그인이 삭제되었습니다. 이제 API 키 또는 새 구독으로 연결할 수 있습니다.",
 };
 const hostingTerms = "https://code.claude.com/docs/en/legal-and-compliance";
 
@@ -37,8 +39,12 @@ function known(value: unknown): value is Operation {
 
 /** Own-subscription Claude setup. The code lives only in a password input and one
  * request; the sign-in URL only in memory while the exact operation awaits it. */
-export function PersonalClaudeSetup({ account, replaceRevision, onSaved, expired, unavailable, onActive, pollMs = 1000 }: {
+export function PersonalClaudeSetup({ account, replaceRevision, disconnectRevision, onSaved, onDisconnected, expired, unavailable, onActive, pollMs = 1000 }: {
   account: string; replaceRevision?: string | null; onSaved: () => void; expired: () => void; unavailable: () => void;
+  /** Set while this installation's own subscription is connected: offers the explicit disconnect. */
+  disconnectRevision?: string;
+  /** Called once when the server reports this flow's disconnect as finished. */
+  onDisconnected?: () => void;
   /** True while an operation is unfinished, so the parent keeps this flow mounted. */
   onActive?: (active: boolean) => void; pollMs?: number;
 }) {
@@ -73,6 +79,7 @@ export function PersonalClaudeSetup({ account, replaceRevision, onSaved, expired
     if (!known(next) || next.request_id !== request.current) { setError("설정 상태를 확인하지 못했습니다. 다시 확인해 주세요."); return; }
     setOp(next);
     if (next.state === "ready" && saved.current !== next.request_id) { saved.current = next.request_id; onSaved(); }
+    if (next.state === "disconnected" && saved.current !== next.request_id) { saved.current = next.request_id; onDisconnected?.(); }
   }
   async function inspect(id: string) {
     try {
@@ -192,6 +199,25 @@ export function PersonalClaudeSetup({ account, replaceRevision, onSaved, expired
       setError(e instanceof ApiFailure && e.status === 409 ? "다른 설정이 진행 중이라 지금은 정리할 수 없습니다. 잠시 뒤 다시 시도해 주세요." : "취소하지 못했습니다. 상태를 확인해 주세요.");
     } finally { pending.current = false; setBusy(false); }
   }
+  /** One deliberate action: a fresh operation id plus the exact connection
+   * revision being removed. A lost reply is inspected by the same id, never repeated. */
+  async function disconnect() {
+    if (pending.current || !disconnectRevision || op) return;
+    pending.current = true; setBusy(true); setError("");
+    const id = request.current;
+    try {
+      const reply = await scope.request<Reply>(path, "POST", { op: "disconnect", request_id: id, replace_revision: disconnectRevision }, undefined, { timeoutMs: 30_000 });
+      adopt(reply.operation);
+    } catch (e) {
+      if (fail(e)) return;
+      if (e instanceof ApiFailure && e.status === 409) {
+        request.current = crypto.randomUUID();
+        if (!(await resume())) setError("다른 설정이 진행 중이거나 연결이 먼저 변경되어 해제하지 못했습니다. 현재 상태를 확인한 뒤 다시 시도해 주세요.");
+      } else if (e instanceof ApiFailure) {
+        setError("연결을 해제하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
+      } else await inspect(id);
+    } finally { pending.current = false; setBusy(false); }
+  }
   function again() {
     request.current = crypto.randomUUID(); saved.current = null; setError(""); setOp(null);
   }
@@ -199,7 +225,14 @@ export function PersonalClaudeSetup({ account, replaceRevision, onSaved, expired
   const link = op?.state === "awaiting_code" ? officialAuthorizationUrl(op.authorization_url) : null;
   return <div className="management-list" data-testid="claude-subscription-setup">
     {error && <p role="alert" className="preview-error">{error}</p>}
-    {!op && <form className="management-list" onSubmit={start}>
+    {!op && disconnectRevision && <div className="management-list">
+      <p role="status">Claude 구독이 연결되어 있습니다.</p>
+      <p className="management-row management-note">연결을 해제하면 이 서버에 저장된 내 Claude 로그인이 삭제됩니다. 정리가 끝나면 API 키 또는 새 구독으로 다시 연결할 수 있습니다.</p>
+      <div className="management-row compatible-actions">
+        <button className="member-page-action" type="button" disabled={busy} onClick={() => void disconnect()}>{busy ? "해제하는 중…" : "구독 연결 해제"}</button>
+      </div>
+    </div>}
+    {!op && !disconnectRevision && <form className="management-list" onSubmit={start}>
       <p className="management-row management-note">{replacing
         ? "내 Claude 구독으로 현재 연결을 교체합니다. 로그인이 끝나기 전에는 기존 연결이 유지됩니다."
         : "이 설치의 Claude 연결로 내 Claude 구독을 사용합니다. Claude에 로그인한 뒤 표시되는 코드를 여기에 입력합니다."}</p>
@@ -224,9 +257,9 @@ export function PersonalClaudeSetup({ account, replaceRevision, onSaved, expired
         <button className="member-page-action primary" type="submit" disabled={busy}>코드 제출</button>
       </form>}
       <div className="management-row compatible-actions">
-        {active.includes(op.state) && op.state !== "cleanup_pending" && (op.state !== "awaiting_code" || !!link) && <button className="member-page-action" type="button" disabled={busy} onClick={() => void cancel()}>취소</button>}
+        {active.includes(op.state) && op.state !== "cleanup_pending" && op.state !== "disconnecting" && (op.state !== "awaiting_code" || !!link) && <button className="member-page-action" type="button" disabled={busy} onClick={() => void cancel()}>취소</button>}
         {(op.state === "cleanup_pending" || op.state === "interrupted") && <button className="member-page-action" type="button" disabled={busy} onClick={() => void cancel()}>{op.state === "interrupted" ? "중단된 설정 정리" : "정리 다시 시도"}</button>}
-        {["cancelled", "failed"].includes(op.state) && <button className="member-page-action" type="button" onClick={again}>다시 시도</button>}
+        {["cancelled", "failed", "disconnected"].includes(op.state) && <button className="member-page-action" type="button" onClick={again}>다시 시도</button>}
       </div>
     </>}
   </div>;

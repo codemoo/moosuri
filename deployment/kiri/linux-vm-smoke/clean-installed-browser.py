@@ -60,6 +60,8 @@ def main():
                         help='Admin UI official Claude URL/cancel only; no account authentication or inference')
     parser.add_argument('--claude-structure-only', action='store_true',
                         help='Only U01/U03; do not initiate provider login preparation')
+    parser.add_argument('--claude-lifecycle', action='store_true',
+                        help='Disconnect a staged synthetic Active binding and reopen login; no authentication')
     args = parser.parse_args()
     assert sys.platform == 'linux'
     os.umask(0o077)
@@ -138,6 +140,11 @@ print('matched_running_revision_verified')
             browser = pw.chromium.launch(channel='chromium', headless=True,
                         proxy={'server': f'http://127.0.0.1:{proxy.server_port}'})
             try:
+                if args.claude_lifecycle:
+                    import runpy
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-claude-lifecycle-ui.py')))
+                    module['run'](browser, args, members)
+                    return
                 if args.claude_journeys:
                     import runpy
                     module = runpy.run_path(str(Path(__file__).with_name('installed-claude-ui.py')))

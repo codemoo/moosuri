@@ -53,7 +53,7 @@ member's password; that is partial infrastructure evidence, not web admission.
 | M02 | Invite another member during an existing member's model request | New socket appears; existing request is not cancelled or charged twice | Dynamic socket isolation passed; full install journey open |
 | M03 | Wrong/revoked key, unsupported model or invalid effort | Show the actual unavailable state; preserve an existing connection until the replacement is valid | Installed candidate0b5e8fa Chromium UI rejected one synthetic invalid-key catalog request, cleared input, stayed unconfigured after reload and hid setup from a second member; valid replacement and inference remain open |
 | M04 | Lose API-setup reply, then another administrator changes the connection | Reconcile this request's revision; never attribute another administrator's save to this request | Candidate UI attribution and atomic-save tests passed |
-| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Private child login and credential-free Linux confinement/official-URL cancellation checks passed; public credential-free host preparation/native admission passed; production worker and UI remain open |
+| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Public b9596bb0 administrator UI/preparation/official-URL/reload/cancel/restart checks passed; explicit owner disconnect/reconnect and corrupt-config recovery are in Linux acceptance; real authentication, inference, same-Kiri authentication and member enrollment remain open |
 | M06 | Worker is missing/restarted, member generation changes, or server reboots | No borrowed member login, no fallback model, no new charge before dispatch; truthful recovery | Socket isolation/replay boundaries passed; fresh subscription/reboot journey open |
 
 Shared model credentials use the installation API route. The existing official
@@ -80,6 +80,8 @@ member; the user must not have to create Linux users or private JSON by hand.
 | M05-H | Service profile changes, permissions loosen, administrator is revoked, or member generation changes | Reject stale configuration and recheck authority before binding; restart only the same owned service | Private configuration, all-choice and preflight-lock cancellation process checks passed; installed initiating logout/revocation and process-restart cleanup passed (S05/S07); authenticated worker reboot remains open |
 
 [Installed gateway and browser results](../../../docs/reviews/2026-11-27-claude-product-connection.md) record S01–S07/U01–U03 and the pending lifecycle/provider gates. No primary row is closed by these supporting checks.
+
+[Owner disconnect/reconnect worklog](../../../docs/reviews/2026-11-27-claude-disconnect.md) tracks D01–D06/DU01–DU03, including retained failures, synthetic Active fixtures and current-source acceptance.
 
 [Subscription preparation and login evidence](../../../docs/reviews/2026-11-27-claude-subscription-bridge.md).
 The [ten native preparation checkpoints](../../../docs/reviews/2026-11-27-claude-runtime-preparation.md)

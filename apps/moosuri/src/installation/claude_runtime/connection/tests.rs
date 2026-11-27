@@ -608,6 +608,63 @@ fn restart_publication_requires_exact_record_and_owner_lease() {
 }
 
 #[test]
+fn begin_retirement_authorizes_cleanup_only_for_exact_live_records() {
+    let t = tempfile::tempdir().unwrap();
+    let layout = Layout::under(t.path());
+    fs::create_dir_all(layout.at("/var/lib")).unwrap();
+    let store = Store::new(&layout);
+    store.ensure().unwrap();
+    let o = owner();
+    let id = request().request_id;
+    // Missing record.
+    assert!(begin_retirement_in(&layout, o, id).is_err());
+    assert!(store.load(&o).unwrap().is_none());
+
+    for from in [Phase::Active, Phase::WorkerReady] {
+        let rec = record(from);
+        store.save(&rec).unwrap();
+        // Busy lease preserves state.
+        let lease = store.lock(&o).unwrap();
+        assert!(begin_retirement_in(&layout, o, id).is_err());
+        drop(lease);
+        assert_eq!(store.load(&o).unwrap().unwrap(), rec);
+        // Wrong request and wrong full owner preserve state.
+        assert!(begin_retirement_in(&layout, o, Uuid::new_v4()).is_err());
+        let mut foreign = o;
+        foreign.generation += 1;
+        assert!(begin_retirement_in(&layout, foreign, id).is_err());
+        assert_eq!(store.load(&o).unwrap().unwrap(), rec);
+        // Exact transition changes only the phase.
+        begin_retirement_in(&layout, o, id).unwrap();
+        let mut expected = rec.clone();
+        expected.attempt.phase = Phase::Cleanup;
+        assert_eq!(store.load(&o).unwrap().unwrap(), expected);
+        // Replay is idempotent.
+        begin_retirement_in(&layout, o, id).unwrap();
+        assert_eq!(store.load(&o).unwrap().unwrap(), expected);
+    }
+
+    for phase in [Phase::RemovingFiles, Phase::Retired] {
+        let rec = record(phase);
+        store.save(&rec).unwrap();
+        begin_retirement_in(&layout, o, id).unwrap();
+        assert_eq!(store.load(&o).unwrap().unwrap(), rec);
+    }
+
+    for phase in [
+        Phase::Reserved,
+        Phase::Prepared,
+        Phase::LoginIssued,
+        Phase::Activating,
+    ] {
+        let rec = record(phase);
+        store.save(&rec).unwrap();
+        assert!(begin_retirement_in(&layout, o, id).is_err());
+        assert_eq!(store.load(&o).unwrap().unwrap(), rec);
+    }
+}
+
+#[test]
 fn unseen_or_already_retired_request_cleanup_is_non_destructive() {
     struct Never;
     impl Exec for Never {

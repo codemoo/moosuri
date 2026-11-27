@@ -9,7 +9,33 @@ use crate::engine_login::{Endpoint, Owner, model_catalog};
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 const FILE: &str = "claude-subscription-operation.json";
 const PENDING: &str = "claude-subscription-operation.pending";
+/// Connect receipts keep the public v2 shape byte-for-byte (the new fields are
+/// omitted), so v2 files stay readable and writable. Only a disconnect receipt
+/// is v3; v1 and any other version are refused as before.
 pub(super) const VERSION: u32 = 2;
+const DISCONNECT_VERSION: u32 = 3;
+
+/// What the one operation receipt is for. A disconnect names the connection
+/// revision it removes in `target_revision`; its own `request_id` is only the
+/// operation id and is never a host request or a connection revision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Mode {
+    #[default]
+    Connect,
+    Disconnect,
+}
+impl Mode {
+    pub(super) fn version(self) -> u32 {
+        match self {
+            Self::Connect => VERSION,
+            Self::Disconnect => DISCONNECT_VERSION,
+        }
+    }
+    fn is_connect(&self) -> bool {
+        *self == Self::Connect
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +54,10 @@ pub(super) struct Receipt {
     pub effort: Option<String>,
     pub state: Stage,
     pub updated: u64,
+    #[serde(default, skip_serializing_if = "Mode::is_connect")]
+    pub mode: Mode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_revision: Option<Uuid>,
 }
 /// How the currently published config relates to one receipt's request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +145,11 @@ impl Receipt {
         if self.state.terminal() {
             return self.state;
         }
+        // A disconnect without a live job always needs its recovery to run:
+        // the config relation says nothing about the root cleanup.
+        if self.mode == Mode::Disconnect {
+            return Stage::CleanupPending;
+        }
         match rel {
             Relation::Exact => Stage::CleanupPending,
             Relation::Mismatch | Relation::Unreadable => Stage::CleanupPending,
@@ -140,7 +175,25 @@ impl Receipt {
         if state == Stage::Ready {
             v["connection_revision"] = serde_json::json!(self.request_id);
         }
+        if self.mode == Mode::Disconnect {
+            v["kind"] = serde_json::json!("disconnect");
+        }
         v
+    }
+    /// Version, mode, target and state must agree: a v2 receipt is a connect
+    /// receipt, a v3 one a disconnect receipt with its target.
+    fn well_formed(&self) -> bool {
+        let lifecycle = matches!(self.state, Stage::Disconnecting | Stage::Disconnected);
+        match (self.version, self.mode) {
+            (VERSION, Mode::Connect) => self.target_revision.is_none() && !lifecycle,
+            (DISCONNECT_VERSION, Mode::Disconnect) => {
+                self.target_revision
+                    .is_some_and(|t| !t.is_nil() && t != self.request_id)
+                    && self.replace_revision.is_none()
+                    && (lifecycle || self.state == Stage::CleanupPending)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -166,13 +219,18 @@ pub(super) fn read_receipt(d: &File) -> io::Result<Option<Receipt>> {
     };
     let r: Receipt =
         serde_json::from_slice(&bytes).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-    if r.version != VERSION {
+    if !r.well_formed() {
         return Err(io::ErrorKind::InvalidData.into());
     }
     Ok(Some(r))
 }
 pub(super) fn write_receipt(d: &File, r: &Receipt) -> io::Result<()> {
-    let bytes = serde_json::to_vec(r).map_err(|_| io::ErrorKind::InvalidData)?;
+    let mut r = r.clone();
+    r.version = r.mode.version();
+    if !r.well_formed() {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let bytes = serde_json::to_vec(&r).map_err(|_| io::ErrorKind::InvalidData)?;
     if bytes.len() > MAX_FILE {
         return Err(io::ErrorKind::InvalidData.into());
     }

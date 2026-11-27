@@ -162,6 +162,36 @@ pub fn publish_models(
     tx.commit()?;
     Ok(())
 }
+/// Withdraw the exact public catalog after the caller durably unpublished its
+/// owned connection config. The historical ID also fences a broker that read
+/// the old config before removal and tries to publish it late. A newer catalog
+/// and its member choices are preserved. This does not retire credentials.
+pub fn retire_published_models(
+    root: &Path,
+    actor: &AdminSession,
+    connection_revision: Uuid,
+) -> Result<()> {
+    if connection_revision.is_nil() {
+        return Err(StoreError::InvalidInput);
+    }
+    let (_lock, mut db) = open(root, false)?;
+    admin::check(&db, actor)?;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let id = connection_revision.to_string();
+    tx.execute(
+        "INSERT INTO engine_connections(id) VALUES(?1) ON CONFLICT DO NOTHING",
+        [&id],
+    )?;
+    if tx.execute(
+        "DELETE FROM engine_settings WHERE singleton=1 AND connection_revision=?1",
+        [&id],
+    )? > 0
+    {
+        tx.execute("DELETE FROM engine_bindings", [])?;
+    }
+    tx.commit()?;
+    Ok(())
+}
 struct Current {
     revision: i64,
     connection: String,

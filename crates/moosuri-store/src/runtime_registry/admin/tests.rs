@@ -527,6 +527,77 @@ fn installation_schema_one_migrates_on_lookup_and_future_version_is_rejected() {
 }
 
 #[test]
+fn explicit_disconnect_withdraws_only_its_catalog_and_fences_late_publication() {
+    use crate::runtime_registry::engine::{self, ConnectionMode, ModelChoice};
+    let directory = root();
+    let registry = directory.path();
+    let (a, av) = bootstrap_a(registry);
+    let session = checked_session(registry, &a, &av).unwrap();
+    let accounts = [a.account_id.parse().unwrap()];
+    let model = ModelChoice {
+        model: "claude-sonnet-5-5".into(),
+        effort: Some("medium".into()),
+    };
+    let publish = |id| {
+        engine::publish_models(
+            registry,
+            id,
+            moosuri_core::ProviderKind::Anthropic,
+            ConnectionMode::ClaudeCode,
+            &model,
+            std::slice::from_ref(&model),
+            &accounts,
+        )
+    };
+    let old = Uuid::new_v4();
+    publish(old).unwrap();
+    assert!(
+        engine::member_model_policy(registry, accounts[0])
+            .unwrap()
+            .is_some()
+    );
+    engine::retire_published_models(registry, &session, old).unwrap();
+    engine::retire_published_models(registry, &session, old).unwrap();
+    assert_eq!(
+        serde_json::to_value(engine::read(registry, &session).unwrap()).unwrap()["configured"],
+        false
+    );
+    assert!(
+        engine::member_model_policy(registry, accounts[0])
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(publish(old), Err(StoreError::Conflict)));
+    let next = Uuid::new_v4();
+    publish(next).unwrap();
+    let before = serde_json::to_value(engine::read(registry, &session).unwrap()).unwrap();
+    engine::retire_published_models(registry, &session, old).unwrap();
+    assert_eq!(
+        serde_json::to_value(engine::read(registry, &session).unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(
+        engine::member_model_policy(registry, accounts[0])
+            .unwrap()
+            .unwrap()
+            .connection_revision,
+        next
+    );
+    // A pending broker's never-published revision is fenced too; it cannot
+    // replace the current catalog after its config was already unpublished.
+    let unpublished = Uuid::new_v4();
+    engine::retire_published_models(registry, &session, unpublished).unwrap();
+    assert!(matches!(publish(unpublished), Err(StoreError::Conflict)));
+    let mut stale = checked_session(registry, &a, &av).unwrap();
+    stale.revision += 1;
+    assert!(engine::retire_published_models(registry, &stale, next).is_err());
+    assert_eq!(
+        serde_json::to_value(engine::read(registry, &session).unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
 fn installation_engine_choice_ignores_existing_member_overrides() {
     use crate::runtime_registry::engine::{self, InstallationChange, ModelChoice};
     let directory = root();

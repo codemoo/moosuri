@@ -20,12 +20,16 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
   const [claudeActive, setClaudeActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The server finished an explicit disconnect; the parent's engine status may lag.
+  const [disconnected, setDisconnected] = useState(false);
+  const [notice, setNotice] = useState("");
   const keyInput = useRef<HTMLInputElement>(null);
   const modelInput = useRef<HTMLInputElement>(null);
   const effortInput = useRef<HTMLSelectElement>(null);
   const pending = useRef(false);
   const request = useRef(crypto.randomUUID());
-  const subscription = subscriptionRevision !== undefined;
+  const subscription = subscriptionRevision !== undefined && !disconnected;
+  useEffect(() => { if (subscriptionRevision === undefined) setDisconnected(false); }, [subscriptionRevision]);
   const subscriptionMismatch = subscription && (!setup?.saved || !subscriptionRevision || setup.connection_revision !== subscriptionRevision);
   function fail(e: unknown) {
     if (isAborted(e)) return;
@@ -53,6 +57,12 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
   }, [scope]);
   async function refresh() {
     try { setSetup(await scope.request<Setup>(path, "GET")); } catch (e) { fail(e); }
+  }
+  function afterDisconnect() {
+    setDisconnected(true); setReplacing(false); setMode("api");
+    setNotice("구독 연결이 해제되었습니다. 이제 API 키 또는 내 Claude 구독으로 다시 연결할 수 있습니다.");
+    setSetup(current => current && { ...current, saved: false, connection_revision: undefined });
+    onSaved(); void refresh();
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -93,17 +103,20 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
     } finally { pending.current = false; setBusy(false); }
   }
   if (!setup?.supported) return error ? <p role="alert">{error}</p> : null;
-  if (subscriptionMismatch) return <p role="alert" className="preview-error">현재 연결 상태를 확인하지 못했습니다. 위의 새로고침을 누른 뒤 다시 시도해 주세요.</p>;
-  if (subscription) return <section className="member-page-list management-engine-overview">
+  if (subscriptionMismatch && !setup.subscription_operation) return <p role="alert" className="preview-error">현재 연결 상태를 확인하지 못했습니다. 위의 새로고침을 누른 뒤 다시 시도해 주세요.</p>;
+  if (subscription && !setup.subscription_operation) return <section className="member-page-list management-engine-overview">
     <h2>Claude 연결</h2>
-    <p role="status">Claude 구독이 연결되어 있습니다.</p>
-    <p className="management-note">이 화면에서 구독 연결을 해제하거나 다른 연결로 바꾸는 기능은 아직 지원하지 않습니다.</p>
+    <PersonalClaudeSetup account={account} disconnectRevision={subscriptionRevision ?? undefined}
+      expired={expired} unavailable={unavailable} onSaved={() => { void refresh(); }}
+      onDisconnected={afterDisconnect}/>
+    <p className="management-note">구독을 다른 연결로 바꾸려면 먼저 연결을 해제해 주세요. 해제가 끝나기 전에는 API 키 저장이나 구독 교체가 거절됩니다.</p>
   </section>;
   const form = !setup.saved || replacing;
   const claude = mode === "subscription";
   return <section className="member-page-list management-engine-overview" aria-labelledby="engine-first-connection">
     <h2 id="engine-first-connection">Claude 연결</h2>
     {error && <p role="alert" className="preview-error">{error}</p>}
+    {notice && form && <p role="status">{notice}</p>}
     {!form && <>
       <p role="status">설치에 연결 설정이 등록되어 있습니다. 위 엔진 상태를 새로고침하고 대화에서 응답을 확인해 주세요.</p>
       {setup.connection_revision && <button className="member-page-action" type="button" onClick={() => { setError(""); setReplacing(true); }}>키·모델 교체</button>}
@@ -114,8 +127,8 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
       <label className="management-row management-toggle management-choice"><input type="radio" name="engine-connection-mode" checked={claude} onChange={() => setMode("subscription")}/> 내 Claude 구독 사용</label>
     </fieldset>}
     {claude && <PersonalClaudeSetup account={account} replaceRevision={setup.saved ? setup.connection_revision ?? null : undefined}
-      expired={expired} unavailable={unavailable} onActive={setClaudeActive}
-      onSaved={() => { setReplacing(false); onSaved(); void refresh(); }}/>}
+      expired={expired} unavailable={unavailable} onActive={setClaudeActive} onDisconnected={afterDisconnect}
+      onSaved={() => { setReplacing(false); setNotice(""); onSaved(); void refresh(); }}/>}
     {form && !claude && <form className="management-list" onSubmit={submit}>
       <p className="management-row management-note">{replacing
         ? "새 키와 모델을 확인한 뒤 현재 연결을 교체합니다. 확인이 끝나기 전에는 기존 연결이 유지됩니다."

@@ -111,3 +111,95 @@ This closes the corrected-source installation run, not the provider or productio
 transition gates. A later gateway-only diagnostic checks
 [existing-subscription recovery](2026-11-27-claude-legacy-recovery.md);
 that overlay is not the original accepted bundle.
+
+## Final public c3 installation — passed from an untouched guest
+
+Public `c3d18bd96af1addef8afd4884a368e9b1d63007a` was cloned on a separate
+empty Ubuntu24 guest. Its recorded baseline had no product state, provider
+configuration, Docker/Kiri, Node/Rust, GWS or gcloud. The public source installer
+built the complete bundle, accepted all six actual terminal inputs and completed
+without a build recovery or diagnostic binary overlay. Only synthetic TLS was
+supplied; real ACME issuance was not exercised.
+
+The single coordinator finished with `stage=complete`, `status=passed`:
+
+| Installed journey | Observed result |
+| --- | --- |
+| Administrator and separate Vault | HTTPS sign-in and single-use handoff; repeat setup preserves identity; changed origin refused. |
+| Second member | Public web invitation password completion, separate UID/GWS/browser recipients, role and replay boundaries. |
+| Both actual browser/Vault sessions | Eight-character Vault creation, recovery confirmation, encrypted save/reopen, wrong-password refusal and member isolation. |
+| Actual guest reboot | Both identities, stored Vault items, services and administration boundaries survived; browser checks passed again. |
+| Browser confinement | Public Google HTTPS, private-address refusal, isolated worker routing, proxy restart and owned cleanup passed. |
+| Claude U01–U03 | Same-Kiri screen, mobile/reload, foreign-session refusal, confirmed cancellation and ordinary-member exclusion. |
+| First mail FM01–FM03 | Original request runs once; reload needs explicit resume; a newer draft survives. Replies are synthetic. |
+| Legacy connection LR01–LR06 | All six passed in one fresh run; durable cleanup intent survived reentry and synthetic fixtures were restored. |
+
+The mobile Vault screenshot was inspected: controls and the saved synthetic item
+fit the screen. FM and LR results both identify the same running gateway as the
+bundle. Acceptance explicitly retains `real_google_and_model=not_run` and
+`real_acme=not_run`; this does not establish account authentication, inference,
+automatic OAuth issuance or two real Google consents.
+
+The source manifest SHA-256 is
+`bbe4189db1d2e5a60688896eb4da928647a90c932766013485ea83eb8c716271`.
+Running gateway:
+`08a8667f26435ee05f9694cec7b5bb523cb7d06d1cf479bae5657d074a50ce18`.
+Running Vault:
+`27cd5f3d77554a091162ed43e8484273f508dca653dc9f081d46655aea6256fe`.
+
+## Matching c3 production transition
+
+The concrete staging and transition operators received an independent official
+Claude Sonnet5.5/medium read-only review; observed model matched the requested
+model and no material defect was found. Their SHA-256 values are
+`5d6036f03d5acc11b4f0fa476e4a8112f0f6af2e9eb45d05a0f2965cf15d4087` and
+`4f2637d96c98fa58fccb678083ac001ef32f8e0372fe741b009a4ebe65440809`.
+The staging gate required the exact successful coordinator, restored single-run
+LR evidence and matching FM/LR/running binary hashes. Every bundle artifact was
+copied and verified on Linux. Production transition and real provider results
+are recorded separately below when observed.
+
+The transition completed on the existing Ubuntu22/kernel5.15.0-179/Kiri0.2.2
+host. It saved a consistent private backup and matched the gateway, member,
+Vault and browser images to the accepted bundle. Member identities, mounts,
+encrypted Vault/data, keys, allocation records and Google grants were preserved.
+Service stability, effective commands, HTTPS and SQLite checks passed. Existing
+onboarding policy/timer remained; no new-installer receipt or OS upgrade was made.
+The original Kiri member session survived a reload and displayed the new setup.
+
+### Legacy gateway egress and real provider follow-up
+
+The first real Claude attempt failed during host preparation, before displaying
+authentication. The fixed diagnostic was `claude_subscription_prepare_host_prepare_failed`;
+the attempt retired and the previous model configuration remained intact. The
+existing host still had a loopback-only gateway cgroup rule absent from the
+public installer. These three supporting I07/M05 journeys record the correction:
+
+| ID | Action and result |
+| --- | --- |
+| UP01 | A credential-free HEAD request to the pinned official CLI under the same legacy IP policy timed out with exit28; the public installer's policy returned HTTP200. |
+| UP02 | An independently reviewed repair reset only the gateway's two obsolete IP filter settings. Its first post-check timed out; the failure is retained. A separate read-only 12-sample observation verified the stable exact binary, unchanged command, only the expected policy delta, unchanged protected files and healthy HTTPS. Volatile `ExecStart` timestamps/PID were excluded from command equality. |
+| UP03 | The actual UI retry downloaded the exact 341,914,128-byte official CLI, completed private runtime preparation and displayed the official Claude login screen inside Kiri. It did not replace the previous connection before authentication. |
+
+The repair's SHA-256 is
+`0de2c233f08e49fd537746f32dee46f3015f1f78fce7a68131dbe0e1f4205351`.
+Official Claude Sonnet5.5/medium reviewed the frozen repair with no material
+finding. This changes the gateway's outbound policy to the published installer
+defaults; it does not change the host firewall or member/browser confinement.
+The repair timeout and subsequent `verification-after-timeout.json` are separate
+private evidence. The original observer's timeout cause is not asserted.
+
+Actual post-transition GWS returned HTTP200/completed with five inbox metadata
+items and matching thread/request/mailbox. Its saved history returned five items
+without a second provider read. A different asserted member was refused with401.
+No mail contents or provider tokens were copied to these records. This proves
+existing grant preservation, not natural-language model interpretation.
+
+The live Claude screen showed Google, Apple and email choices. After the
+**Continue with Google** action, the member view lost its frame, remained in
+`awaiting_code`/screen-waiting and later failed with browser cleanup complete.
+No Google identifier/password or Claude verification code was submitted. The
+cause is not established; this is an open real SSO screen-transition failure,
+not evidence of provider rejection or successful authentication. K06, real model
+inference/Gmail conversation, fresh automatic Google/OAuth setup and two real
+members' consents remain open.

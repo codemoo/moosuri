@@ -4,12 +4,15 @@ The current [61 user journeys](journeys.md) cover installation, Vault, Google lo
 OAuth setup, sharing, conversation reads and recovery. They distinguish live
 provider results, diagnostic installation evidence and open acceptance gates.
 
-Latest: public dee84754 empty-start terminal install, retained-state storage
-recovery, second-member web credential completion, two browser/Vault journeys,
-actual reboot and egress isolation passed. The same bundle is deployed with the
-existing real member/Vault/keys/Google grants preserved; post-reload GWS read
-returned five metadata rows. Natural-language Gmail and fresh automatic Google
-setup remain open. [Exact current evidence and limits](../../../docs/reviews/2026-11-27-final-entry-production.md).
+Latest: public `c3d18bd9` passed from a separate untouched Ubuntu24 guest:
+actual terminal install, public second-member admission, both encrypted Vaults,
+real reboot, confinement, Claude U01–U03, FM01–FM03 and LR01–LR06. The reviewed
+matching bundle is deployed on Linux with the original accounts/Vault/keys/grants
+preserved. Existing GWS read and saved history passed; a legacy gateway egress
+rule was corrected. Real Claude SSO screen transition failed after Google was
+selected; its cause and authentication acceptance remain open.
+Actual authentication/inference, automatic OAuth setup and two real member
+consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
 - [x] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing; corrected source installation and two-member reboot accepted below.
@@ -35,7 +38,7 @@ individual prerequisite as completion of Google setup):
 6. Blank-server and two-member end-to-end acceptance, production rollout and
    actual Gmail read. Provider-required verification remains a visible pause.
 
-Acceptance scenarios (run results must replace pending, not imply success):
+Original planning table, retained as history; the linked journey matrix and latest checkpoint above hold current results:
 
 | Feature | Scenarios | Result |
 | --- | --- | --- |

@@ -41,6 +41,14 @@ Docker 패키지가 제거될 수 있으므로 패키지 관리자의 변경 예
 누락된 `fuse-overlayfs` 등의 도구만 기존 엔진을 유지하는 범위에서 추가한다.
 새 설치의 지원 기준과 절차는 [소스 설치 안내](source-install.md)를 따른다.
 
+이전 설치를 전환할 때는 실행 파일뿐 아니라 게이트웨이의 유효한 서비스 정책도
+현재 [공개 설치 템플릿](setup/moosuri-kiri-gateway.service.in)과 대조한다.
+구버전의 localhost 전용 `IPAddressDeny`/`IPAddressAllow`가 남아 있으면
+공식 실행 파일 다운로드가 막혀 자동 준비에 실패한다. 인증 정보를 입력하기 전
+고정된 공개 파일의 통신을 확인하고, 해당 서비스의 필요한 정책만 전환한다.
+호스트 방화벽이나 회원·브라우저 격리를 함께 풀지 않는다.
+[운영 실패·수정·실제 로그인 범위](../../docs/reviews/2026-11-27-current-source-acceptance.md)
+
 1. 전용 비루트 Linux UID에서 rootless Docker와 격리 프로필을 준비한다. 공식 Claude Code 바이너리, Moosuri 실행 파일, 이미지 다이제스트를 고정하고 배포 환경의 격리 수락 시험을 통과한 프로필을 사용한다. `auth_root`와 `scratch_root`는 작업자가 소유한 `0700` 디렉터리다. 프로필 JSON과 계정 이메일 파일은 작업자가 소유한 비공개 디렉터리에 `0600`으로 둔다. 프로필 필드와 시험 절차는 기존 실행 가이드를 따른다. [프로필과 격리 시험](../../docs/claude-execution.md#operator-profile)
 2. 회원마다 고유한 UUID를 하나 만들어 `environment_id`로 지정한다. `expected_email_file`에 해당 회원의 Claude 계정 이메일을 공식 계정 화면에 표시된 대로 한 줄로 저장한다. 동일한 환경을 여러 회원에게 배정하지 않는다.
 3. 같은 비루트 UID의 비공개 대화형 터미널에서 아래 명령을 실행한다. 사용자가 공식 Claude 로그인에서 자기 계정으로 인증한다. 성공 결과에 `profile_digest`, `environment_id`, `models`와 모델별 `effort_metadata`가 표시된다. 지원 강도를 확인할 수 없는 모델은 기본 강도로 사용한다.

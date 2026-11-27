@@ -10,7 +10,9 @@ real reboot, confinement, Claude U01–U03, FM01–FM03 and LR01–LR06. The rev
 matching bundle is deployed on Linux with the original accounts/Vault/keys/grants
 preserved. Existing GWS read and saved history passed; a legacy gateway egress
 rule was corrected. Real Claude SSO screen transition failed after Google was
-selected; its cause and authentication acceptance remain open.
+selected. The subsequent3fd8e586 popup patch is deployed, with installed official
+Google-window display, ownership and cleanup passing; one production UI retry
+still failed before account input. Its post-start cause and authentication remain open.
 Actual authentication/inference, automatic OAuth setup and two real member
 consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
 
@@ -19,8 +21,9 @@ Claude page as opener but remains unattached. No credentials were submitted;
 product cancellation removed the auth container. [Six related-window journeys](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
 track the correction. Actual Linux Kiri Chrome now passes popup typing, immediate
 close/reopen, callback refusal, background completion and cancel, and independent
-Claude review closed its material findings. Matched deployment and the real
-provider retry remain open; synthetic pages/codes do not establish authentication.
+Claude review closed its material findings. Matched deployment is complete; the
+installed official popup passed but the production retry failed and cleaned its
+capsule. Preserve that distinction; synthetic pages/codes do not establish authentication.
 
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
 - [x] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing; corrected source installation and two-member reboot accepted below.

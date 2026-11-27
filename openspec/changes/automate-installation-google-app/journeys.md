@@ -104,7 +104,9 @@ The [SS01–SS06 SSO-window journeys](../../../docs/reviews/2026-11-27-claude-ss
 expand M05's actual Google-button failure: related-window input, return, background
 completion, stale input, foreign/callback refusal and cleanup. Corrected Linux
 Chrome synthetic journeys and independent review passed in the linked scope;
-matched deployment and actual provider acceptance remain open.
+the matched gateway/Google-handler/worker patch is deployed. Installed official
+Google-window display and cancellation passed, but the subsequent production UI
+attempt failed before account input. Actual provider acceptance remains open.
 
 ## Vault account selection — 6 journeys
 

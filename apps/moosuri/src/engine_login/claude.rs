@@ -10,10 +10,10 @@ use moosuri_connectors::{
 };
 use moosuri_store::runtime_registry::engine::ModelChoice;
 use serde::Deserialize;
+#[cfg(test)]
+use std::fs;
 use std::{
-    fs::{self, OpenOptions},
     io::{self, IsTerminal, Read},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 use tokio::sync::mpsc;
@@ -47,6 +47,27 @@ pub(crate) struct IsolationOptions {
     /// Credential-free prepared profile, with an empty acceptance field.
     #[arg(long)]
     profile_file: PathBuf,
+}
+
+#[derive(Args)]
+pub(crate) struct RetireOptions {
+    #[arg(long)]
+    config: PathBuf,
+}
+pub(crate) async fn retire(options: &RetireOptions) -> Result<(), String> {
+    if unsafe { libc::geteuid() } == 0 {
+        return Err("claude_worker_retire_identity_invalid".into());
+    }
+    let config = super::read_config(&options.config)?;
+    super::validate_config(&config)?;
+    let super::Settings::ClaudeCode(settings) = config.adapter else {
+        return Err("claude_worker_retire_identity_invalid".into());
+    };
+    let (profile, environment, _) = prepare(settings).await?;
+    profile
+        .retire_environment(&environment)
+        .await
+        .map_err(|_| "claude_worker_retire_unconfirmed".into())
 }
 
 pub(crate) async fn admit_isolation(options: &IsolationOptions) -> Result<(), String> {
@@ -248,32 +269,7 @@ fn read_expected_email(path: &Path) -> Result<Zeroizing<String>, String> {
 }
 
 fn private_file(path: &Path, limit: usize) -> Result<Zeroizing<Vec<u8>>, ()> {
-    let parent = path.parent().ok_or(())?;
-    let uid = unsafe { libc::geteuid() };
-    let directory = fs::metadata(parent).map_err(|_| ())?;
-    if !path.is_absolute()
-        || !super::trusted_parents(path, uid)
-        || parent.canonicalize().map_err(|_| ())? != parent
-        || !directory.is_dir()
-        || directory.uid() != uid
-        || directory.mode() & 0o022 != 0
-    {
-        return Err(());
-    }
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|_| ())?;
-    let metadata = file.metadata().map_err(|_| ())?;
-    if !metadata.is_file()
-        || metadata.uid() != uid
-        || metadata.nlink() != 1
-        || metadata.mode() & 0o177 != 0
-        || metadata.len() > limit as u64
-    {
-        return Err(());
-    }
+    let file = super::protected_input(path, limit as u64).map_err(|_| ())?;
     let mut bytes = Zeroizing::new(Vec::new());
     file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)

@@ -386,6 +386,10 @@ fn load_key(path: &Path) -> Result<hmac::Key, String> {
 fn parse_config(bytes: &[u8]) -> Result<Config, String> {
     serde_json::from_slice(bytes).map_err(|_| "model_config_invalid".into())
 }
+#[cfg(test)]
+pub(crate) fn setup_config_parses(bytes: &[u8]) -> bool {
+    parse_config(bytes).is_ok()
+}
 /// Conservative default for a lifecycle member without an explicit budget.
 const DEFAULT_BUDGET: Budget = Budget {
     max_calls: 100,

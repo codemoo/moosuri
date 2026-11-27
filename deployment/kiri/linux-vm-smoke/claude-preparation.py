@@ -21,11 +21,12 @@ parser.add_argument('--binary', required=True)
 parser.add_argument('--resume', action='store_true')
 parser.add_argument('--retry', action='store_true')
 parser.add_argument('--closure', action='store_true', help='Only the inode-default and reserved-login regressions')
+parser.add_argument('--product-boundaries', action='store_true', help='Root config, storage recovery and bounded engine home')
 args = parser.parse_args()
 assert os.geteuid() == 0
 assert Path('/etc/moosuri-kiri-lab-marker').read_text().strip() == 'SYNTHETIC_DISPOSABLE_VM'
 os.umask(0o077)
-root = Path('/root/moosuri-claude-preparation-accept')
+root = Path('/root/moosuri-claude-product-boundaries' if args.product_boundaries else '/root/moosuri-claude-preparation-accept')
 root.mkdir(mode=0o700, exist_ok=args.resume or args.retry or args.closure)
 binary = str(Path(args.binary).resolve(strict=True))
 report = {'no_credentials_login_or_inference': True, 'checks': [],
@@ -42,6 +43,9 @@ def put(name, value):
     return p
 
 def check(name, action):
+    if args.product_boundaries and args.retry and any(c['journey'] == name and c['status'] == 'passed' for c in report['checks']):
+        print(json.dumps({'journey': name, 'status': 'previous_pass_retained'}), flush=True)
+        return
     started = time.monotonic()
     try:
         action()
@@ -112,6 +116,87 @@ def admission(prepared):
     assert accepted['profile_digest'] == hashlib.sha256(accepted['profile_json'].encode()).hexdigest()
     put('native-admission.json', accepted)
     path.unlink()
+
+if args.product_boundaries:
+    request = {'version': 1, 'request_id': str(uuid.uuid4()), 'owner': {
+        'account_id': str(uuid.uuid4()), 'tenant_id': str(uuid.uuid4()),
+        'volume_id': str(uuid.uuid4()), 'generation': 1}}
+    if args.retry:
+        request = json.loads((root/'original-request.json').read_text())
+    else:
+        put('original-request.json', request)
+    prepared = json.loads((root/'prepared.json').read_text()) if args.retry else None
+    def bounded_home():
+        global prepared
+        prepared = prepare(request)
+        put('prepared.json', prepared)
+        home = Path(prepared['runtime']['service']['home'])
+        assert home == Path('/var/lib/moosuri-claude-home/mounts')/request['request_id']/'home'
+        stat = os.statvfs(home)
+        assert 0 < stat.f_blocks*stat.f_frsize <= 2*1024**3 and stat.f_files <= 131072
+        uid = prepared['runtime']['service']['uid']
+        values = subprocess.check_output(['systemctl','show',f'user@{uid}.service',
+            '--property=MemoryMax','--property=TasksMax','--property=CPUQuotaPerSecUSec'],text=True)
+        assert 'MemoryMax=1610612736' in values and 'TasksMax=256' in values and 'CPUQuotaPerSecUSec=2s' in values
+        assert prepare(request) == prepared
+    check('H01-bounded-home-and-user-manager', bounded_home)
+    storage_root = Path('/var/lib/moosuri-claude-fs')
+    record = storage_root/'records'/f"{request['request_id']}.json"
+    temporary = record.with_suffix('.next')
+    def recover_records():
+        before = record.read_bytes()
+        assert not temporary.exists()
+        for value in (before, b'{"plan":'):
+            temporary.write_bytes(value); temporary.chmod(0o600)
+            assert prepare(request) == prepared
+            assert not temporary.exists() and record.read_bytes() == before
+        staged = storage_root/'staging'/f"{request['request_id']}.pending"
+        staged.write_bytes(b'partial'); staged.chmod(0o600)
+        assert prepare(request) == prepared and not staged.exists()
+    check('H02-interrupted-records-resume', recover_records)
+    def refuse_conflicting_record():
+        before = record.read_bytes()
+        changed = json.loads(before); changed['plan']['uid'] += 1
+        temporary.write_text(json.dumps(changed)); temporary.chmod(0o600)
+        try:
+            refuse(request, 'storage_pending_record_conflict')
+            assert record.read_bytes() == before and temporary.exists()
+        finally:
+            temporary.unlink()
+    check('H03-foreign-record-never-adopted', refuse_conflicting_record)
+    def immutable_config():
+        service = prepared['runtime']['service']
+        base = Path('/opt/moosuri-claude-lab')/('protected-'+request['request_id'])
+        base.mkdir(mode=0o710, exist_ok=args.retry); base.chmod(0o710); os.chown(base,0,service['gid'])
+        profile = base/'profile.json'; profile.write_text('{}'); profile.chmod(0o440); os.chown(profile,0,service['gid'])
+        def inspect():
+            return subprocess.run(['runuser','-u',service['username'],'--',binary,
+                'claude-engine-isolation','--profile-file',str(profile)],capture_output=True,text=True,timeout=10)
+        accepted_read = inspect()
+        assert accepted_read.returncode and 'claude_isolation_not_accepted' in accepted_read.stderr
+        write = subprocess.run(['runuser','-u',service['username'],'--','python3','-c',
+            'import sys;open(sys.argv[1],"w").write("changed")',str(profile)],capture_output=True)
+        assert write.returncode and profile.read_text() == '{}'
+        profile.chmod(0o660)
+        rejected_read = inspect()
+        assert rejected_read.returncode and 'claude_isolation_input_invalid' in rejected_read.stderr
+        profile.chmod(0o440)
+    check('H04-root-config-readable-but-immutable', immutable_config)
+    check('H05-native-admission-with-bounded-engine-home', lambda: admission(prepared))
+    def home_quota():
+        code = '''import json,os,errno,sys
+from pathlib import Path
+p=Path(sys.argv[1])/'quota-fixture'
+fd=os.open(p,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o600)
+try:
+ try: os.posix_fallocate(fd,0,2*1024**3); raise AssertionError('unbounded_home')
+ except OSError as e: assert e.errno == errno.ENOSPC
+finally: os.close(fd);p.unlink()
+print(json.dumps({'bounded':True}))'''
+        assert worker(prepared,code,prepared['runtime']['service']['home'])['bounded']
+        assert prepare(request) == prepared
+    check('H06-home-capacity-failure-and-replay', home_quota)
+    sys.exit(0)
 
 if args.closure:
     def pinned_defaults_and_reserved_identity():

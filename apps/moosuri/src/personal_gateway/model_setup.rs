@@ -19,6 +19,8 @@ use std::{
     os::fd::{AsRawFd, FromRawFd},
 };
 
+pub(super) mod claude;
+
 pub(super) const CONFIG_FILE: &str = "runtime-model.json";
 const PENDING_FILE: &str = "runtime-model.pending";
 const KEY_PREFIX: &str = "model-api-key-";
@@ -76,9 +78,17 @@ fn error(code: &'static str, status: StatusCode) -> Response {
     )
 }
 fn view(saved: Option<Option<Uuid>>) -> Response {
+    listed(saved, false)
+}
+/// `subscription_operation` only tells the page that a subscription setup
+/// operation is unfinished, so a reload can resume it. It carries no detail.
+fn listed(saved: Option<Option<Uuid>>, operation: bool) -> Response {
     let mut value = serde_json::json!({"supported":true,"saved":saved.is_some()});
     if let Some(Some(revision)) = saved {
         value["connection_revision"] = serde_json::json!(revision);
+    }
+    if operation {
+        value["subscription_operation"] = serde_json::json!(true);
     }
     response(StatusCode::OK, value.to_string().into_bytes())
 }
@@ -87,6 +97,10 @@ pub(super) fn routes() -> Router<Gateway> {
         .route(
             "/api/v1/personal/admin/engine/setup",
             get(endpoint).post(endpoint),
+        )
+        .route(
+            "/api/v1/personal/admin/engine/subscription",
+            get(claude::handle).post(claude::handle),
         )
         .layer(DefaultBodyLimit::max(MAX_FILE))
 }
@@ -109,6 +123,15 @@ async fn local<T: Send + 'static>(
     action: impl FnOnce(&File) -> io::Result<T> + Send + 'static,
 ) -> Result<T, StatusCode> {
     let pin = pin(g, headers).await?;
+    local_with(g, pin, action).await
+}
+/// Same bounded local section for an already-checked administrator pin (the
+/// subscription job reauthenticates its ORIGINAL session before each use).
+async fn local_with<T: Send + 'static>(
+    g: &Gateway,
+    pin: control::AdminSession,
+    action: impl FnOnce(&File) -> io::Result<T> + Send + 'static,
+) -> Result<T, StatusCode> {
     let root = g.registry.clone();
     let dir = g
         .model_setup_dir
@@ -160,10 +183,13 @@ async fn endpoint(
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         if method == Method::GET && body.is_empty() {
             return local(&g, &headers, |d| {
-                Ok(read(d, CONFIG_FILE)?.map(|c| revision_of(&c)))
+                Ok((
+                    read(d, CONFIG_FILE)?.map(|c| revision_of(&c)),
+                    claude::unfinished(d),
+                ))
             })
             .await
-            .map(view);
+            .map(|(saved, operation)| listed(saved, operation));
         }
         if method != Method::POST
             || one(&headers, "content-type").and_then(|s| s.split(';').next())
@@ -349,7 +375,15 @@ fn existing(
     request: Uuid,
     replace: Option<Uuid>,
 ) -> io::Result<bool> {
+    claude::ensure_settled(d)?;
     if let Some(current) = read(d, CONFIG_FILE)? {
+        // Do not abandon an Active subscription worker by changing only the
+        // broker config. This gate also precedes any API catalog request.
+        let value: serde_json::Value =
+            serde_json::from_slice(&current).map_err(|_| io::ErrorKind::InvalidData)?;
+        if value["subscription"] == "claude_code" {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
         if current.as_slice() == expected
             && read(d, key_name)?.as_deref().map(|v| v.as_slice()) == Some(key)
         {

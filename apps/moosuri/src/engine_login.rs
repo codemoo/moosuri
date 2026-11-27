@@ -402,8 +402,24 @@ fn trusted_parents(path: &Path, uid: u32) -> bool {
 }
 
 fn read_config(path: &Path) -> Result<Config, String> {
+    let file = protected_input(path, 16384)?;
+    let mut bytes = Vec::new();
+    file.take(16385)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "engine_config_unavailable")?;
+    if bytes.len() > 16384 {
+        return Err("engine_config_invalid".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "engine_config_invalid".into())
+}
+
+/// Legacy worker-private inputs, or installer-controlled read-only group
+/// inputs. The latter cannot be replaced or chmod'ed by the credential worker.
+fn protected_input(path: &Path, limit: u64) -> Result<File, String> {
+    let uid = unsafe { libc::geteuid() };
+    let gid = unsafe { libc::getegid() };
     if !path.is_absolute()
-        || !trusted_parents(path, unsafe { libc::geteuid() })
+        || !trusted_parents(path, uid)
         || fs::canonicalize(path).ok().as_deref() != Some(path)
     {
         return Err("engine_config_invalid".into());
@@ -414,22 +430,23 @@ fn read_config(path: &Path) -> Result<Config, String> {
         .open(path)
         .map_err(|_| "engine_config_unavailable")?;
     let meta = file.metadata().map_err(|_| "engine_config_unavailable")?;
+    let worker_private = meta.uid() == uid && meta.mode() & 0o177 == 0;
+    let installer_readonly = uid != 0
+        && meta.uid() == 0
+        && meta.gid() == gid
+        && meta.mode() & 0o7777 == 0o440
+        && path.ancestors().skip(1).all(|parent| {
+            fs::symlink_metadata(parent)
+                .is_ok_and(|m| m.is_dir() && m.uid() == 0 && m.mode() & 0o022 == 0)
+        });
     if !meta.is_file()
         || meta.nlink() != 1
-        || meta.uid() != unsafe { libc::geteuid() }
-        || meta.mode() & 0o177 != 0
-        || meta.len() > 16384
+        || !(worker_private || installer_readonly)
+        || meta.len() > limit
     {
         return Err("engine_config_invalid".into());
     }
-    let mut bytes = Vec::new();
-    file.take(16385)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "engine_config_unavailable")?;
-    if bytes.len() > 16384 {
-        return Err("engine_config_invalid".into());
-    }
-    serde_json::from_slice(&bytes).map_err(|_| "engine_config_invalid".into())
+    Ok(file)
 }
 struct Bound {
     path: PathBuf,

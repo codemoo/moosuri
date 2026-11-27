@@ -6,6 +6,50 @@ use crate::engine_login::Owner;
 
 const ROOT: &str = "/var/lib/moosuri-claude-fs";
 const CAPACITY: u64 = 128 * 1024 * 1024;
+const HOME_ROOT: &str = "/var/lib/moosuri-claude-home";
+const HOME_CAPACITY: u64 = 2 * 1024 * 1024 * 1024;
+#[derive(Clone, Copy)]
+enum Storage {
+    Authentication,
+    Home,
+}
+impl Storage {
+    fn root(self) -> PathBuf {
+        PathBuf::from(match self {
+            Self::Authentication => ROOT,
+            Self::Home => HOME_ROOT,
+        })
+    }
+    fn capacity(self) -> u64 {
+        match self {
+            Self::Authentication => CAPACITY,
+            Self::Home => HOME_CAPACITY,
+        }
+    }
+    fn inodes(self) -> u32 {
+        match self {
+            Self::Authentication => 32768,
+            Self::Home => 131072,
+        }
+    }
+    fn executable(self) -> bool {
+        matches!(self, Self::Home)
+    }
+}
+pub(crate) fn home_path(request: Uuid) -> PathBuf {
+    Path::new(HOME_ROOT)
+        .join("mounts")
+        .join(request.to_string())
+        .join("home")
+}
+pub(crate) fn prepare_home(
+    request: Uuid,
+    owner: Owner,
+    uid: u32,
+    gid: u32,
+) -> Result<PathBuf, String> {
+    prepare_in(request, owner, uid, gid, Storage::Home).map(|p| p.auth_root)
+}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -31,13 +75,14 @@ impl Claim {
             && (1..20000).contains(&self.uid)
             && (1..20000).contains(&self.gid)
     }
-    fn root(&self) -> PathBuf {
-        PathBuf::from(ROOT)
-    }
+    #[cfg(test)]
     fn plan(&self) -> Plan {
+        self.plan_for(Storage::Authentication)
+    }
+    fn plan_for(&self, storage: Storage) -> Plan {
         Plan {
             v: 1,
-            root: self.root(),
+            root: storage.root(),
             request: self.request_id,
             account: self.owner.account_id.to_string(),
             tenant: self.owner.tenant_id.to_string(),
@@ -46,7 +91,7 @@ impl Claim {
             volume: self.request_id.to_string(),
             generation: self.owner.generation,
             uid: self.uid,
-            cap: CAPACITY,
+            cap: storage.capacity(),
         }
     }
 }
@@ -80,9 +125,9 @@ fn claim(root: &Path, wanted: &Claim) -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Never attach a fresh claim to a filesystem already prepared by
             // another path through the storage helper.
-            if wanted
-                .plan()
-                .record()
+            if root
+                .join("records")
+                .join(format!("{}.json", wanted.request_id))
                 .try_exists()
                 .map_err(|_| "claude_storage_claim_unavailable")?
             {
@@ -106,6 +151,15 @@ pub(crate) fn prepare(
     uid: u32,
     gid: u32,
 ) -> Result<Prepared, String> {
+    prepare_in(request_id, owner, uid, gid, Storage::Authentication)
+}
+fn prepare_in(
+    request_id: Uuid,
+    owner: Owner,
+    uid: u32,
+    gid: u32,
+    storage: Storage,
+) -> Result<Prepared, String> {
     if !cfg!(target_os = "linux") || unsafe { libc::geteuid() } != 0 {
         return Err("claude_storage_linux_root_required".into());
     }
@@ -119,7 +173,7 @@ pub(crate) fn prepare(
     if !wanted.valid() {
         return Err("claude_storage_claim_invalid".into());
     }
-    let root = wanted.root();
+    let root = storage.root();
     // The directory becomes traversable after initialize_root writes its
     // ownership marker. Preserve that established mode on replay.
     if fs::symlink_metadata(&root).is_err() {
@@ -130,11 +184,11 @@ pub(crate) fn prepare(
     lock.lock_exclusive().map_err(|_| "claude_storage_busy")?;
     initialize_root(&root)?;
     claim(&root, &wanted)?;
-    let plan = wanted.plan();
+    let plan = wanted.plan_for(storage);
     let mut record = load_or_plan(&plan, false)?;
     // Pin the count at format time; host mke2fs.conf must not choose an
     // unbounded inode allocation that makes every later replay fail.
-    prepare_image_with_inodes(&mut record, Some(32768))?;
+    prepare_image_with_inodes(&mut record, Some(storage.inodes()))?;
     let target = plan.mount();
     empty_target(&target)?;
     let filesystem_unit = unit_name(&target);
@@ -143,14 +197,24 @@ pub(crate) fn prepare(
         "Moosuri member filesystem",
         "Moosuri Claude authentication filesystem",
     );
+    let body = if storage.executable() {
+        body.replace("rw,nosuid,nodev,noexec", "rw,nosuid,nodev")
+    } else {
+        body
+    };
     install_unit(&filesystem_unit, &body)?;
     command("/usr/bin/systemctl", &["daemon-reload"])?;
     if mounted(&target)?.is_none() {
         command("/usr/bin/systemctl", &["start", &filesystem_unit])?;
     }
-    verify_mount(&plan)?;
-    let maximum_inodes = bounded_inodes(&target)?;
-    for name in ["auth", "scratch"] {
+    verify_mount_mode(&plan, storage.executable())?;
+    let maximum_inodes = bounded_inodes(&target, u64::from(storage.inodes()))?;
+    let names: &[&str] = if storage.executable() {
+        &["home"]
+    } else {
+        &["auth", "scratch"]
+    };
+    for name in names {
         layout_for_ids(&target.join(name), uid, gid)?;
         check_traversal(uid, &target.join(name))?;
     }
@@ -159,16 +223,16 @@ pub(crate) fn prepare(
     record.phase = Phase::Ready;
     save(&record)?;
     Ok(Prepared {
-        auth_root: target.join("auth"),
-        scratch_root: target.join("scratch"),
+        auth_root: target.join(names[0]),
+        scratch_root: target.join(names[names.len() - 1]),
         filesystem_unit,
-        capacity_bytes: CAPACITY,
+        capacity_bytes: storage.capacity(),
         maximum_inodes,
     })
 }
 
 #[cfg(target_os = "linux")]
-fn bounded_inodes(path: &Path) -> Result<u64, String> {
+fn bounded_inodes(path: &Path, maximum: u64) -> Result<u64, String> {
     let path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| "claude_storage_path_invalid")?;
     let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
@@ -176,13 +240,13 @@ fn bounded_inodes(path: &Path) -> Result<u64, String> {
         return Err("claude_storage_inode_probe_failed".into());
     }
     let count = unsafe { stat.assume_init() }.f_files as u64;
-    if count == 0 || count > 32768 {
+    if count == 0 || count > maximum {
         return Err("claude_storage_inode_bound_invalid".into());
     }
     Ok(count)
 }
 #[cfg(not(target_os = "linux"))]
-fn bounded_inodes(_: &Path) -> Result<u64, String> {
+fn bounded_inodes(_: &Path, _: u64) -> Result<u64, String> {
     Err("claude_storage_linux_root_required".into())
 }
 
@@ -249,5 +313,18 @@ mod tests {
         let mut value = serde_json::to_value(a).unwrap();
         value["path"] = serde_json::json!("/arbitrary");
         assert!(serde_json::from_value::<Claim>(value).is_err());
+    }
+    #[test]
+    fn engine_home_is_a_separate_bound_from_authentication() {
+        let c = sample();
+        let auth = c.plan_for(Storage::Authentication);
+        let home = c.plan_for(Storage::Home);
+        assert_ne!(auth.root, home.root);
+        assert_ne!(auth.image(), home.image());
+        assert_eq!(home_path(c.request_id), home.mount().join("home"));
+        assert_eq!(home.cap, 2 * 1024 * 1024 * 1024);
+        assert_eq!(auth.cap, 128 * 1024 * 1024);
+        assert_eq!(home.account, auth.account);
+        assert_eq!(home.uid, auth.uid);
     }
 }

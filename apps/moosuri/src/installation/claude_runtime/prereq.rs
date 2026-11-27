@@ -41,6 +41,7 @@ pub(crate) struct PinnedFile {
 pub(super) struct Tools {
     pub systemctl: PathBuf,
     pub engine: PinnedFile,
+    pub system_subids: bool,
 }
 
 /// A root-owned, executable, non-group/world-writable regular tool.
@@ -121,17 +122,55 @@ pub(super) fn check(layout: &Layout, exec: &dyn Exec) -> Result<Tools> {
         return Err("claude_runtime_missing_dbus_user_session".into());
     }
     let engine = trusted_file(layout, &docker, ENGINE_CAP)?;
-    // Without --add-subids-for-system (e.g. Ubuntu 22.04) no safe automatic
-    // subordinate range exists for a system user. Fail before any write.
+    // Ubuntu22 assigns subordinate ranges for regular users. A dedicated
+    // nologin account below the member pool can use that native allocator.
     let help = exec.run(
         "useradd",
         &args(&["--help"]),
         Input::None,
         Duration::from_secs(10),
     )?;
-    if help.code != 0 || !String::from_utf8_lossy(&help.stdout).contains("--add-subids-for-system")
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    let system_subids = help_text.contains("--add-subids-for-system");
+    if help.code != 0
+        || (!system_subids
+            && !["--uid", "--no-create-home", "--user-group"]
+                .iter()
+                .all(|flag| help_text.contains(flag)))
     {
         return Err("claude_runtime_unsupported_useradd_subids".into());
     }
-    Ok(Tools { systemctl, engine })
+    if !system_subids {
+        let path = layout.at("/etc/login.defs");
+        let (mut file, _) = host::open_regular(&path, 128 * 1024)
+            .map_err(|_| "claude_runtime_subid_allocator_unconfigured")?;
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut file, &mut text)
+            .map_err(|_| "claude_runtime_subid_allocator_unconfigured")?;
+        for prefix in ["SUB_UID", "SUB_GID"] {
+            let value = |suffix: &str| -> Option<u64> {
+                let key = format!("{prefix}_{suffix}");
+                let values: Vec<_> = text
+                    .lines()
+                    .filter_map(|line| {
+                        let mut fields = line.split('#').next()?.split_whitespace();
+                        (fields.next()? == key)
+                            .then(|| fields.next()?.parse::<u64>().ok())
+                            .flatten()
+                    })
+                    .collect();
+                (values.len() == 1).then(|| values[0])
+            };
+            if !matches!((value("MIN"), value("MAX"), value("COUNT")),
+                (Some(min), Some(max), Some(count)) if min > 0 && count >= 65536 && max >= min && max-min >= count)
+            {
+                return Err("claude_runtime_subid_allocator_unconfigured".into());
+            }
+        }
+    }
+    Ok(Tools {
+        systemctl,
+        engine,
+        system_subids,
+    })
 }

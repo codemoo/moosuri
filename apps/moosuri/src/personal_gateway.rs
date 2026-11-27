@@ -125,6 +125,7 @@ struct Gateway {
     model_setup: bool,
     model_setup_dir: Option<PathBuf>,
     google_jobs: google_connection::Jobs,
+    claude_jobs: model_setup::claude::Jobs,
     google_runtime: Option<google_connection::portable::Runtime>,
     vault: Option<Arc<vault::Enrollment>>,
     origin: String,
@@ -270,6 +271,7 @@ impl Gateway {
             model_setup: options.model_setup,
             model_setup_dir: options.model_setup_dir.clone(),
             google_jobs: Default::default(),
+            claude_jobs: Default::default(),
             google_runtime: google_connection::portable::Runtime::new(options)?,
             vault,
             host: origin[8..].into(),
@@ -2921,6 +2923,23 @@ mod tests {
                 StatusCode::FORBIDDEN
             );
         }
+        let subscription = "/api/v1/personal/admin/engine/subscription";
+        for method in [Method::GET, Method::POST] {
+            let payload = if method == Method::POST {
+                serde_json::json!({"op":"status","request_id":Uuid::new_v4()}).to_string()
+            } else {
+                String::new()
+            };
+            assert_eq!(
+                request(&g, subscription, method, member.clone(), &payload)
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        let own = json(request(&g, subscription, Method::GET, admin.clone(), "").await).await;
+        assert_eq!(own["supported"], true);
+        assert!(own["operation"].is_null());
         assert!(!dir.join(model_setup::CONFIG_FILE).exists());
         g.model_setup = false;
         assert_eq!(

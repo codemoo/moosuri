@@ -306,8 +306,38 @@ fn trusted_tool(p: &Path) -> Result<()> {
 }
 impl Exec for System {
     fn run(&self, program: &str, args: &[String], input: Input, limit: Duration) -> Result<Out> {
+        self.run_inner(program, args, input, limit, None, false)
+    }
+}
+impl System {
+    pub fn run_cancellable(
+        &self,
+        program: &str,
+        args: &[String],
+        input: Input,
+        limit: Duration,
+        cancel: Option<&moosuri_connectors::model::CancellationToken>,
+    ) -> Result<Out> {
+        self.run_inner(program, args, input, limit, cancel, true)
+    }
+    fn run_inner(
+        &self,
+        program: &str,
+        args: &[String],
+        input: Input,
+        limit: Duration,
+        cancel: Option<&moosuri_connectors::model::CancellationToken>,
+        group: bool,
+    ) -> Result<Out> {
+        use std::os::unix::process::CommandExt;
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return Err("kiri_install_command_cancelled".into());
+        }
         let tool = find_tool(program)?;
         let mut command = Command::new(tool);
+        if group {
+            command.process_group(0);
+        }
         command
             .args(args)
             .env_clear()
@@ -349,9 +379,19 @@ impl Exec for System {
         let status = loop {
             match child.try_wait().map_err(|_| "kiri_install_wait_failed")? {
                 Some(s) => break s,
-                None if Instant::now() >= deadline => {
+                None if Instant::now() >= deadline || cancel.is_some_and(|c| c.is_cancelled()) => {
+                    if group {
+                        // Only this command's fresh process group, including
+                        // runuser's worker child; never a reused/foreign PID.
+                        unsafe {
+                            libc::kill(-(child.id() as i32), libc::SIGKILL);
+                        }
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
+                    if cancel.is_some_and(|c| c.is_cancelled()) {
+                        return Err("kiri_install_command_cancelled".into());
+                    }
                     return Err("kiri_install_command_timeout".into());
                 }
                 None => std::thread::sleep(Duration::from_millis(50)),
@@ -401,6 +441,70 @@ pub mod fake {
                 stdout: stdout.into_bytes(),
                 stderr: Vec::new(),
             })
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod cancellation_tests {
+    use super::*;
+    #[test]
+    fn cancellation_and_deadline_kill_the_owned_child_group() {
+        for cancelling in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let child_pid = temp.path().join("child.pid");
+            let token = moosuri_connectors::model::CancellationToken::new();
+            let token_copy = token.clone();
+            let wait_pid = child_pid.clone();
+            let watcher = std::thread::spawn(move || {
+                let until = Instant::now() + Duration::from_secs(3);
+                while !wait_pid.exists() && Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                if cancelling {
+                    token_copy.cancel();
+                }
+            });
+            let sys = System {
+                docker_config: temp.path().to_path_buf(),
+            };
+            let error = sys
+                .run_cancellable(
+                    "/bin/sh",
+                    &args(&[
+                        "-c",
+                        "sleep 30 & echo $! > \"$1\"; wait",
+                        "fixture",
+                        child_pid.to_str().unwrap(),
+                    ]),
+                    Input::None,
+                    Duration::from_millis(500),
+                    Some(&token),
+                )
+                .err()
+                .expect("command must stop");
+            watcher.join().unwrap();
+            assert_eq!(
+                error,
+                if cancelling {
+                    "kiri_install_command_cancelled"
+                } else {
+                    "kiri_install_command_timeout"
+                }
+            );
+            let pid = fs::read_to_string(child_pid).unwrap();
+            let proc_stat = PathBuf::from(format!("/proc/{}/stat", pid.trim()));
+            let until = Instant::now() + Duration::from_secs(2);
+            loop {
+                match fs::read_to_string(&proc_stat) {
+                    Err(_) => break,
+                    Ok(stat) if stat.split(") ").nth(1).is_some_and(|s| s.starts_with('Z')) => {
+                        break;
+                    }
+                    _ if Instant::now() < until => std::thread::sleep(Duration::from_millis(10)),
+                    _ => panic!("owned grandchild still running"),
+                }
+            }
         }
     }
 }

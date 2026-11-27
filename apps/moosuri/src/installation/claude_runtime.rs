@@ -9,6 +9,7 @@
 //! product setup completed. The typed descriptor it returns is the input of the
 //! next (native isolation acceptance) stage and carries no URL, code or auth data.
 mod artifact;
+pub(crate) mod connection;
 mod home;
 mod identity;
 mod prereq;
@@ -35,8 +36,6 @@ use uuid::Uuid;
 
 pub(crate) use request::Request;
 
-/// Managed service homes (worker-writable below this root-owned 0755 directory).
-const HOMES: &str = "/var/lib/moosuri-claude";
 /// Root-owned immutable artifacts.
 const ARTIFACTS: &str = "/opt/moosuri-claude";
 /// Root-only receipts, lock and download scratch; never a worker-writable path.
@@ -172,12 +171,23 @@ pub(crate) fn prepare_with(
     request: Request,
     helper: &Path,
 ) -> Result<PreparedRuntime> {
-    prepare_pinned(layout, exec, request, helper, &PINS)
+    prepare_pinned(layout, exec, request, helper, &PINS, &|request, svc| {
+        let home = crate::kiri_storage::claude::prepare_home(
+            request.request_id,
+            request.owner,
+            svc.uid,
+            svc.gid,
+        )?;
+        if home != svc.home {
+            return Err("claude_runtime_home_claim_changed".into());
+        }
+        Ok(())
+    })
 }
 
 /// Create the fixed root-owned directories and take the exclusive setup lock.
 fn open_control(layout: &Layout) -> Result<File> {
-    for (dir, mode) in [(HOMES, 0o755), (ARTIFACTS, 0o755), (CONTROL, 0o700)] {
+    for (dir, mode) in [(ARTIFACTS, 0o755), (CONTROL, 0o700)] {
         layout.ensure_dir(&layout.at(dir), mode)?;
     }
     for dir in ["receipts", "downloads"] {
@@ -238,6 +248,7 @@ fn prepare_pinned(
     request: Request,
     helper: &Path,
     pins: &Pins,
+    prepare_home: &dyn Fn(&Request, &ServiceIdentity) -> Result<()>,
 ) -> Result<PreparedRuntime> {
     request.validate()?;
     if !pins.image.contains("@sha256:") {
@@ -296,7 +307,7 @@ fn prepare_pinned(
         if receipt.identity.is_some() {
             return Err("claude_runtime_identity_missing".into());
         }
-        identity::create(exec, &receipt)?;
+        identity::create(exec, &receipt, tools.system_subids)?;
     }
     let ident = identity::verify(layout, exec, &receipt)?;
     if receipt.identity.is_none() {
@@ -311,7 +322,9 @@ fn prepare_pinned(
         home: PathBuf::from(&receipt.home),
     };
 
-    // 5. Rootless service, then its verified resource contract and image.
+    // 5. The whole worker home (including engine images) is capacity bounded.
+    prepare_home(&request, &svc)?;
+    // Rootless service, then its verified resource contract and image.
     service::ensure_unit(layout, &svc, &wrapper.path)?;
     service::verify_artifact_access(
         exec,
@@ -323,7 +336,7 @@ fn prepare_pinned(
             &tools.engine.path,
         ],
     )?;
-    service::install_dropin(layout, exec, svc.uid)?;
+    service::install_dropin(layout, exec, svc.uid, &svc.home)?;
     service::start_manager(exec, &tools, &svc)?;
     service::start_service(exec, &tools, &svc)?;
     service::verify_engine(layout, exec, &tools, &svc)?;

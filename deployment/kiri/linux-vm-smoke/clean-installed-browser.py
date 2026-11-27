@@ -56,6 +56,10 @@ def main():
     parser.add_argument('--invitation-journeys', action='store_true',
                         help='Run actual web joining/recovery branches on this synthetic installation')
     parser.add_argument('--post-invitation-reboot', action='store_true')
+    parser.add_argument('--claude-journeys', action='store_true',
+                        help='Admin UI official Claude URL/cancel only; no account authentication or inference')
+    parser.add_argument('--claude-structure-only', action='store_true',
+                        help='Only U01/U03; do not initiate provider login preparation')
     args = parser.parse_args()
     assert sys.platform == 'linux'
     os.umask(0o077)
@@ -134,6 +138,11 @@ print('matched_running_revision_verified')
             browser = pw.chromium.launch(channel='chromium', headless=True,
                         proxy={'server': f'http://127.0.0.1:{proxy.server_port}'})
             try:
+                if args.claude_journeys:
+                    import runpy
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-claude-ui.py')))
+                    module['run'](browser, args, members)
+                    return
                 if args.invitation_journeys or args.post_invitation_reboot:
                     import runpy
                     module = runpy.run_path(str(Path(__file__).with_name('installed-invitation-journeys.py')))

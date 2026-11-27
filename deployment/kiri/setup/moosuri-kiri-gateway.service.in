@@ -17,7 +17,11 @@ RestartSec=3
 TimeoutStopSec=30
 NoNewPrivileges=yes
 ProtectSystem=full
-ProtectHome=true
+# Administrator model setup writes only its derived systemd units. OS account
+# allocation runs separately in a bounded transient unit, never in this namespace.
+ReadWritePaths=/etc/systemd/system
+ProtectHome=no
+InaccessiblePaths=-/home -/root
 
 [Install]
 WantedBy=multi-user.target

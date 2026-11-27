@@ -344,9 +344,17 @@ fn initialize_root(root: &Path) -> Result<(), String> {
     }
     for item in fs::read_dir(root).map_err(|_| "storage_root_unavailable")? {
         let entry = item.map_err(|_| "storage_root_unavailable")?;
-        if !["owner", "images", "records", "mounts", "ipc", "assignments"]
-            .iter()
-            .any(|n| entry.file_name() == *n)
+        if ![
+            "owner",
+            "images",
+            "records",
+            "staging",
+            "mounts",
+            "ipc",
+            "assignments",
+        ]
+        .iter()
+        .any(|n| entry.file_name() == *n)
         {
             return Err("storage_foreign_root_entry".into());
         }
@@ -354,6 +362,7 @@ fn initialize_root(root: &Path) -> Result<(), String> {
     for (name, mode) in [
         ("images", 0o700),
         ("records", 0o700),
+        ("staging", 0o700),
         ("mounts", 0o755),
         ("ipc", 0o700),
         ("assignments", 0o700),
@@ -397,6 +406,17 @@ pub(crate) fn reserved_uids(root: &Path) -> Result<Vec<(Uuid, u32)>, String> {
     let mut result = Vec::new();
     for entry in fs::read_dir(records).map_err(|_| "storage_records_unavailable")? {
         let path = entry.map_err(|_| "storage_records_unavailable")?.path();
+        // A legacy temporary cannot create a claim: its already committed
+        // record remains the reservation until exclusive recovery below.
+        if path.extension() == Some("next".as_ref()) {
+            private_file(&path)?;
+            let committed = read_record(&path.with_extension("json"))?;
+            if committed.plan.root != root || committed.plan.record() != path.with_extension("json")
+            {
+                return Err("storage_untrusted_reservation".into());
+            }
+            continue;
+        }
         let plan = read_record(&path)?.plan;
         if plan.v != 1 || plan.root != root || plan.record() != path {
             return Err("storage_untrusted_reservation".into());
@@ -406,6 +426,7 @@ pub(crate) fn reserved_uids(root: &Path) -> Result<Vec<(Uuid, u32)>, String> {
     Ok(result)
 }
 fn load_or_plan(p: &Plan, ready: bool) -> Result<Record, String> {
+    recover_pending_records(&p.root)?;
     for entry in fs::read_dir(p.root.join("records")).map_err(|_| "storage_records_unavailable")? {
         let path = entry.map_err(|_| "storage_records_unavailable")?.path();
         if path.extension() != Some("json".as_ref()) {
@@ -444,10 +465,7 @@ fn load_or_plan(p: &Plan, ready: bool) -> Result<Record, String> {
                 phase: Phase::Planned,
                 image_identity: None,
             };
-            write_new(
-                &p.record(),
-                &serde_json::to_vec(&r).map_err(|_| "storage_record_invalid")?,
-            )?;
+            save(&r)?;
             Ok(r)
         }
         Err(_) => Err("storage_record_unavailable".into()),
@@ -455,13 +473,80 @@ fn load_or_plan(p: &Plan, ready: bool) -> Result<Record, String> {
 }
 fn save(r: &Record) -> Result<(), String> {
     let p = r.plan.record();
-    let pending = p.with_extension("next");
+    // Uncommitted bytes never appear in the reservation directory. A killed
+    // writer can leave this exact private temporary without blocking owners.
+    let staging = r.plan.root.join("staging");
+    owned_dir(&staging, 0o700)?;
+    let pending = staging.join(format!("{}.pending", r.plan.volume));
+    if fs::symlink_metadata(&pending).is_ok() {
+        private_file(&pending)?;
+        fs::remove_file(&pending).map_err(|_| "storage_record_stage_failed")?;
+    }
     write_new(
         &pending,
         &serde_json::to_vec(r).map_err(|_| "storage_record_invalid")?,
     )?;
     fs::rename(&pending, &p).map_err(|_| "storage_record_commit_failed")?;
     sync(p.parent().ok_or("storage_parent_missing")?)
+}
+
+/// Previous releases placed their atomic-write temporary next to claims.
+/// Recover only a named, private temporary anchored by an exact durable claim.
+/// Partial bytes had not committed any later phase; the old record is retained.
+fn recover_pending_records(root: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(root.join("records")).map_err(|_| "storage_records_unavailable")? {
+        let path = entry.map_err(|_| "storage_records_unavailable")?.path();
+        if path.extension() != Some("next".as_ref()) {
+            continue;
+        }
+        let committed = path.with_extension("json");
+        let old = read_record(&committed)?;
+        if old.plan.root != root || old.plan.record() != committed || old.plan.v != 1 {
+            return Err("storage_untrusted_reservation".into());
+        }
+        let mut pending_bytes = Vec::new();
+        private_file(&path)?
+            .take(8193)
+            .read_to_end(&mut pending_bytes)
+            .map_err(|_| "storage_record_unavailable")?;
+        if pending_bytes.len() > 8192 {
+            return Err("storage_record_too_large".into());
+        }
+        if let Ok(next) = serde_json::from_slice::<Record>(&pending_bytes) {
+            if !record_follows(&old, &next) {
+                return Err("storage_pending_record_conflict".into());
+            }
+            if next.image_identity.is_some() {
+                image_identity(&next)?;
+            }
+            fs::rename(&path, &committed).map_err(|_| "storage_record_commit_failed")?;
+        } else {
+            // Unknown but complete JSON is a schema/conflict, not a partial
+            // write. Keep it for inspection rather than erasing its claim.
+            if serde_json::from_slice::<serde_json::Value>(&pending_bytes).is_ok() {
+                return Err("storage_pending_record_conflict".into());
+            }
+            fs::remove_file(&path).map_err(|_| "storage_record_stage_failed")?;
+        }
+        sync(committed.parent().ok_or("storage_parent_missing")?)?;
+    }
+    Ok(())
+}
+fn record_follows(old: &Record, next: &Record) -> bool {
+    old.plan == next.plan
+        && match (old.phase, next.phase) {
+            (Phase::Planned, Phase::ImageCreated) => {
+                old.image_identity.is_none() && next.image_identity.is_some()
+            }
+            (Phase::ImageCreated, Phase::Allocated)
+            | (Phase::Allocated, Phase::Formatting)
+            | (Phase::Formatting, Phase::Formatted)
+            | (Phase::Formatted, Phase::Ready) => {
+                old.image_identity.is_some() && old.image_identity == next.image_identity
+            }
+            (a, b) if a == b => old.image_identity == next.image_identity,
+            _ => false,
+        }
 }
 fn image_identity(r: &Record) -> Result<(), String> {
     let f = private_file(&r.plan.image())?;
@@ -476,14 +561,27 @@ fn prepare_image(r: &mut Record) -> Result<(), String> {
 }
 fn prepare_image_with_inodes(r: &mut Record, inodes: Option<u32>) -> Result<(), String> {
     if r.phase == Phase::Planned {
-        let f = OpenOptions::new()
+        let f = match OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(r.plan.image())
-            .map_err(|_| "storage_unclaimed_image_requires_inspection")?;
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The committed plan owns this exact image namespace.
+                // Only an empty private image can precede ImageCreated;
+                // never adopt formatted or otherwise populated data.
+                let f = private_file(&r.plan.image())?;
+                if f.metadata().map_err(|_| "storage_image_unavailable")?.len() != 0 {
+                    return Err("storage_unclaimed_image_requires_inspection".into());
+                }
+                f
+            }
+            Err(_) => return Err("storage_unclaimed_image_requires_inspection".into()),
+        };
         f.sync_all().map_err(|_| "storage_image_sync_failed")?;
         let m = f.metadata().map_err(|_| "storage_image_unavailable")?;
         sync(r.plan.image().parent().ok_or("storage_parent_missing")?)?;
@@ -752,8 +850,21 @@ fn empty_target(p: &Path) -> Result<(), String> {
 }
 #[cfg(target_os = "linux")]
 fn verify_mount(p: &Plan) -> Result<(), String> {
+    verify_mount_mode(p, false)
+}
+#[cfg(target_os = "linux")]
+fn verify_mount_mode(p: &Plan, executable: bool) -> Result<(), String> {
     let m = mounted(&p.mount())?.ok_or("storage_mount_missing")?;
-    if !flags(&m) || m.root != "/" {
+    let correct_flags = if executable {
+        m.kind == "ext4"
+            && ["rw", "nosuid", "nodev"]
+                .iter()
+                .all(|v| m.options.split(',').any(|x| x == *v))
+            && !m.options.split(',').any(|x| x == "noexec")
+    } else {
+        flags(&m)
+    };
+    if !correct_flags || m.root != "/" {
         return Err("storage_unexpected_mount".into());
     }
     let backing = fs::read_to_string(format!("/sys/dev/block/{}/loop/backing_file", m.device))
@@ -777,6 +888,10 @@ fn verify_mount(p: &Plan) -> Result<(), String> {
         return Err("storage_capacity_mismatch".into());
     }
     Ok(())
+}
+#[cfg(not(target_os = "linux"))]
+fn verify_mount_mode(_: &Plan, _: bool) -> Result<(), String> {
+    Err("storage_linux_only".into())
 }
 #[cfg(not(target_os = "linux"))]
 fn verify_mount(_: &Plan) -> Result<(), String> {

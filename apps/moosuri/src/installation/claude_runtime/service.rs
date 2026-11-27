@@ -29,6 +29,7 @@ pub(super) fn unit_text(wrapper: &Path) -> String {
          Delegate=yes\n\
          UMask=0077\n\
          Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin\n\
+         Environment=TMPDIR=%h/.cache\n\
          Environment=DOCKERD_ROOTLESS_ROOTLESSKIT_NET=slirp4netns\n\
          \n\
          [Install]\n\
@@ -106,10 +107,9 @@ fn user_ctl(
 pub(super) fn ensure_unit(layout: &Layout, svc: &ServiceIdentity, wrapper: &Path) -> Result<()> {
     let home = layout.at(svc.home.to_str().ok_or("claude_runtime_path_invalid")?);
     layout.safe_ancestors(&home)?;
-    let dir = Dir::open_home(&home, svc.uid, svc.gid)?
-        .child(".config")?
-        .child("systemd")?
-        .child("user")?;
+    let root = Dir::open_home(&home, svc.uid, svc.gid)?;
+    root.child(".cache")?;
+    let dir = root.child(".config")?.child("systemd")?.child("user")?;
     let want = unit_text(wrapper);
     let matches = |found: Option<Vec<u8>>| found.is_some_and(|b| b.as_slice() == want.as_bytes());
     match dir.read_file(UNIT, UNIT_CAP)? {
@@ -123,12 +123,17 @@ pub(super) fn ensure_unit(layout: &Layout, svc: &ServiceIdentity, wrapper: &Path
 
 /// Only the target `user@UID.service` receives delegation; the global
 /// `user@.service` template is never edited.
-pub(super) fn install_dropin(layout: &Layout, exec: &dyn Exec, uid: u32) -> Result<()> {
+pub(super) fn install_dropin(
+    layout: &Layout,
+    exec: &dyn Exec,
+    uid: u32,
+    home: &Path,
+) -> Result<()> {
     let dir = layout.at(&format!("/etc/systemd/system/user@{uid}.service.d"));
     layout.ensure_dir(&dir, 0o755)?;
     layout.write_file(
         &dir.join("moosuri-claude.conf"),
-        b"[Service]\nDelegate=cpu cpuset io memory pids\n",
+        format!("[Unit]\nRequiresMountsFor={}\n[Service]\nDelegate=cpu cpuset io memory pids\nMemoryMax=1610612736\nTasksMax=256\nCPUQuota=200%\n", home.display()).as_bytes(),
         0o644,
         &[],
     )?;

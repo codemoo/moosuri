@@ -45,6 +45,7 @@ struct State {
     crash_after_useradd: bool,
     memory_limit: bool,
     subids_supported: bool,
+    legacy_useradd: bool,
     pulled: bool,
     started: bool,
     sockets: Vec<UnixListener>,
@@ -72,6 +73,20 @@ fn flag(a: &[String], name: &str) -> String {
 impl Fake {
     fn getent(&self, a: &[String]) -> Result<Out> {
         let st = self.st.borrow();
+        if a.len() == 1 {
+            let mut text = String::new();
+            for u in &st.users {
+                text.push_str(&if a[0] == "passwd" {
+                    format!(
+                        "{}:x:{}:{}:{}:{}:{SHELL}\n",
+                        u.name, u.uid, u.uid, u.gecos, u.home
+                    )
+                } else {
+                    format!("{}:x:{}:\n", u.name, u.uid)
+                });
+            }
+            return reply(0, &text);
+        }
         let Some(u) = st.users.iter().find(|u| u.name == a[1]) else {
             return reply(2, "");
         };
@@ -94,6 +109,8 @@ impl Fake {
                 0,
                 if st.subids_supported {
                     "  -F, --add-subids-for-system  add subids\n"
+                } else if st.legacy_useradd {
+                    "--uid --no-create-home --user-group\n"
                 } else {
                     "usage: useradd\n"
                 },
@@ -118,7 +135,11 @@ impl Fake {
         }
         st.users.push(User {
             name,
-            uid: UID_BASE + n,
+            uid: if a.iter().any(|arg| arg == "--uid") {
+                flag(a, "--uid").parse().unwrap()
+            } else {
+                UID_BASE + n
+            },
             gecos,
             home,
         });
@@ -285,6 +306,7 @@ fn env() -> Env {
     for f in ["passwd", "group", "subuid", "subgid"] {
         put(&root.join("etc").join(f), b"", 0o644);
     }
+    put(&root.join("etc/login.defs"), b"SUB_UID_MIN 100000\nSUB_UID_MAX 600100000\nSUB_UID_COUNT 65536\nSUB_GID_MIN 100000\nSUB_GID_MAX 600100000\nSUB_GID_COUNT 65536\n", 0o644);
     let cli = b"official-claude-test-bytes".to_vec();
     let wrapper = b"#!/bin/sh\nrootless\n".to_vec();
     let pins = Pins {
@@ -316,6 +338,7 @@ fn env() -> Env {
                 crash_after_useradd: false,
                 memory_limit: true,
                 subids_supported: true,
+                legacy_useradd: false,
                 pulled: false,
                 started: false,
                 sockets: Vec::new(),
@@ -339,7 +362,14 @@ fn request(id: u128, owner: u128, generation: i64) -> Request {
     )
 }
 fn go(e: &Env, r: &Request) -> Result<PreparedRuntime> {
-    prepare_pinned(&e.layout, &e.host, r.clone(), Path::new(HELPER), &e.pins)
+    prepare_pinned(
+        &e.layout,
+        &e.host,
+        r.clone(),
+        Path::new(HELPER),
+        &e.pins,
+        &|_, _| Ok(()),
+    )
 }
 fn calls(e: &Env) -> Vec<String> {
     e.host.calls.borrow().clone()
@@ -684,4 +714,48 @@ fn private_helper_ancestor_cannot_be_reported_worker_ready() {
         "claude_runtime_worker_artifact_inaccessible"
     );
     assert!(!calls(&e).iter().any(|call| call.starts_with("loginctl")));
+}
+
+#[test]
+fn older_useradd_uses_native_regular_account_subid_allocator_below_member_pool() {
+    let e = env();
+    {
+        let mut st = e.host.st.borrow_mut();
+        st.subids_supported = false;
+        st.legacy_useradd = true;
+    }
+    let r = request(771, 772, 1);
+    let prepared = go(&e, &r).unwrap();
+    assert_eq!(prepared.service.uid, 10000);
+    assert_eq!(go(&e, &r).unwrap(), prepared);
+    let commands = calls(&e);
+    let creates: Vec<_> = commands
+        .iter()
+        .filter(|line| line.starts_with("useradd --uid "))
+        .collect();
+    assert_eq!(creates.len(), 1);
+    assert!(!creates[0].contains("--system"));
+    assert!(!creates[0].contains("--add-subids-for-system"));
+    assert!(creates[0].contains("--no-create-home"));
+}
+
+#[test]
+fn older_useradd_without_native_subid_defaults_refuses_before_allocation() {
+    let e = env();
+    {
+        let mut st = e.host.st.borrow_mut();
+        st.subids_supported = false;
+        st.legacy_useradd = true;
+    }
+    put(
+        &e.host.root.join("etc/login.defs"),
+        b"SUB_UID_COUNT 0\n",
+        0o644,
+    );
+    assert_eq!(
+        go(&e, &request(881, 882, 1)).unwrap_err(),
+        "claude_runtime_subid_allocator_unconfigured"
+    );
+    assert!(e.host.st.borrow().users.is_empty());
+    assert!(!calls(&e).iter().any(|line| line.starts_with("curl ")));
 }

@@ -1414,3 +1414,51 @@ Root-bound evidence, owner-wide admission/login serialization, engine-home
 resource limits, interrupted storage-record repair, Ubuntu22 portability and
 existing gateway/UI/worker registration are explicit next integration gates.
 No real login, inference, production configuration or model choice changed.
+
+### Kiri subscription product integration — in progress
+
+The prior turn was progress:51db7232 published credential-free preparation with
+actual Linux evidence. This unit connects that prerequisite to the existing
+administrator UI, private login bridge and owner-bound runtime-model worker.
+Parallel official Claude Sonnet5.5/medium workers own isolated host-parent and
+gateway/UI source copies; main owns integration, root/storage corrections and
+Linux acceptance. No production setting or actual provider credential changes.
+
+M05-A–H remain the acceptance scope: start on an empty server, official login
+and model/account verification, reopen, cancel/disconnect, duplicate/out-of-order
+code, wrong account/model, lost result, and authority/profile/reboot changes.
+Preparation evidence alone still does not close these journeys. The initial UI
+can offer the official single-use login link/code; remote-client rendering in
+the same Kiri and ordinary member enrollment must be verified before claiming
+the complete goal.
+
+Candidate main changes bound the entire rootless worker home, reserve setup
+capacity, reuse the OS subordinate-ID allocator on older useradd, recover
+interrupted storage records and make root-generated configs immutable to the
+worker. These are unverified until the integrated Linux results below.
+
+Integration acceptance is now defined as S01–S07 real installed HTTP journeys and
+U01–U03 real browser journeys. H01–H06 supporting Linux boundaries passed; the
+H04 fixture-mode failure and correction are retained. Root and gateway patches
+are integrated, but current source tests, installed acceptance and independent
+closure are still in progress. Published/production state has not advanced.
+[Product integration worklog](../../../docs/reviews/2026-11-27-claude-product-connection.md)
+records the exact open lifecycle and provider gates rather than hiding them in
+preparation counts.
+
+
+### Installed connection checkpoint — 2026-11-27 12:56 KST
+
+S01–S07 and actual Chromium U01–U03 passed on candidate7d3a9862, including
+official URL/cancel, same-session reload, foreign session refusal, restart,
+prepare cancellation and logout cleanup. Actual systemd255 exposed useradd
+writes remaining read-only under full+/etc; the bounded allocator now uses
+strict+/etc and the installed product passed. Initial failures are preserved.
+
+Final source follow-ups guard terminal receipt monotonicity and prevent API
+replacement from abandoning a published subscription worker. Explicit lifecycle
+LC01–LC08 is next: disconnect/reconnect, API replacement cleanup, crash/reboot,
+stale owner reclamation and member isolation. These are not marked implemented.
+Real provider authentication, same-Kiri authentication rendering, ordinary member
+enrollment, Gmail conversation and final matched deployment remain open.
+No publication or production transition has occurred for this unit.

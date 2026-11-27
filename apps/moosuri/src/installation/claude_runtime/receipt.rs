@@ -19,8 +19,10 @@ pub(super) fn marker(id: &Uuid) -> String {
     // No ':' or ',' (invalid in a passwd GECOS field).
     format!("moosuri-claude-{}", id.hyphenated())
 }
-pub(super) fn home(username: &str) -> String {
-    format!("{}/{}", super::HOMES, username)
+pub(super) fn home(id: Uuid) -> String {
+    crate::kiri_storage::claude::home_path(id)
+        .display()
+        .to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,7 +71,7 @@ impl Receipt {
             request_id: request.request_id,
             owner: request.owner,
             marker: marker(&request.request_id),
-            home: home(&username),
+            home: home(request.request_id),
             username,
             phase: Phase::Reserved,
             identity: None,
@@ -157,6 +159,7 @@ impl Store {
     /// One exact owner tuple may not be prepared by two different requests.
     pub(super) fn owner_in_use(&self, request: &Request) -> Result<()> {
         let entries = fs::read_dir(&self.dir).map_err(|_| "claude_runtime_receipt_unavailable")?;
+        let mut count = 0;
         for entry in entries {
             let entry = entry.map_err(|_| "claude_runtime_receipt_unavailable")?;
             let name = entry.file_name();
@@ -171,6 +174,10 @@ impl Store {
                 .strip_suffix(".json")
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or("claude_runtime_receipt_directory_foreign")?;
+            count += 1;
+            if count >= 64 {
+                return Err("claude_runtime_owner_capacity".into());
+            }
             if id == request.request_id {
                 continue;
             }

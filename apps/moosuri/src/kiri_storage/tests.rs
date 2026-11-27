@@ -1,4 +1,29 @@
 use super::*;
+#[test]
+fn interrupted_record_cannot_reassign_owner_skip_formatting_or_roll_back() {
+    let p = plan();
+    let old = Record {
+        plan: p.clone(),
+        phase: Phase::Allocated,
+        image_identity: Some((4, 5)),
+    };
+    let mut next = Record {
+        plan: p.clone(),
+        phase: Phase::Formatting,
+        image_identity: Some((4, 5)),
+    };
+    assert!(record_follows(&old, &next));
+    next.phase = Phase::Ready;
+    assert!(!record_follows(&old, &next));
+    next.phase = Phase::ImageCreated;
+    assert!(!record_follows(&old, &next));
+    next.phase = Phase::Formatting;
+    next.plan.uid += 1;
+    assert!(!record_follows(&old, &next));
+    next.plan = p;
+    next.image_identity = Some((4, 6));
+    assert!(!record_follows(&old, &next));
+}
 fn plan() -> Plan {
     Plan {
         v: 1,

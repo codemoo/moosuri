@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useScope } from "./account-scope";
 import { ApiFailure, isAborted } from "./api";
+import { PersonalClaudeSetup } from "./PersonalClaudeSetup";
 
-type Setup = { supported: boolean; saved: boolean; connection_revision?: string };
+type Setup = { supported: boolean; saved: boolean; connection_revision?: string; subscription_operation?: boolean };
 const path = "/personal/admin/engine/setup";
 
 /** Claude connection form. The key exists in the password input and one request,
@@ -15,6 +16,8 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
   const scope = useScope(account, "installation-engine-setup");
   const [setup, setSetup] = useState<Setup | null>(null);
   const [replacing, setReplacing] = useState(false);
+  const [mode, setMode] = useState<"api" | "subscription">("api");
+  const [claudeActive, setClaudeActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const keyInput = useRef<HTMLInputElement>(null);
@@ -38,7 +41,11 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
   }
   useEffect(() => {
     const cancel = new AbortController();
-    void scope.request<Setup>(path, "GET", undefined, cancel.signal).then(setSetup).catch(e => {
+    void scope.request<Setup>(path, "GET", undefined, cancel.signal).then(next => {
+      setSetup(next);
+      // An unfinished own-subscription setup resumes after a reload.
+      if (next.subscription_operation) setMode("subscription");
+    }).catch(e => {
       if (e instanceof ApiFailure && [404, 405, 501].includes(e.status)) return;
       fail(e);
     });
@@ -87,16 +94,29 @@ export function PersonalEngineSetup({ account, onSaved, expired, unavailable, su
   }
   if (!setup?.supported) return error ? <p role="alert">{error}</p> : null;
   if (subscriptionMismatch) return <p role="alert" className="preview-error">현재 연결 상태를 확인하지 못했습니다. 위의 새로고침을 누른 뒤 다시 시도해 주세요.</p>;
+  if (subscription) return <section className="member-page-list management-engine-overview">
+    <h2>Claude 연결</h2>
+    <p role="status">Claude 구독이 연결되어 있습니다.</p>
+    <p className="management-note">이 화면에서 구독 연결을 해제하거나 다른 연결로 바꾸는 기능은 아직 지원하지 않습니다.</p>
+  </section>;
   const form = !setup.saved || replacing;
+  const claude = mode === "subscription";
   return <section className="member-page-list management-engine-overview" aria-labelledby="engine-first-connection">
     <h2 id="engine-first-connection">Claude 연결</h2>
-    {subscription && <p className="management-note">API 키로 교체하면 현재 구독 로그인 연결을 대신해 관리자의 Anthropic API를 사용합니다. 회원들의 사용량은 이 API 계정에 별도로 청구됩니다.</p>}
     {error && <p role="alert" className="preview-error">{error}</p>}
     {!form && <>
       <p role="status">설치에 연결 설정이 등록되어 있습니다. 위 엔진 상태를 새로고침하고 대화에서 응답을 확인해 주세요.</p>
       {setup.connection_revision && <button className="member-page-action" type="button" onClick={() => { setError(""); setReplacing(true); }}>키·모델 교체</button>}
     </>}
-    {form && <form className="management-list" onSubmit={submit}>
+    {(form || claude) && <fieldset className="management-row" disabled={busy || claudeActive}>
+      <legend>연결 방식</legend>
+      <label className="management-row management-toggle management-choice"><input type="radio" name="engine-connection-mode" checked={!claude} onChange={() => setMode("api")}/> API 키 사용</label>{" "}
+      <label className="management-row management-toggle management-choice"><input type="radio" name="engine-connection-mode" checked={claude} onChange={() => setMode("subscription")}/> 내 Claude 구독 사용</label>
+    </fieldset>}
+    {claude && <PersonalClaudeSetup account={account} replaceRevision={setup.saved ? setup.connection_revision ?? null : undefined}
+      expired={expired} unavailable={unavailable} onActive={setClaudeActive}
+      onSaved={() => { setReplacing(false); onSaved(); void refresh(); }}/>}
+    {form && !claude && <form className="management-list" onSubmit={submit}>
       <p className="management-row management-note">{replacing
         ? "새 키와 모델을 확인한 뒤 현재 연결을 교체합니다. 확인이 끝나기 전에는 기존 연결이 유지됩니다."
         : "관리자의 Anthropic API 연결을 이 설치의 회원들이 사용합니다. 키와 모델 목록을 확인한 뒤 저장합니다."}</p>

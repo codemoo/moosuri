@@ -64,12 +64,36 @@ pub(super) fn lookup_group(exec: &dyn Exec, name: &str) -> Result<Option<(u32, S
 }
 
 /// System user + same-named group + home + automatic subordinate ranges.
-pub(super) fn create(exec: &dyn Exec, receipt: &Receipt) -> Result<()> {
-    let a = args(&[
-        "--system",
+pub(super) fn create(exec: &dyn Exec, receipt: &Receipt, system_subids: bool) -> Result<()> {
+    let mut a = if system_subids {
+        args(&["--system", "--add-subids-for-system"])
+    } else {
+        // useradd owns passwd/group/subid locking and allocation. Do not edit
+        // those global files or invent a second subordinate-ID allocator.
+        let mut occupied = std::collections::BTreeSet::new();
+        for database in ["passwd", "group"] {
+            let out = exec
+                .run("getent", &args(&[database]), Input::None, LIMIT)?
+                .ok("claude_runtime_getent_failed")?;
+            for line in std::str::from_utf8(&out)
+                .map_err(|_| "claude_runtime_account_record_invalid")?
+                .lines()
+            {
+                let id = line
+                    .split(':')
+                    .nth(2)
+                    .ok_or("claude_runtime_account_record_invalid")?;
+                occupied.insert(number::<u32>(id)?);
+            }
+        }
+        let selected = (10000..MAX_SERVICE_UID)
+            .find(|id| !occupied.contains(id))
+            .ok_or("claude_runtime_identity_capacity")?;
+        vec!["--uid".into(), selected.to_string()]
+    };
+    a.extend(args(&[
         "--user-group",
-        "--create-home",
-        "--add-subids-for-system",
+        "--no-create-home",
         "--shell",
         SHELL,
         "--home-dir",
@@ -77,7 +101,7 @@ pub(super) fn create(exec: &dyn Exec, receipt: &Receipt) -> Result<()> {
         "--comment",
         receipt.marker.as_str(),
         receipt.username.as_str(),
-    ]);
+    ]));
     exec.run("useradd", &a, Input::None, LIMIT)?
         .ok("claude_runtime_useradd_failed")
         .map(|_| ())

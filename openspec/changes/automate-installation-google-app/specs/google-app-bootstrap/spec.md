@@ -323,3 +323,31 @@ itself authenticate an account or authorize a model binding.
 #### Scenario: Probe interruption and existing login data
 - **WHEN** a credential-free probe is interrupted or admission is requested on a root containing a login environment
 - **THEN** the former reuses one reserved probe identity and requires owned-container cleanup before directory removal, while the latter is refused without sweeping credentials
+
+
+### Requirement: Installed Claude setup is session-bound and recoverable
+The existing administrator gateway and UI SHALL bind Claude login to the
+initiating session and full owner. Ready SHALL require durable exact model
+configuration and the root worker mark. Polling SHALL NOT finalize setup.
+Every connection mode SHALL reserve unfinished or unreadable operations for
+authenticated recovery.
+
+#### Scenario: An administrator reopens a running login
+- **WHEN** the initiating page reloads or a second session reads the operation
+- **THEN** the original session resumes its URL while the second sees progress without code or live-cancellation authority
+
+#### Scenario: Preparation is cancelled or its initiating session is revoked
+- **WHEN** cancel or authority loss occurs before publication
+- **THEN** owned host work is awaited and cleaned before a successor can start, and no ready model configuration is written
+
+#### Scenario: A gateway restarts during login or publication
+- **WHEN** a current session of the exact full owner recovers the stored operation
+- **THEN** an unpublished attempt is retired, an exact published config is durably rewritten and root-marked, and unreadable or mismatched config stays pending without destructive cleanup
+
+#### Scenario: A terminal receipt or publication sync fails
+- **WHEN** terminal persistence cannot complete or a config rename is visible after a sync error
+- **THEN** setup stays reserved until durable reconciliation, including against concurrent API-key setup, and status polling cannot manufacture a ready state
+
+#### Scenario: A new request never reached the host
+- **WHEN** cleanup encounters only an earlier request's root record
+- **THEN** it leaves that record untouched and releases only the unseen request, so a failed start cannot permanently block retry

@@ -109,6 +109,10 @@ form.management-list {
   font-size: inherit;
 }
 
+.management-choice {
+  justify-content: flex-start;
+}
+
 .management-toggle:has(input:enabled) {
   cursor: pointer;
 }

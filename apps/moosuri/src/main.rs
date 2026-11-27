@@ -98,6 +98,9 @@ enum Command {
     /// Credential-free native admission of a newly prepared Claude launch.
     #[command(hide = true)]
     ClaudeEngineIsolation(engine_login::claude::IsolationOptions),
+    /// Retire one exact owner environment after confirmed process cleanup.
+    #[command(hide = true)]
+    ClaudeEngineRetire(engine_login::claude::RetireOptions),
     /// Prepare isolated host resources for a new owner-bound Claude connection.
     #[command(hide = true)]
     ClaudeRuntimePrepare(installation::claude_runtime::Options),
@@ -491,6 +494,9 @@ async fn run(cli: Cli) -> Result<(), String> {
     if let Command::ClaudeEngineIsolation(options) = &cli.command {
         return engine_login::claude::admit_isolation(options).await;
     }
+    if let Command::ClaudeEngineRetire(options) = &cli.command {
+        return engine_login::claude::retire(options).await;
+    }
     if let Command::ClaudeRuntimePrepare(options) = &cli.command {
         return installation::claude_runtime::run(options);
     }
@@ -682,6 +688,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         | Command::ClaudeEngineLogin(_)
         | Command::ClaudeEngineLoginBridge(_)
         | Command::ClaudeEngineIsolation(_)
+        | Command::ClaudeEngineRetire(_)
         | Command::ClaudeRuntimePrepare(_)
         | Command::EngineChatgptInspect(_)
         | Command::RuntimeModel(_)

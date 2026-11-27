@@ -335,6 +335,11 @@ fn lay_down_is_resumable_and_never_replaces_changed_files_or_secrets() {
     let gateway =
         fs::read_to_string(layout.at("/etc/systemd/system/moosuri-kiri-gateway.service")).unwrap();
     assert!(gateway.contains("--vault-all-members") && gateway.contains("--proxy-gid 33"));
+    assert!(
+        gateway.contains("ProtectHome=no\n")
+            && gateway.contains("InaccessiblePaths=-/home -/root\n")
+    );
+    assert!(gateway.contains("ReadWritePaths=/etc/systemd/system\n"));
     assert!(!gateway.contains(std::str::from_utf8(&key[..64]).unwrap()));
     let lifecycle = fs::read_to_string(layout.at(MEMBERS)).unwrap();
     for field in [

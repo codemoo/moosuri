@@ -20,7 +20,6 @@ type Engine = {
   default_stale: boolean;
 };
 const path = "/personal/admin/engine";
-const engineGuide = "https://github.com/codemoo/moosuri/blob/main/deployment/kiri/subscriptions.md";
 const providerNames: Record<ProviderKind, string> = {
   open_ai: "OpenAI",
   anthropic: "Anthropic",
@@ -169,15 +168,7 @@ export function PersonalEngineSettings({ account, expired, unavailable }: {
       {engine && <>
         {(!engine.configured || (engine.kind === "anthropic" && ["api", "claude_code"].includes(engine.connection_mode ?? ""))) && <PersonalEngineSetup key={account} account={account} subscriptionRevision={engine.connection_mode === "claude_code" ? engine.connection_revision : undefined} expired={expired} unavailable={unavailable} onSaved={() => setRefresh(value => value + 1)} />}
         {engine.configured && <ProviderUsage key={account + "/" + engine.connection_revision + "/" + engine.revision} engine={engine} account={account} current={current} expired={expired} unavailable={unavailable} />}
-        <section className="member-page-list management-engine-overview" aria-labelledby="engine-host-setup">
-          <h2 id="engine-host-setup">공급자 추가와 모델 목록 갱신</h2>
-          <ol>
-            <li>설치 서버에서 API 키 또는 회원별 로그인 워커를 준비하세요. <a href={engineGuide.replace("subscriptions.md", "engine-chatgpt.md")} target="_blank" rel="noreferrer">ChatGPT 등록</a> · <a href={engineGuide.replace("subscriptions.md", "engine-claude.md")} target="_blank" rel="noreferrer">Claude Code 로그인</a></li>
-            <li>공급자에서 모델·추론 강도를 확인하고 브로커와 로그인 워커에 같은 조합을 등록하세요. 연결이나 목록을 교체할 때 새 연결 버전을 발급하세요.</li>
-            <li>호스트에서 워커와 모델 서비스를 시작한 뒤 이 화면을 새로고침하고 적용할 모델을 선택하세요.</li>
-          </ol>
-          <p><a href={engineGuide} target="_blank" rel="noreferrer">설치 서버에서 엔진 연결 설정하기</a></p>
-        </section>
+        <p className="management-note">연결을 완료하면 여기에서 사용할 모델과 추론 강도를 확인하고, 대화에서 요청을 보내세요.</p>
       </>}
     </section>
   );

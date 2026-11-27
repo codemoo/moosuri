@@ -158,7 +158,7 @@ print('matched_running_revision_verified')
                     return
                 if args.first_mail_journeys:
                     import runpy
-                    module = runpy.run_path(str(Path(__file__).with_name('installed-first-mail.py', 'installed-google-sharing-ui.py')))
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-first-mail.py')))
                     module['run'](browser, args, ssh, target, members)
                     return
                 if args.google_reentry_journeys:

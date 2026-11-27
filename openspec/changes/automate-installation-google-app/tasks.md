@@ -1560,3 +1560,14 @@ the material findings. Six supporting journeys passed through12 native checks,
 including two owners and an actual reboot. Four earlier product/prerequisite/
 harness failures remain recorded. [Scope and evidence](../../../docs/reviews/2026-11-27-claude-ubuntu22.md).
 No real authentication, inference, OS upgrade or production change occurred.
+
+### Current-source installation acceptance — preparation
+
+The next empty Ubuntu24 installation includes all published subscription,
+Google reentry and first-mail changes. Inspection found the first-mail browser
+dispatch passed two filenames to `Path.with_name`, raising `TypeError` before
+FM01–FM03 could run. Corrected that invocation and exercised all seven sibling
+module path expressions on Linux. This restores the runner; it does not add new
+browser/provider acceptance to the earlier first-mail results. The current-source
+empty installation, two members, real reboot and production transition remain
+open until the recorded execution completes.

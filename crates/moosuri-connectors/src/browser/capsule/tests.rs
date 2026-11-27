@@ -463,7 +463,7 @@ async fn bootstrap_cleanup_requires_graceful_zero_exit_and_still_reaps_failures(
 }
 
 #[test]
-fn authentication_memory_is_finite_and_swap_stays_disabled() {
+fn authentication_resources_are_finite_and_swap_stays_disabled() {
     let reader = CapsuleReader::new(config()).unwrap();
     for auth in [false, true] {
         let command = reader.worker_command_mode(
@@ -499,9 +499,18 @@ fn authentication_memory_is_finite_and_swap_stays_disabled() {
                 vec![]
             }
         );
+        assert_eq!(
+            args.iter()
+                .filter(|x| x.starts_with("--pids-limit="))
+                .collect::<Vec<_>>(),
+            vec![if auth {
+                "--pids-limit=512"
+            } else {
+                "--pids-limit=256"
+            }]
+        );
         for flag in [
             "--read-only",
-            "--pids-limit=256",
             "--cpus=1",
             "--security-opt=no-new-privileges:true",
         ] {

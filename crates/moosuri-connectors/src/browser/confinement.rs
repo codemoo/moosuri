@@ -67,6 +67,12 @@ pub(super) const fn memory_limit_bytes(google_auth: bool) -> u64 {
     }
 }
 
+// Provider verification adds renderers and their threads to the same capsule.
+// Keep their PID budget finite and separate from ordinary browsing.
+pub(super) const fn process_limit(google_auth: bool) -> u64 {
+    if google_auth { 512 } else { 256 }
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn limits(memory: &str, pids: &str, cpu: &str, google_auth: bool) -> bool {
     let bounded = |raw: &str, maximum| {
@@ -76,7 +82,7 @@ fn limits(memory: &str, pids: &str, cpu: &str, google_auth: bool) -> bool {
     };
     let parts: Vec<_> = cpu.split_whitespace().collect();
     bounded(memory, memory_limit_bytes(google_auth))
-        && bounded(pids, 256)
+        && bounded(pids, process_limit(google_auth))
         && parts.len() == 2
         && parts[1]
             .parse::<u64>()
@@ -87,14 +93,17 @@ fn limits(memory: &str, pids: &str, cpu: &str, google_auth: bool) -> bool {
 mod tests {
     use super::*;
     #[test]
-    fn auth_memory_is_bounded_without_relaxing_other_kernel_limits() {
-        assert!(limits("1610612736", "256", "100000 100000", true));
+    fn auth_resources_are_bounded_without_relaxing_cpu_or_ordinary_limits() {
+        assert!(limits("1610612736", "512", "100000 100000", true));
+        assert!(limits("805306368", "256", "100000 100000", true));
         assert!(!limits("1610612736", "256", "100000 100000", false));
+        assert!(!limits("805306368", "512", "100000 100000", false));
         for (memory, pids, cpu) in [
             ("1610612737", "256", "100000 100000"),
             ("max", "256", "100000 100000"),
             ("0", "256", "100000 100000"),
-            ("1610612736", "257", "100000 100000"),
+            ("1610612736", "513", "100000 100000"),
+            ("1610612736", "0", "100000 100000"),
             ("1610612736", "max", "100000 100000"),
             ("1610612736", "256", "100001 100000"),
             ("1610612736", "256", "max 100000"),

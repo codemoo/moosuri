@@ -63,7 +63,7 @@ member's password; that is partial infrastructure evidence, not web admission.
 | M02 | Invite another member during an existing member's model request | New socket appears; existing request is not cancelled or charged twice | Dynamic socket isolation passed; full install journey open |
 | M03 | Wrong/revoked key, unsupported model or invalid effort | Show the actual unavailable state; preserve an existing connection until the replacement is valid | Installed candidate0b5e8fa Chromium UI rejected one synthetic invalid-key catalog request, cleared input, stayed unconfigured after reload and hid setup from a second member; valid replacement and inference remain open |
 | M04 | Lose API-setup reply, then another administrator changes the connection | Reconcile this request's revision; never attribute another administrator's save to this request | Candidate UI attribution and atomic-save tests passed |
-| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Final-source installation and production transition passed; the real owner reached official Claude login after correcting legacy host egress. First Google attempts lost the frame. Diagnostic51c98a7f then displayed Google and accepted identifier input, but Google refused the browser; cancel/cleanup passed. Official Claude email login reached security verification and its768MiB auth capsule suffered a correlated Chrome OOM;1536MiB candidate native checks passed, live rerun pending. Real authentication/inference and member enrollment remain open |
+| M05 | Administrator elects an official Claude subscription connection | Provision isolated non-root worker, fresh login and exact member binding from public source; no copied developer authentication | Diagnostic51c98a7f displayed Google and accepted identifier input, then Google refused the browser; cleanup passed. Official Claude email login suffered a correlated768MiB Chrome OOM. The0926adc2 auth-only1536MiB correction passed installed/popup/cancel checks and production deployment. Fresh live verification had no OOM but hit the256 PID/thread ceiling4 times; auth-only512-PID correction is under verification. Real authentication/inference and member enrollment remain open |
 | M06 | Worker is missing/restarted, member generation changes, or server reboots | No borrowed member login, no fallback model, no new charge before dispatch; truthful recovery | Socket isolation/replay boundaries passed; fresh subscription/reboot journey open |
 
 Shared model credentials use the installation API route. The existing official
@@ -419,7 +419,7 @@ login results are recorded in [the production log](../../../docs/reviews/2026-11
 
 [GE01–GE05](../../../docs/reviews/2026-11-27-google-setup-entry.md) cover the
 first-installer automatic entry, selected service, chooser, secondary import and
-account/role boundaries. [MB01–MB04](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
+account/role boundaries. [MB01–MB05](../../../docs/reviews/2026-11-27-claude-sso-popup.md)
 cover the actual auth-container Chrome OOM, ordinary-browser budget, invalid
 resource refusal and cleanup. These supporting checks do not increase the61
 primary journeys or turn provider-limited rows into passes.

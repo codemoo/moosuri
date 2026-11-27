@@ -256,13 +256,48 @@ unlimited workaround. Other Claude inference-worker limits are unchanged.
 
 | ID | User journey or resource boundary | Candidate result |
 | --- | --- | --- |
-| MB01 | Owner reaches a provider verification page inside the login flow | Actual768MiB OOM correlated;1536MiB installed reproduction remains pending |
+| MB01 | Owner reaches a provider verification page inside the login flow | Actual768MiB OOM correlated; installed/production1536MiB kernel limits verified,21 live samples had zero OOM; provider verification still incomplete |
 | MB02 | Ordinary member browses while auth uses its larger budget | Native command/kernel checks retain768MiB; generic mode refuses auth-sized memory |
-| MB03 | Runtime supplies unlimited memory, excessive CPU/PIDs or swap | Native memory/CPU/PID refusal passes; auth zero-swap kernel gate retained; actual admission probe pending |
-| MB04 | Authentication fails and owner returns to setup | Actual51c worker fault cleaned its capsule; candidate installed cancellation/recovery remains pending |
+| MB03 | Runtime supplies unlimited memory, excessive CPU/PIDs or swap | Native refusal passes;0926adc2 actual guest/production admission, zero swap, CPU1, PID256 and read-only root verified |
+| MB04 | Authentication fails and owner returns to setup | Actual51c fault and0926adc2 guest/production cancellation all removed the owned capsule; no authenticated binding |
+| MB05 | Provider verification uses many renderer threads | Actual0926adc2 auth capsule hit256 PID limit4 times; widget visibly crashed while memory/storage had headroom;512 auth-only PID correction under verification |
 
 Linux browser tests passed189 with3 ignored. Independent official Claude
 Sonnet5.5/medium found no blocking memory-change defect. Its concern about swap
 was checked against the existing kernel gate above; its remaining requirement
 is actual installed reproduction at the new cap. These results do not establish
 provider authentication or adequate memory for every future provider page.
+
+### Installed0926adc2 and the next resource boundary
+
+The memory/UI correction was built from all2690 matching source files, admitted
+in the retained two-member guest, and deployed to production. Gateway, Google
+handler and auth worker changed together. Member identities, encrypted Vault,
+keys, existing Google grants, model settings, peer services and confinement were
+preserved. Guest official Claude→Google identifier display, kernel limits and
+cancel/cleanup passed. Prior authority cases were inherited, not rerun. This is
+a patch on the accepted c3 installation, not a new empty-source installation.
+
+Image: `sha256:552e5f815b1cc27b1d162b9c6301c051ae8011d358225c5176dfcfa7c5e6bdc5`.
+Candidate acceptance SHA256:
+`f94d9981b391372288534da704acf2138c1c2ded7db9ae97cb63bd7c1aac74d3`.
+
+One fresh production login stopped at the provider's initial security check,
+before the owner entered an email or any credential. The widget showed a
+renderer failure. Across21 samples memory.current peaked at850874368 bytes;
+memory.events reported zero OOM/OOM-kill. Kernel/auth storage checks showed
+ample tmpfs space, while the same capsule had `pids.current=228` and
+`pids.events max=4`. Kernel Chrome traps were also observed, but the count alone
+does not prove that each trap belongs to that widget. PID exhaustion is proved;
+the causal fix still requires a new live observation. The owner cancelled in
+the product, the operation became cancelled and the capsule disappeared.
+
+The follow-up gives authentication at most512 PIDs including threads, retaining
+256 for ordinary browsing. Launcher and kernel admission share this mode limit;
+memory, zero swap, CPU1, mounts, capabilities, network and two-slot admission are
+unchanged. Two auth slots can use at most1024 PIDs and3GiB. It does not change
+Chrome flags or bypass provider verification. Linux native browser tests passed189 with3 ignored. Independent official
+Claude Sonnet5.5/medium found no blocking defect. It requested actual PID peak,
+limit-hit and cleanup observations and a check for another launch limit. The
+launcher uses one shared mode function; other lower-PID containers are SDK,
+inference or member workers. Installed/live acceptance remains pending.

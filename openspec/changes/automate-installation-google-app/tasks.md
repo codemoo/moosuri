@@ -18,8 +18,11 @@ production UI reached Google identifier entry, then Google rejected the browser;
 explicit cancellation cleaned the capsule. The earlier intermittent crash was
 not reproduced. A separate official Claude email path reached a provider security
 verification pause, then a polling failure correlated to Chrome OOM in the
-exact768MiB auth container. A bounded1536MiB auth-only correction and first-setup
-UI entry correction passed native/UI checks; installed acceptance is pending.
+exact768MiB auth container. The0926adc2 auth-only1536MiB correction and first-setup
+UI entry correction passed installed resource/popup/cancel checks and matched
+production deployment with preserved data. A fresh production login remained at
+provider security verification: no OOM over21 samples, but the same capsule's
+PID limit was hit4 times. The auth-only512-PID follow-up is under verification.
 Actual authentication remains open.
 Actual authentication/inference, automatic OAuth setup and two real member
 consents remain open. [Current evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).

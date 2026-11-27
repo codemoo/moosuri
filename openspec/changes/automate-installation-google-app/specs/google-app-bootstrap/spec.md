@@ -507,15 +507,16 @@ A saved intent SHALL survive lost acknowledgements and delayed fallback writes.
 - **WHEN** another administrator changes the connection before the page submits or rechecks it
 - **THEN** stale mutations are refused and rechecking refreshes the parent connection view
 
-### Requirement: Authentication browsing has a bounded distinct memory budget
+### Requirement: Authentication browsing has bounded distinct resource budgets
 Google and Claude authentication capsules SHALL use at most1536MiB memory with
-zero swap. Ordinary read/workspace capsules SHALL retain their768MiB bound.
+zero swap and512 PIDs including threads. Ordinary read/workspace capsules SHALL
+retain their768MiB and256 PID bounds.
 The launcher and in-container kernel checks SHALL agree on the selected mode,
-while existing CPU, PID, mount, capability, network and admission limits remain.
+while existing CPU, mount, capability, network and two-slot admission limits remain.
 
 #### Scenario: Provider login opens a verification page
 - **WHEN** the authentication flow holds an opener and a provider verification page
-- **THEN** the auth memory budget applies, with kernel-enforced zero swap and existing isolation verified before browser launch
+- **THEN** the auth memory and PID budgets apply, with kernel-enforced zero swap and existing isolation verified before browser launch
 
 #### Scenario: A generic browser runs with authentication-sized limits
 - **WHEN** a generic browser receives a limit above its ordinary budget

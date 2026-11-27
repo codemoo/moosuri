@@ -366,9 +366,12 @@ impl CapsuleReader {
             "--tmpfs",
             "/run:rw,noexec,nosuid,size=1m,mode=0755",
             "--shm-size=256m",
-            "--pids-limit=256",
             "--cpus=1",
         ])
+        .arg(format!(
+            "--pids-limit={}",
+            super::confinement::process_limit(google_auth)
+        ))
         .arg(format!(
             "--memory={}",
             super::confinement::memory_limit_bytes(google_auth)

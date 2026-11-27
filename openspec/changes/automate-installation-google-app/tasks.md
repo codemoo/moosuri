@@ -1224,7 +1224,8 @@ The narrow production auth image and existing member data remain unchanged.
 
 - [x] Complete integrated invitation store/HTTP/UI checks and independent Claude review.
 - [x] Execute J01–J08 with actual installed Linux services/browser and preserve failures.
-- [ ] Publish and deploy the accepted admission unit with compatible registry consumers.
+- [x] Publish the accepted admission unit and validate its matching bundle/four-member reboot.
+- [ ] Deploy the accepted admission unit with compatible registry consumers.
 - [ ] Reconcile pristine result and resume remaining Google/model/default-installer gates.
 
 
@@ -1303,3 +1304,32 @@ changed-file secret scan found only the pre-existing unusable `AAAA` PEM marker
 in the installer tests; no new credential or exception was added. Dependencies
 and third-party assets are unchanged. The candidate remains separate from the
 running production bundle and the final fresh-source acceptance.
+
+### Matching admission release and latest entry acceptance — 2026-11-27
+
+The public9a7b83b3 bundle completed; all artifact/image hashes and both actual
+confined browser admission/cleanup probes passed. All four existing synthetic
+members moved to the new member image with original UID/mount/data/key identities.
+Same-target replay kept ID/PID. Browser/Vault checks passed before and after an
+actual reboot; both web-created users retained original passwords, replacement
+HTTP401 denial, separate Vaults and member roles. The original installer receipt
+and prior baseline evidence were retained. [Exact result](../../../docs/reviews/2026-11-27-web-invitation.md#matching-bundle-and-four-member-reboot).
+
+A separate untouched Ubuntu24 VM is installing publicdee84754 through a real
+controlling terminal: public addresses, administrator identity and hidden password
+confirmation are entered at the product prompts. Supplied synthetic TLS avoids
+external DNS/ACME; no real issuance is claimed. The durable next stages use the
+current public invitation API harness for the second password, then both UIs,
+encrypted Vaults, actual reboot and egress/isolation. No provider credentials exist
+in that fixture. This latest-source run is still in progress.
+
+Production is unchanged. A current-state operator preserves the existing Kiri0.2.2
+engine, model setup, onboarding policy, account and grants while moving all registry
+consumers together. Read-only checks confirmed its current paths and retired
+transport fence. Independent official Claude Sonnet5.5/medium review prompted
+earlier private-file/state preconditions, full command-reference checks, preservation
+of browser/security settings, and identity comparison before public admission.
+The first tool-based review could not read the operator and did not count as its
+review; a supplied-source review and corrected closure review did. The closure
+found no material defect in scope. Actual preparation/deployment waits for the
+latest-source acceptance and available disk; no production upgrade was attempted.

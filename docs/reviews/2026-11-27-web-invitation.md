@@ -69,10 +69,46 @@ in unrelated files; none of the changed Rust files appears in those differences.
 The changed public-file scan found no secrets. No dependencies or external code
 were added; new work follows the repository's MIT/Apache-2.0 licensing.
 
+## Matching bundle and four-member reboot
+
+Public admission revision `9a7b83b39b2c418644ce203ceae09cd03f992b9c` then
+completed a source-built bundle in the same disposable Ubuntu24 guest. All six
+artifact hashes and three image identities matched its manifest. Both confined
+browser admission/cleanup probes passed before the runtime switch.
+
+All four members (the original two and both web-created members) moved to the
+new image. Their UID, labels, mounts, keys, logical databases, private allocations
+and encrypted Vaults were preserved. Same-target replay retained container IDs
+and PIDs. Matching host services resumed with the original installer receipt
+and enrollment intact.
+
+Actual Chromium reopened both original encrypted Vaults at1280px and390px,
+checked wrong-password refusal and member isolation, and retained their items.
+After an actual VM reboot, the original two identities, independent Kiri Vault
+recipients, cancellation/logout, role boundary and Vaults passed again. Both
+web-created members logged in with their original passwords, rejected the
+replacement as HTTP401 and reopened their separate Vaults without admin access.
+Desktop/mobile screenshots were inspected. No Google account or model was called.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Host binary | `ec0111eb546f03a3bd3a6d233a72bff294229053b0420f58bf8d4d4af722d588` |
+| Vault binary | `f233d78679100d03584b384df9d5c0fcd8d44be3d68c63c13bdb07a1cad126c3` |
+| Member image | `f7d5bd4e68b971cf013f01fdb1a9cb5fd0fe1e8c6d154314f9c340a263d1733f` |
+
+The reboot check retained the original two-member baseline record and created
+a separate record for this reboot's four-member enrollment. It did not rewrite
+earlier evidence to accommodate the additional accounts. The completed guest
+was powered off with its disk and evidence retained.
+
 ## Remaining acceptance
 
-The candidate is not yet deployed to production. A final same-revision bundle,
-new-source installation and compatible registry12 host upgrade remain required.
+The admission bundle passed matching-component acceptance, but is not yet
+deployed to production. The subsequent interactive-entry revision `dee84754`
+is running a separate untouched-server public-source installation, followed by
+two-member invitation API, UI/Vault and reboot acceptance. It uses supplied
+synthetic TLS certificates; real ACME issuance remains unverified. A compatible
+registry12 production upgrade also remains required.
 Google's fresh-login rejection, actual automatic OAuth publication/recovery,
 two real member consents and a valid product model connection for natural-language
 Gmail are still open. This report does not turn API, synthetic or static results

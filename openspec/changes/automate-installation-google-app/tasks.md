@@ -1577,3 +1577,19 @@ automatic preparation and same-Kiri login screen. Manual worker/JSON setup is
 operator reference; real authentication/inference remains explicitly open.
 Existing-host dependency guidance distinguishes Docker CE's rootless tools from
 distribution packages to avoid replacing the engine during an additive repair.
+
+### Current-source cancellation failure and correction — 2026-11-27
+
+Fresh public46b76b44 installation, public second-member admission, actual
+two-member Vaults, reboot and proxy confinement passed. Claude U02 cancellation
+failed with cleanup pending; actual same-owner UI recovery passed separately.
+FM01–FM03 also passed in a separate resumed browser run. The coordinator's
+failure remains preserved and production transition still requires successful
+final acceptance. A Linux delayed-output cancellation regression failed before the
+fix and passed afterward with all11 focused connector tests. The actor now
+drains private late output during its existing bounded shutdown; independent
+official Sonnet5.5/medium review found no material regression. Corrected gateway
+Chromium U01–U03 and six installed API checks passed, including cancel, restart
+recovery and logout. This was an overlay on the retained installation; the final
+corrected-source bundle and rollout remain pending.
+[Evidence and remaining gates](../../../docs/reviews/2026-11-27-current-source-acceptance.md).

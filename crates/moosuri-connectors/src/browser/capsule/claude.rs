@@ -305,26 +305,31 @@ impl CapsuleReader {
         // A line from the worker proves its container exists, even if it only reports
         // failure; this lets cleanup treat an empty inventory as removal, not as doubt.
         let mut observed = false;
+        // Keep stdout open through shutdown. Cancellation can abandon a poll while
+        // the worker is still writing its frame; closing or merely retaining an
+        // unread pipe can make the Docker client fail or block before its exit receipt.
+        let mut reader = child.stdout.take().map(BufReader::new);
         let setup = async {
-            let mut reader = BufReader::new(child.stdout.take().ok_or(BrowserError::Setup)?);
+            let reader = reader.as_mut().ok_or(BrowserError::Setup)?;
             let init = claude_auth::init_line(tenant, &authorize)?;
             write_line(&mut child, &init).await?;
             drop(init);
-            let ready = read_line(&mut reader, 512).await?;
+            let ready = read_line(reader, 512).await?;
             observed = true;
             if ready != json!({"status":"ready","tenant":tenant}) {
                 return Err(BrowserError::Setup);
             }
-            Ok(reader)
+            Ok(())
         };
         let setup = tokio::select! { biased;
             _ = cancel.cancelled() => Err(BrowserError::Cancelled),
             result = tokio::time::timeout(Duration::from_secs(75), setup) => result.unwrap_or(Err(BrowserError::Timeout)),
         };
         let mut failed_start = None;
-        match setup {
-            Err(error) => failed_start = Some((started, error)),
-            Ok(mut reader) => {
+        match (setup, reader.as_mut()) {
+            (Err(error), _) => failed_start = Some((started, error)),
+            (Ok(()), None) => failed_start = Some((started, BrowserError::Setup)),
+            (Ok(()), Some(reader)) => {
                 if started.send(Ok(())).is_ok() {
                     let deadline = tokio::time::Instant::now()
                         + Duration::from_secs(claude_auth::ATTEMPT_SECONDS + 60);
@@ -357,7 +362,7 @@ impl CapsuleReader {
                             } else {
                                 1024
                             };
-                            let bytes = read_reply(&mut reader, limit).await?;
+                            let bytes = read_reply(reader, limit).await?;
                             parse_reply(&bytes, kind, &authorize)
                         };
                         let result = tokio::select! { biased;
@@ -386,17 +391,34 @@ impl CapsuleReader {
         requests.close();
         // The worker must exit zero after stopping Chrome and X; a killed worker is
         // never a cleanup receipt even if the container is then found removed.
-        let cleanup = self
-            .cleanup_grace(
-                &mut child,
-                &name,
-                identity,
-                observed,
-                false,
-                Some(WORKER_GRACE),
-            )
-            .await
-            .map_err(|_| BrowserError::CleanupUnconfirmed);
+        let cleanup = self.cleanup_grace(
+            &mut child,
+            &name,
+            identity,
+            observed,
+            false,
+            Some(WORKER_GRACE),
+        );
+        let drain = async {
+            if let Some(mut reader) = reader {
+                // Discard late frames/codes privately; never parse or deliver them.
+                let mut bytes = Zeroizing::new(vec![0u8; 8192]);
+                while let Ok(count) = reader.read(&mut bytes).await {
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.fill(0);
+                }
+            }
+        };
+        tokio::pin!(cleanup, drain);
+        // The existing worker grace bounds this drain too, including a writer that
+        // never closes stdout. A failed/killed exit still cannot confirm cleanup.
+        let cleanup = tokio::select! {
+            result = &mut cleanup => result,
+            _ = &mut drain => cleanup.await,
+        }
+        .map_err(|_| BrowserError::CleanupUnconfirmed);
         #[cfg(test)]
         if let Some(f) = &self.fixture {
             f.cleaned.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -805,6 +827,40 @@ mod tests {
             attempt.shutdown().await,
             Err(BrowserError::CleanupUnconfirmed)
         ));
+        assert_eq!(cleaned(&reader), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_drains_an_inflight_frame_before_worker_exit() {
+        let tenant = Uuid::new_v4();
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("poll-started");
+        let reader = capsule_with(format!(
+            "read -r init; printf '%s\\n' '{}'; read -r req; touch '{}'; \
+             sleep 0.2; head -c 262144 /dev/zero || exit 9; \
+             while read -r req; do case \"$req\" in *shutdown*) exit 0;; esac; done; exit 0",
+            ready(tenant),
+            marker.display()
+        ));
+        let cancel = CancellationToken::new();
+        let mut attempt = reader
+            .start_claude(tenant, authorization(), &cancel)
+            .await
+            .unwrap();
+        let trigger = cancel.clone();
+        let cancellation = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while !marker.exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            trigger.cancel();
+        });
+        assert!(matches!(attempt.poll().await, Err(BrowserError::Cancelled)));
+        cancellation.await.unwrap();
+        attempt.shutdown().await.unwrap();
         assert_eq!(cleaned(&reader), 1);
     }
 

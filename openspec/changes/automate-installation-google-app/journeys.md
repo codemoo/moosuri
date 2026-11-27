@@ -14,6 +14,14 @@ Prior component evidence remains in the task log and does not upgrade an open
 journey. Latest matched public-source installation and production evidence is in the
 [final entry report](../../../docs/reviews/2026-11-27-final-entry-production.md). All model execution and independent review uses Claude Sonnet 5.5 / medium.
 
+The later public46b76b44 empty-source run passed terminal installation, public
+second-member admission, two actual encrypted Vaults and reboot. Its Claude UI
+cancel failed; explicit recovery and separately resumed FM01–FM03 passed.
+The corrected gateway's actual UI cancellation and API restart/logout checks
+passed in the same guest. The original release coordinator remains failed;
+corrected-source bundle acceptance is still required before rollout.
+[Current-source evidence and correction](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
+
 ## Install and first use — 10 journeys
 
 | ID | Starting condition and action | Observable acceptance | Current result |

@@ -305,6 +305,6 @@ if __name__ == '__main__':
     except Exception as error:
         frames = traceback.extract_tb(error.__traceback__)
         frame = next((frame for frame in reversed(frames)
-                      if Path(frame.filename).name in (Path(__file__).name, 'installed-invitation-journeys.py', 'installed-google-vault.py', 'installed-google-reentry.py', 'installed-first-mail.py', 'installed-google-sharing-ui.py')), frames[-1])
+                      if Path(frame.filename).name in (Path(__file__).name, 'installed-claude-ui.py', 'installed-invitation-journeys.py', 'installed-google-vault.py', 'installed-google-reentry.py', 'installed-first-mail.py', 'installed-google-sharing-ui.py')), frames[-1])
         print(f'FAIL installed-browser: {type(error).__name__} at {Path(frame.filename).name}:{frame.lineno}', file=sys.stderr)
         raise SystemExit(1)

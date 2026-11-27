@@ -2,11 +2,12 @@
 
 This is the recommended Linux member-server entry from a selected public Git
 commit. The signed one-line local preview remains a separate product path.
-Public revision f0812c7a passed a separate untouched-server source installation,
-two-member Vaults and actual reboot. [Baseline and later admission evidence](../../docs/reviews/2026-11-27-web-invitation.md)
-
-Final interactive installation and automatic Google OAuth issuance remain under
-acceptance.
+Public revision dee84754 passed an empty-start interactive source installation,
+second-member web credential completion, two-member Vaults and actual reboot.
+The run resumed the same bundle and receipt after host storage exhaustion and
+used supplied synthetic TLS. Actual certificate issuance and automatic Google
+OAuth issuance remain under acceptance.
+[Exact result and production transition](../../docs/reviews/2026-11-27-final-entry-production.md)
 See [current support](../../docs/status.md) and the
 [remaining Google setup work](../../openspec/changes/automate-installation-google-app/tasks.md).
 
@@ -104,7 +105,7 @@ from the management screen; keys and config live in root-only
 configuration is not proof of working inference: verify a conversation. This
 API path does not create Claude subscription workers. A malformed provider file
 at service startup is rejected until corrected; runtime key/config recovery is
-retried without admitting invalid calls. Final first-provider acceptance and
-the final interactive-source installation remain open. A signed single-command
+retried without admitting invalid calls. Final first-provider acceptance remains
+open. A signed single-command
 Kiri release is separate future packaging, not a prerequisite for the public-source
 journey. No Mac credentials or existing Cloud project may satisfy acceptance.

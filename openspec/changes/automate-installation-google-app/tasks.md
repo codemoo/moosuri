@@ -4,6 +4,13 @@ The current [61 user journeys](journeys.md) cover installation, Vault, Google lo
 OAuth setup, sharing, conversation reads and recovery. They distinguish live
 provider results, diagnostic installation evidence and open acceptance gates.
 
+Latest: public dee84754 empty-start terminal install, retained-state storage
+recovery, second-member web credential completion, two browser/Vault journeys,
+actual reboot and egress isolation passed. The same bundle is deployed with the
+existing real member/Vault/keys/Google grants preserved; post-reload GWS read
+returned five metadata rows. Natural-language Gmail and fresh automatic Google
+setup remain open. [Exact current evidence and limits](../../../docs/reviews/2026-11-27-final-entry-production.md).
+
 - [x] Reconcile scope with a clean public installation and no pre-existing Google resources.
 - [x] Package installation/runtime/browser/vault/GWS dependencies without developer files or fixed owner routing; corrected source installation and two-member reboot accepted below.
 - [ ] Observe official Console steps in fresh Kiri and identify provider prerequisites.
@@ -1225,7 +1232,7 @@ The narrow production auth image and existing member data remain unchanged.
 - [x] Complete integrated invitation store/HTTP/UI checks and independent Claude review.
 - [x] Execute J01–J08 with actual installed Linux services/browser and preserve failures.
 - [x] Publish the accepted admission unit and validate its matching bundle/four-member reboot.
-- [ ] Deploy the accepted admission unit with compatible registry consumers.
+- [x] Deploy the accepted admission unit with compatible registry consumers; dee84754 production preservation and post-transition GWS read passed.
 - [ ] Reconcile pristine result and resume remaining Google/model/default-installer gates.
 
 
@@ -1277,7 +1284,7 @@ public-source installation objective. Real Google/model acceptance remains open.
 - [x] Validate public inputs/terms, non-terminal and password-pipe boundaries.
 - [x] Exercise actual Linux terminal rejection/recovery and retain earlier install contracts.
 - [x] Independent review and public entry/docs alignment.
-- [ ] Final matched fresh-source acceptance including interactive public entry.
+- [x] Final matched fresh-source acceptance including interactive public entry; dee84754 resumed retained state after host-storage failure, then web admission/Vault/reboot/egress passed (supplied synthetic TLS).
 
 Linux installer21 tests and the native build passed. The marker-guarded
 [process harness](../../../deployment/kiri/linux-vm-smoke/setup-inputs.py) ran
@@ -1333,3 +1340,35 @@ The first tool-based review could not read the operator and did not count as its
 review; a supplied-source review and corrected closure review did. The closure
 found no material defect in scope. Actual preparation/deployment waits for the
 latest-source acceptance and available disk; no production upgrade was attempted.
+
+
+### Latest public entry and production admission completed — 2026-11-27
+
+The initially empty dee84754 guest exhausted host storage during installation.
+The original failed evidence and incomplete receipt were preserved. After host
+storage recovery, the exact complete bundle resumed through the real terminal
+prompts and retained all receipt fields except completion. Durable acceptance
+passed both members through public invitation API credential completion, actual
+browser/Vault use, changed-boot-ID reboot and six egress/isolation checks. No
+real provider or ACME credential was used.
+
+The accepted bundle was hash-verified on production. Both confined browser
+probes passed on its actual kernel. The already reviewed current-state operator
+then preserved member/Vault/keys/registry identities/grants and switched all
+registry consumers, member and browser images together. Exit0, matching stable
+executables, SQLite integrity, original onboarding policy/timer and HTTPS200
+were verified. Kiri page reload retained the session and Gmail account; GWS
+returned five metadata rows, foreign member and invalid invitation were401, and
+admin setup/invitation controls remained available. No production invite was
+created and no model inference or new Google login was attempted.
+
+Independent official Claude Sonnet5.5/medium read-only source trace (25 turns)
+confirmed that the existing non-root worker/terminal login has no Kiri product
+provisioning path: API setup cannot create the worker account/profile/unit or
+owner binding. The trace is a bounded implementation investigation, not a fix
+or real authentication. Pending model-connection choice is not inferred; the
+reviewer's authentication is not copied. Fresh Google login remains blocked by
+the already observed provider rejection. Continue independent implementation
+without repeating unchanged provider attempts.
+
+[Full latest evidence](../../../docs/reviews/2026-11-27-final-entry-production.md).

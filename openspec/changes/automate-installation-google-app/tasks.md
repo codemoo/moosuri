@@ -1593,3 +1593,16 @@ Chromium U01–U03 and six installed API checks passed, including cancel, restar
 recovery and logout. This was an overlay on the retained installation; the final
 corrected-source bundle and rollout remain pending.
 [Evidence and remaining gates](../../../docs/reviews/2026-11-27-current-source-acceptance.md).
+
+### Google cancellation transport correction — 2026-11-27
+
+The actual Linux Docker probe also reproduced Google's late-reply pipe failure:
+closed output exits1, drained output exits0; exact diagnostic containers were
+removed. The deterministic Google actor regression failed before the correction.
+The corrected actor retains stdout and drains private late bytes within existing
+shutdown limits. All44 capsule tests passed, including failed SDK-exit refusal.
+Independent official Sonnet5.5/medium review found no material actionable defect.
+R02/R03 remote-grant cancellation stays open. The public75 source build was
+deliberately stopped before product creation; its baseline, failed coordinator
+and interruption proof remain preserved for explicit final-revision recovery.
+[Evidence and limits](../../../docs/reviews/2026-11-27-current-source-acceptance.md).

@@ -62,3 +62,31 @@ its dispatch call. Production remains `dee84754`; no reviewed `46b76b44` staging
 or transition was executed. Final corrected-source installation, matched rollout,
 real Google/Claude authentication, automatic OAuth setup and two real member
 consents remain open.
+
+## Google bootstrap cancellation and retained installation baseline
+
+The same stdout lifetime defect existed in Google's actor. An actual isolated
+Docker transport probe in the next empty-source guest produced exit1 when the
+host closed the pipe before a tiny final reply, and exit0 when it consumed the
+reply through shutdown. Both exact diagnostic containers were confirmed absent.
+No Google account, grant or OAuth resource was used by this probe.
+
+A deterministic Linux actor regression emits its final reply only after receiving
+the host's shutdown command. It failed with `CleanupUnconfirmed` before the fix.
+Google now retains and privately drains stdout during the existing cleanup grace;
+late OAuth replies are never parsed, delivered or saved. The negative regression
+still refuses a worker's failed exit. All44 capsule tests passed after the change.
+Independent official Claude Sonnet5.5/medium review found no material actionable
+defect in the frozen change. These support R02/R03 but do not prove remote SDK
+grant revocation or an installed OAuth bootstrap cancellation.
+
+The next guest originally cloned public `75c1b533` from an empty Ubuntu24 baseline.
+Its source build was deliberately stopped after this defect was confirmed, before
+any product installation. The unit was inactive/dead with no surviving Cargo,
+Rust or BuildKit process; `/etc/moosuri`, `/var/lib/moosuri-control` and
+`/srv/moosuri-storage` were absent. The original clean source, baseline and
+interruption record are retained, and its original acceptance coordinator is
+failed. Reusing this guest requires an explicit original-baseline-to-final-revision
+recovery record and fresh proof that product/provider state is absent. It must
+not be described as a newer revision's untouched initial baseline. Production
+remains `dee84754`; the old revision's staging drafts are not release approval.

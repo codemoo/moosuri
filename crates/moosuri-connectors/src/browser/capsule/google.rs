@@ -9,6 +9,7 @@ use crate::browser::google_auth::{
     },
 };
 use tokio::sync::{mpsc, oneshot};
+use zeroize::Zeroizing;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -210,10 +211,13 @@ impl CapsuleReader {
             }
         };
         let mut observed = false;
+        // Cancellation can race a final bootstrap reply. Keep stdout owned until
+        // cleanup finishes, so Docker can report the worker's actual exit status.
+        let mut reader = child.stdout.take().map(BufReader::new);
         let setup = async {
-            let mut reader = BufReader::new(child.stdout.take().ok_or(BrowserError::Setup)?);
+            let reader = reader.as_mut().ok_or(BrowserError::Setup)?;
             write(&mut child, &json!({"protocol":PROTOCOL,"binding":binding})).await?;
-            let value = read_line(&mut reader, 4096).await?;
+            let value = read_line(reader, 4096).await?;
             if value.as_object().is_none_or(|m| m.len() != 2) || value["status"] != "vault" {
                 return Err(BrowserError::Protocol);
             }
@@ -229,7 +233,7 @@ impl CapsuleReader {
             {
                 return Err(BrowserError::Protocol);
             }
-            Ok((recipient, reader))
+            Ok(recipient)
         };
         let setup = tokio::select! { biased;
             _ = cancel.cancelled() => Err(BrowserError::Cancelled),
@@ -240,9 +244,10 @@ impl CapsuleReader {
         // Once any bootstrap command has been sent the worker may be inside SDK
         // credential cleanup, so shutdown gets the long grace instead of the short one.
         let mut bootstrap_sent = false;
-        match setup {
-            Err(error) => failed_start = Some((started, error)),
-            Ok((recipient, mut reader)) => {
+        match (setup, reader.as_mut()) {
+            (Err(error), _) => failed_start = Some((started, error)),
+            (Ok(_), None) => failed_start = Some((started, BrowserError::Setup)),
+            (Ok(recipient), Some(reader)) => {
                 observed = true;
                 if started.send(Ok(recipient)).is_ok() {
                     let deadline = tokio::time::Instant::now() + bootstrap::ATTEMPT_LIFETIME;
@@ -271,7 +276,7 @@ impl CapsuleReader {
                             // Bootstrap lines may carry the client secret and are
                             // bounded by the private wire limit; phases stay tiny.
                             let limit = if bootstrap { PRIVATE_WIRE_LIMIT } else { 256 };
-                            parse_answer(read_line(&mut reader, limit).await?, bootstrap)
+                            parse_answer(read_line(reader, limit).await?, bootstrap)
                         };
                         // The worker's longest bootstrap action is bounded at 600 s; an
                         // abandoned wait still ends in the awaited graceful cleanup below.
@@ -296,16 +301,34 @@ impl CapsuleReader {
                 }
             }
         }
-        let cleanup = self
-            .cleanup_grace(
-                &mut child,
-                &name,
-                identity,
-                observed,
-                false,
-                bootstrap_sent.then_some(BOOTSTRAP_SHUTDOWN_GRACE),
-            )
-            .await;
+        let cleanup = self.cleanup_grace(
+            &mut child,
+            &name,
+            identity,
+            observed,
+            false,
+            bootstrap_sent.then_some(BOOTSTRAP_SHUTDOWN_GRACE),
+        );
+        let drain = async {
+            if let Some(mut reader) = reader {
+                // Late OAuth replies may contain a secret. Discard them privately;
+                // no late reply is parsed or delivered after cancellation.
+                let mut bytes = Zeroizing::new(vec![0u8; 8192]);
+                while let Ok(count) = reader.read(&mut bytes).await {
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.fill(0);
+                }
+            }
+        };
+        tokio::pin!(cleanup, drain);
+        // The existing shutdown grace bounds the drain. SDK cleanup still needs a
+        // successful worker exit; EOF or container removal alone is not that proof.
+        let cleanup = tokio::select! {
+            result = &mut cleanup => result,
+            _ = &mut drain => cleanup.await,
+        };
         if let Some((started, error)) = failed_start {
             let _ = started.send(Err(cleanup.err().unwrap_or(error)));
             return Ok(());
@@ -484,6 +507,107 @@ impl GoogleAttempt {
 #[cfg(test)]
 mod google_bootstrap_tests {
     use super::*;
+
+    async fn cancel_with_late_reply(exit: u8) -> Result<(), BrowserError> {
+        use base64::Engine;
+        let binding = Binding {
+            installation: Uuid::new_v4(),
+            account: Uuid::new_v4(),
+            tenant: Uuid::new_v4(),
+            volume: Uuid::new_v4(),
+            generation: 1,
+            epoch: 1,
+            challenge: Uuid::new_v4(),
+            email: "owner@example.test".into(),
+            origin: "https://assistant.example.test".into(),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("bootstrap-started");
+        let ready = json!({"status":"vault","recipient":{
+            "protocol":PROTOCOL,"binding":binding,
+            "spki":base64::engine::general_purpose::STANDARD.encode([0u8;422])
+        }});
+        // Only emit the late reply after the host writes shutdown: no timing race
+        // decides whether the original stdout reader has already been dropped.
+        let script = format!(
+            "read -r init; printf '%s\\n' '{}'; read -r req; touch '{}'; \
+             read -r stop; case \"$stop\" in *shutdown*) ;; *) exit 8;; esac; \
+             printf '%s\\n' '{{\"status\":\"unavailable\"}}' || exit 9; exit {exit}",
+            ready,
+            marker.display()
+        );
+        let mut reader = CapsuleReader::new(CapsuleConfig {
+            engine: super::super::Engine::Kiri,
+            image_id: format!("sha256:{}", "a".repeat(64)),
+            network_id: "b".repeat(64),
+            proxy_container_id: "c".repeat(64),
+            proxy_ip: "172.29.0.2".into(),
+            owner: binding.installation,
+            project: "test-browser".into(),
+            seccomp_file: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../deployment/browser/seccomp.json"),
+            verified: true,
+            smoke_evidence_sha256: "d".repeat(64),
+            recover_workspaces: false,
+            javascript_enabled: true,
+        })
+        .unwrap();
+        reader.fixture = Some(Arc::new(Fixture {
+            script,
+            cleaned: 0.into(),
+        }));
+        let cancel = CancellationToken::new();
+        let (requests, incoming) = mpsc::channel(1);
+        let (started, startup) = oneshot::channel();
+        let control = cancel.clone();
+        let actor = tokio::spawn(async move {
+            reader
+                .google_actor(
+                    binding,
+                    "synthetic-google".into(),
+                    control,
+                    incoming,
+                    started,
+                )
+                .await
+        });
+        startup.await.unwrap().unwrap();
+        let (reply, response) = oneshot::channel();
+        requests
+            .send(Request {
+                body: Some(json!({"synthetic_bootstrap":true})),
+                bootstrap: true,
+                reply,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        cancel.cancel();
+        assert!(matches!(
+            response.await.unwrap(),
+            Err(BrowserError::Cancelled)
+        ));
+        actor.await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn cancelled_bootstrap_drains_late_status_before_accepting_exit() {
+        cancel_with_late_reply(0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drained_late_status_does_not_override_failed_sdk_cleanup() {
+        assert!(matches!(
+            cancel_with_late_reply(7).await,
+            Err(BrowserError::CleanupUnconfirmed)
+        ));
+    }
 
     #[test]
     fn bootstrap_answers_are_exact_and_not_passthrough() {

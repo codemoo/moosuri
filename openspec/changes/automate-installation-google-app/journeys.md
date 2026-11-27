@@ -198,8 +198,8 @@ Google consent acceptance.
 | ID | Starting condition and action | Observable acceptance | Current result |
 | --- | --- | --- | --- |
 | R01 | Close/reopen the member page during login or consent | Truthful saved progress; do not initiate another browser or grant implicitly | Installed same-login preflight reload, lost Start/status, saved cancel and foreign-login checks passed; accepted-provider and full close/reopen journey remain open |
-| R02 | Cancel setup while SDK grant is active | Await remote revoke plus local-empty proof; teardown receipt clears only matching run | Open confined failure/cancellation acceptance |
-| R03 | Revoke fails, or kill worker mid-revoke | Durable cleanup-unconfirmed fence remains beyond lease expiry; no force-unlock or duplicate SDK grant | Open actual confined injection |
+| R02 | Cancel setup while SDK grant is active | Await remote revoke plus local-empty proof; teardown receipt clears only matching run | Linux late-reply cancellation regression failed before the fix and passed after it; actual Docker closed/drained output reproduced exit1/exit0. Remote SDK revocation and installed bootstrap cancellation remain open |
+| R03 | Revoke fails, or kill worker mid-revoke | Durable cleanup-unconfirmed fence remains beyond lease expiry; no force-unlock or duplicate SDK grant | Linux late-reply worker exit7 remains CleanupUnconfirmed after draining; actual remote revoke/kill injection remains open |
 | R04 | Late claim/begin arrives after browser teardown | Closed run ID cannot become active; successor remains untouched | Existing registry tests passed; full process journey open |
 | R05 | GWS distribution is delayed or member runtime restarts | Pending shown until exact app readiness; recover without replacing member consent | Candidate wait is bounded from actual worker idle start; ambiguous start POST is never retried; full journey open |
 | R06 | Completed connection survives gateway/member restart | Same selected account and grant work on next explicit read; no copied session cookie needed | Open actual journey |

@@ -145,8 +145,15 @@ readback. User consent still grants only the selected service's minimum scope.
 | S02 | Second member connects a different Google account | Same app, separate browser/recipient/token/volume; each reads only own mailbox | Open real two-member acceptance |
 | S03 | New member joins after registration | Existing app distributed automatically; no Cloud setup or admin token inherited | Open full journey |
 | S04 | App is Testing and member is not a test user | Display audience restriction, never report connected; adding the explicitly chosen test user permits a new attempt | One authorized test user added; denied-member journey open |
-| S05 | Submit the same app again, or a conflicting app | Exact replay preserves grants; conflicting client refused without mutation | Prior synthetic writer checks; actual full journey open |
+| S05 | Submit the same app again, or a conflicting app | Exact replay preserves grants; conflicting client refused without mutation | Installed synthetic-app replay/conflicts preserve both member registrations (GA03); actual grants and full provider journey open |
 | S06 | Installation is ready for a limited audience; member is not a test user and returns after seven days | Shared External app has the intended publishing status; provider warning/cap and revocation remain explicit; no manual test-user prerequisite hidden in the product | Official limited-audience exception confirmed; automated production transition and live acceptance open |
+
+[GA01–GA06 installed shared-app evidence](../../../docs/reviews/2026-11-27-google-app-sharing.md)
+covers actual administrator registration, two running members, replay/conflicts,
+member/service restart and invalid-permission recovery. Three actual UI checks
+confirm registration is not member consent. The app is synthetic; new-member-after-
+registration, real tokens and provider acceptance stay open. GA06 passed in a
+separate resumed run, with the cross-run evidence limit recorded.
 
 ## Conversation and Gmail read — 6 journeys
 

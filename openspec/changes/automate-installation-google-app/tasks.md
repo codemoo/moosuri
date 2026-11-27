@@ -1537,3 +1537,15 @@ survives reload/resume even when its text is identical. Focused79 UI checks and
 web/native builds passed; independent official Claude Sonnet5.5/medium static
 review found no material defect. [Evidence and limits](../../../docs/reviews/2026-11-27-first-conversation-mail.md).
 No real provider acceptance or production deployment is claimed.
+
+### Installed shared app distribution and recovery — 2026-11-27
+
+GA01–GA05 passed on real installed Linux services; GA06 passed in a separate
+resumed run after a transient-response harness bug. Shared app, private member
+keys, idempotent save/conflict rejection and member/service recovery were verified.
+Three actual Chromium checks preserve the distinction between installation
+registration and each member consent. Independent official Claude review found
+cross-run proof and report recovery gaps; the harness was corrected without
+claiming stronger historical evidence. [Results and exact limits](../../../docs/reviews/2026-11-27-google-app-sharing.md).
+Synthetic app only, no provider or production change. Final-source and real
+Google/Claude/two-member acceptance remain open.

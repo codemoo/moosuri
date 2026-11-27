@@ -64,6 +64,8 @@ def main():
                         help='Disconnect a staged synthetic Active binding and reopen login; no authentication')
     parser.add_argument('--google-vault-journeys', action='store_true',
                         help='Installed Vault selection/cancel/isolation; stop sealed delivery before any provider login')
+    parser.add_argument('--google-sharing-journeys', action='store_true',
+                        help='Installed shared-app UI still requires each member consent; no provider calls')
     parser.add_argument('--first-mail-journeys', action='store_true',
                         help='Installed first-thread UI with synthetic interpretation/Gmail replies; no providers')
     parser.add_argument('--google-reentry-journeys', action='store_true',
@@ -149,9 +151,14 @@ print('matched_running_revision_verified')
             browser = pw.chromium.launch(channel='chromium', headless=True,
                         proxy={'server': f'http://127.0.0.1:{proxy.server_port}'})
             try:
+                if args.google_sharing_journeys:
+                    import runpy
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-google-sharing-ui.py')))
+                    module['run'](browser, args, ssh, target, members)
+                    return
                 if args.first_mail_journeys:
                     import runpy
-                    module = runpy.run_path(str(Path(__file__).with_name('installed-first-mail.py')))
+                    module = runpy.run_path(str(Path(__file__).with_name('installed-first-mail.py', 'installed-google-sharing-ui.py')))
                     module['run'](browser, args, ssh, target, members)
                     return
                 if args.google_reentry_journeys:
@@ -298,6 +305,6 @@ if __name__ == '__main__':
     except Exception as error:
         frames = traceback.extract_tb(error.__traceback__)
         frame = next((frame for frame in reversed(frames)
-                      if Path(frame.filename).name in (Path(__file__).name, 'installed-invitation-journeys.py', 'installed-google-vault.py', 'installed-google-reentry.py', 'installed-first-mail.py')), frames[-1])
+                      if Path(frame.filename).name in (Path(__file__).name, 'installed-invitation-journeys.py', 'installed-google-vault.py', 'installed-google-reentry.py', 'installed-first-mail.py', 'installed-google-sharing-ui.py')), frames[-1])
         print(f'FAIL installed-browser: {type(error).__name__} at {Path(frame.filename).name}:{frame.lineno}', file=sys.stderr)
         raise SystemExit(1)
